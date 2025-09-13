@@ -3,16 +3,17 @@
 LOG_PREFIX="[$(date '+%Y-%m-%d %H:%M:%S')]"
 echo "$LOG_PREFIX START"
 
-# CONFIG_FILE을 환경변수로 받거나 기본값 ./config.json
+# Use CONFIG_FILE from environment variable or default to ./config.json
 CONFIG_FILE="${CONFIG_FILE:-./config.json}"
 
+# BASE_DIR is the folder where CONFIG_FILE is located
 BASE_DIR=$(dirname "$CONFIG_FILE")
 REPO_URL="https://github.com/kman0001/tubesync-plex.git"
 
-# 1. Clone or update repo
+# 1. Clone or update repository
 if [ ! -d "$BASE_DIR/.git" ]; then
     if [ -d "$BASE_DIR" ] && [ "$(ls -A "$BASE_DIR")" ]; then
-        echo "$LOG_PREFIX $BASE_DIR exists and not empty. Skipping clone."
+        echo "$LOG_PREFIX $BASE_DIR exists and is not empty. Skipping clone."
     else
         echo "$LOG_PREFIX Cloning repository..."
         git clone "$REPO_URL" "$BASE_DIR"
@@ -24,31 +25,31 @@ else
     git pull
 fi
 
-# 2. Check python3-venv
+# 2. Check if python3-venv is installed
 if ! dpkg -s python3-venv &>/dev/null; then
     echo "$LOG_PREFIX Installing python3-venv..."
     apt update && apt install -y python3-venv
 else
-    echo "$LOG_PREFIX python3-venv already installed."
+    echo "$LOG_PREFIX python3-venv is already installed."
 fi
 
-# 3. Create venv
+# 3. Create virtual environment if it does not exist
 if [ ! -d "$BASE_DIR/venv" ]; then
     echo "$LOG_PREFIX Creating virtual environment..."
     python3 -m venv "$BASE_DIR/venv"
 else
-    echo "$LOG_PREFIX Virtual environment exists."
+    echo "$LOG_PREFIX Virtual environment already exists."
 fi
 
-# 4. Install dependencies
+# 4. Install or update Python dependencies
 echo "$LOG_PREFIX Installing Python dependencies..."
 "$BASE_DIR/venv/bin/pip" install --upgrade pip &>/dev/null
 "$BASE_DIR/venv/bin/pip" install -r "$BASE_DIR/requirements.txt" &>/dev/null
 
-# 5. Run metadata sync
+# 5. Run tubesync-plex with the JSON configuration
 if [ -f "$BASE_DIR/tubesync-plex-metadata.py" ]; then
-    echo "$LOG_PREFIX Running tubesync-plex..."
-    "$BASE_DIR/venv/bin/python" "$BASE_DIR/tubesync-plex-metadata.py"
+    echo "$LOG_PREFIX Running tubesync-plex with config $CONFIG_FILE..."
+    "$BASE_DIR/venv/bin/python" "$BASE_DIR/tubesync-plex-metadata.py" --config "$CONFIG_FILE"
 else
     echo "$LOG_PREFIX tubesync-plex-metadata.py not found."
 fi
