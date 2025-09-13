@@ -70,7 +70,7 @@ python tubesync-plex-metadata.py [-c CONFIG] [-s] [-d] [--all] [--subtitles]
 
 ## 사용법 (쉘 스크립트)
 
-저장소에 포함된 `update-tubesync.sh`를 사용하면, 다음을 자동으로 처리합니다:
+저장소에 포함된 `tubesync-plex.sh`를 사용하면, 다음을 자동으로 처리합니다:
 
 1. GitHub 저장소 업데이트 (`git pull`)
 2. Python 가상 환경 확인 및 생성
@@ -78,11 +78,13 @@ python tubesync-plex-metadata.py [-c CONFIG] [-s] [-d] [--all] [--subtitles]
 4. TubeSync Plex 스크립트 실행
 
 ```bash
-bash update-tubesync.sh
+bash tubesync-plex.sh
 ```
 
 > 쉘 스크립트에서 옵션을 전달하려면:
 >
+> * BASE_DIR="/your/dir/to/tubesync-plex"
+>   작업 디렉토리를 본인의 환경에 맞게 변경합니다.
 > * 스크립트 내부의 Python 실행 부분을 수정하여 인자를 추가할 수 있습니다.
 >   예: `"$BASE_DIR/venv/bin/python" "$BASE_DIR/tubesync-plex-metadata.py" --all --subtitles`
 > * 필요에 따라 `--silent` 또는 `--detail` 옵션도 추가 가능합니다.
