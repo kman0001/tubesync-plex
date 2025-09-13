@@ -19,6 +19,8 @@ def main(config_path, silent, detail, syncAll, subtitles):
 
     title_filter = 'Episode ' if not syncAll else ''
 
+    updated_count = 0
+
     for ep in section.search(title=title_filter, libtype='episode'):
         for part in ep.iterParts():
             if not part.file.lower().endswith(video_extensions):
@@ -28,15 +30,16 @@ def main(config_path, silent, detail, syncAll, subtitles):
 
             if os.path.exists(nfo_data_file_path):
                 if detail:
-                    print(f"[-] Trying to parse NFO file for {part.file}")
+                    print(f"[-] Parsing NFO: {nfo_data_file_path}")
+
                 try:
                     parser = ET.XMLParser(recover=True)
                     tree = ET.parse(nfo_data_file_path, parser=parser)
                 except ET.XMLSyntaxError as e:
-                    print(f"[ERROR] XMLSyntaxError: Malformed NFO file '{part.file}'. Details: {e}")
+                    print(f"[ERROR] Malformed NFO '{nfo_data_file_path}': {e}")
                     continue
                 except Exception as e:
-                    print(f"[ERROR] Failed to read NFO for '{part.file}'. Details: {e}")
+                    print(f"[ERROR] Failed to read NFO '{nfo_data_file_path}': {e}")
                     continue
 
                 root = tree.getroot()
@@ -48,19 +51,28 @@ def main(config_path, silent, detail, syncAll, subtitles):
                 plot = root.findtext('plot', default='')
 
                 if detail:
-                    print(f"[-] Updating: {title} - Aired: {aired}")
+                    print(f"[-] Updating Plex metadata: {title} - Aired: {aired}")
 
-                ep.editTitle(title, locked=True)
-                ep.editSortTitle(aired, locked=True)
-                ep.editSummary(plot, locked=True)
+                try:
+                    ep.editTitle(title, locked=True)
+                    ep.editSortTitle(aired, locked=True)
+                    ep.editSummary(plot, locked=True)
+                    updated_count += 1
+                except Exception as e:
+                    print(f"[ERROR] Failed to update Plex for '{part.file}': {e}")
+                    continue
 
                 # NFO 삭제
                 try:
                     os.remove(nfo_data_file_path)
-                    if not silent:
+                    if detail or not silent:
                         print(f"[-] Deleted NFO: {nfo_data_file_path}")
                 except Exception as e:
-                    print(f"[ERROR] Failed to delete NFO '{nfo_data_file_path}'. Details: {e}")
+                    print(f"[ERROR] Failed to delete NFO '{nfo_data_file_path}': {e}")
+
+    # 완료 메시지
+    if not silent:
+        print(f"[INFO] {updated_count} metadata items updated.")
 
 
 if __name__ == "__main__":
