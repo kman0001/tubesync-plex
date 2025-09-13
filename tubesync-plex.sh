@@ -3,8 +3,12 @@
 LOG_PREFIX="[$(date '+%Y-%m-%d %H:%M:%S')]"
 echo "$LOG_PREFIX START"
 
+# Config file
 CONFIG_FILE="${CONFIG_FILE:-./config.json}"
-BASE_DIR=$(dirname "$CONFIG_FILE")
+
+# Base directory = folder containing config file
+BASE_DIR=$(dirname "$(realpath "$CONFIG_FILE")")
+
 REPO_URL="https://github.com/kman0001/tubesync-plex.git"
 
 # 1. Clone or update repository
@@ -37,18 +41,25 @@ dpkg -s python3-venv &>/dev/null || { apt update && apt install -y python3-venv 
 # 3. Create virtual environment
 [ -d "$BASE_DIR/venv" ] || python3 -m venv "$BASE_DIR/venv" || { echo "$LOG_PREFIX ERROR: Failed to create virtualenv."; exit 1; }
 
-# 4. Install/update Python dependencies with version logging
-if [ -f "$BASE_DIR/requirements.txt" ]; then
+# 4. Locate requirements.txt and corresponding hash file
+REQ_FILE="${REQ_FILE:-$BASE_DIR/requirements.txt}"  # environment variable override possible
+REQ_FILE_PATH=$(realpath "$REQ_FILE")
+REQ_DIR=$(dirname "$REQ_FILE_PATH")
+HASH_FILE="$REQ_DIR/.requirements.hash"
+
+# Ensure hash file exists
+[ -f "$HASH_FILE" ] || touch "$HASH_FILE"
+
+if [ -f "$REQ_FILE_PATH" ]; then
     echo "$LOG_PREFIX Checking Python dependencies..."
     PIP_BIN="$BASE_DIR/venv/bin/pip"
-    HASH_FILE="$BASE_DIR/.requirements.hash"
 
-    CURRENT_HASH=$(sha256sum "$BASE_DIR/requirements.txt" | awk '{print $1}')
-    PREV_HASH=""
-    [ -f "$HASH_FILE" ] && PREV_HASH=$(cat "$HASH_FILE")
+    CURRENT_HASH=$(sha256sum "$REQ_FILE_PATH" | awk '{print $1}')
+    PREV_HASH=$(cat "$HASH_FILE" 2>/dev/null || echo "")
+
     INSTALL_NEEDED=false
 
-    # Get currently installed packages with versions
+    # Get installed packages
     declare -A INSTALLED_PACKAGES
     while read -r line; do
         NAME=$(echo "$line" | cut -d= -f1)
@@ -60,16 +71,14 @@ if [ -f "$BASE_DIR/requirements.txt" ]; then
         INSTALL_NEEDED=true
         echo "$CURRENT_HASH" > "$HASH_FILE"
     else
-        # Check for missing or outdated packages
-        MISSING=$(comm -23 <(sort "$BASE_DIR/requirements.txt") <($PIP_BIN freeze | cut -d= -f1 | sort))
-        OUTDATED=$($PIP_BIN list --outdated --format=freeze)
+        # Check missing or outdated packages
+        MISSING=$(comm -23 <(sort "$REQ_FILE_PATH") <($PIP_BIN freeze | cut -d= -f1 | sort))
+        OUTDATED=$($PIP_BIN list --outdated --format=freeze | cut -d= -f1)
         [ -n "$MISSING" ] || [ -n "$OUTDATED" ] && INSTALL_NEEDED=true
     fi
 
     if [ "$INSTALL_NEEDED" = true ]; then
-        echo "$LOG_PREFIX Installing/Updating Python dependencies..."
-
-        # Log updated packages with versions
+        # Log outdated packages
         if [ -n "$OUTDATED" ]; then
             while read -r line; do
                 PKG=$(echo "$line" | cut -d= -f1)
@@ -79,19 +88,17 @@ if [ -f "$BASE_DIR/requirements.txt" ]; then
             done <<< "$OUTDATED"
         fi
 
-        # Log newly installed packages
+        # Log missing packages
         if [ -n "$MISSING" ]; then
             while read -r pkg; do
-                VER=$(grep -i "^$pkg==" "$BASE_DIR/requirements.txt" | cut -d= -f3)
+                VER=$(grep -i "^$pkg==" "$REQ_FILE_PATH" | cut -d= -f3)
                 echo "$LOG_PREFIX Installing new package: $pkg $VER"
             done <<< "$MISSING"
         fi
 
-        # Suppress Requirement already satisfied logs
-        $PIP_BIN install --upgrade --disable-pip-version-check -q -q -r "$BASE_DIR/requirements.txt" >/dev/null || {
-            echo "$LOG_PREFIX ERROR: pip install failed."
-            exit 1
-        }
+        # Install/Update packages, suppress "Requirement already satisfied"
+        $PIP_BIN install --upgrade --disable-pip-version-check -q -q -r "$REQ_FILE_PATH" >/dev/null || { echo "$LOG_PREFIX ERROR: pip install failed."; exit 1; }
+
         echo "$LOG_PREFIX Dependencies installed/updated successfully."
     else
         echo "$LOG_PREFIX All dependencies are already up to date."
