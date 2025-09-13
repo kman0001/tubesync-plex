@@ -12,14 +12,14 @@ default_config = {
     "_comment": {
         "plex_base_url": "Your Plex server base URL, e.g., http://localhost:32400",
         "plex_token": "Your Plex server token",
-        "plex_library_names": "List of library names to sync metadata, e.g., [\"TV Shows\", \"Anime\"]",
+        "plex_library_names": "List of library names to sync metadata, e.g., ["TV Shows", "Anime"]",
         "silent": "true or false, whether to suppress logs",
         "detail": "true or false, whether to show detailed update logs",
         "subtitles": "true or false, whether to upload subtitles if available"
     },
     "plex_base_url": "",
     "plex_token": "",
-    "plex_library_names": [],
+    "plex_library_names": [""],
     "silent": False,
     "detail": False,
     "subtitles": False
@@ -38,6 +38,7 @@ with open(CONFIG_FILE, "r", encoding="utf-8") as f:
 
 def main():
     plex = PlexServer(config["plex_base_url"], config["plex_token"])
+    updated_count = 0
 
     # Iterate over multiple libraries
     for library_name in config["plex_library_names"]:
@@ -78,13 +79,19 @@ def main():
                     ep.editSortTitle(aired, locked=True)
                     ep.editSummary(plot, locked=True)
 
+                    updated_count += 1
+
                     # Delete NFO after successful update
                     try:
                         os.remove(nfo_path)
-                        if not config.get("silent", False):
+                        if config.get("detail", False):
                             print(f"[-] Deleted NFO: {nfo_path}")
                     except Exception as e:
                         print(f"[ERROR] Failed to delete NFO: {nfo_path}. Details: {e}")
+
+    # Show summary only if silent is False
+    if not config.get("silent", False):
+        print(f"[INFO] Total episodes updated: {updated_count}")
 
 if __name__ == "__main__":
     main()
