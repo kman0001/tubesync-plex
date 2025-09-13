@@ -70,19 +70,8 @@ if [ -f "$BASE_DIR/requirements.txt" ]; then
 
     PIP_BIN="$BASE_DIR/venv/bin/pip"
 
-    # Get list of currently installed packages
-    INSTALLED=$($PIP_BIN freeze)
-
-    # Find packages from requirements.txt that are not installed
-    MISSING=$(grep -v '^#' "$BASE_DIR/requirements.txt" | while read -r pkg; do
-        echo "$INSTALLED" | grep -i -q "^$pkg" || echo "$pkg"
-    done)
-
-    # Get list of outdated packages
-    OUTDATED=$($PIP_BIN list --outdated --format=freeze)
-
-    # Run pip install only if there are missing or outdated packages
-    if [ -n "$MISSING" ] || [ -n "$OUTDATED" ]; then
+    # Use dry-run to check if installation is needed
+    if $PIP_BIN install --upgrade --disable-pip-version-check -r "$BASE_DIR/requirements.txt" --dry-run 2>/dev/null | grep -q -v "Requirement already satisfied"; then
         echo "$LOG_PREFIX Installing/Updating Python dependencies..."
         if ! $PIP_BIN install --upgrade --disable-pip-version-check -q -q -r "$BASE_DIR/requirements.txt"; then
             echo "$LOG_PREFIX ERROR: pip install failed."
