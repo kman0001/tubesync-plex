@@ -12,7 +12,7 @@ default_config = {
     "_comment": {
         "plex_base_url": "Your Plex server base URL, e.g., http://localhost:32400",
         "plex_token": "Your Plex server token",
-        "plex_library_names": "List of library names to sync metadata, e.g., ["TV Shows", "Anime"]",
+        "plex_library_names": "List of library names to sync metadata. Example: [\"TV Shows\", \"Anime\"]. Just use double quotes, no need to escape.",
         "silent": "true or false, whether to suppress logs",
         "detail": "true or false, whether to show detailed update logs",
         "subtitles": "true or false, whether to upload subtitles if available"
