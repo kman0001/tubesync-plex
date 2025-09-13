@@ -4,9 +4,11 @@ from plexapi.server import PlexServer
 import lxml.etree as ET
 
 video_extensions = (".mkv", ".mp4", ".avi", ".mov", ".wmv", ".flv", ".m4v")
-CONFIG_FILE = "config.json"
 
-# Default config structure with comments
+# Get CONFIG_FILE path from environment variable or use default
+CONFIG_FILE = os.environ.get("CONFIG_FILE", "config.json")
+
+# Default config structure with English comments
 default_config = {
     "_comment": {
         "plex_base_url": "Your Plex server base URL, e.g., http://localhost:32400",
@@ -26,14 +28,14 @@ default_config = {
     "subtitles": False
 }
 
-# Create config.json if missing
+# Create config.json if it does not exist
 if not os.path.exists(CONFIG_FILE):
     with open(CONFIG_FILE, "w", encoding="utf-8") as f:
         json.dump(default_config, f, indent=4)
     print(f"[INFO] {CONFIG_FILE} created. Please edit it with your Plex settings and rerun the script.")
     exit(0)
 
-# Load config
+# Load config.json
 with open(CONFIG_FILE, "r", encoding="utf-8") as f:
     config = json.load(f)
 
@@ -42,24 +44,28 @@ def main():
     plex_token = config["plex_token"]
     plex_library_name = config["plex_library_name"]
 
-    # Plex connection with error handling
+    # Connect to Plex server
     try:
         plex = PlexServer(plex_base_url, plex_token)
     except Exception as e:
         print(f"[ERROR] Failed to connect to Plex server: {e}")
         exit(1)
 
+    # Access the specified library section
     try:
         section = plex.library.section(plex_library_name)
     except Exception as e:
         print(f"[ERROR] Failed to access library '{plex_library_name}': {e}")
         exit(1)
 
+    # Determine which items to update
     title_filter = '' if config.get("syncAll", False) else 'Episode '
     updated_count = 0
 
+    # Iterate through episodes
     for ep in section.search(title=title_filter, libtype='episode'):
         for part in ep.iterParts():
+            # Skip non-video files
             if not part.file.lower().endswith(video_extensions):
                 continue
 
@@ -81,6 +87,7 @@ def main():
                 if root is None:
                     continue
 
+                # Extract metadata from NFO
                 title = root.findtext('title', default='')
                 aired = root.findtext('aired', default='')
                 plot = root.findtext('plot', default='')
@@ -88,12 +95,14 @@ def main():
                 if config.get("detail", False):
                     print(f"[-] Updating: {title} - Aired: {aired}")
 
+                # Update Plex metadata
                 try:
                     ep.editTitle(title, locked=True)
                     ep.editSortTitle(aired, locked=True)
                     ep.editSummary(plot, locked=True)
                     updated_count += 1
-                    # Delete NFO only after successful update
+
+                    # Delete NFO after successful update
                     try:
                         os.remove(nfo_path)
                         if not config.get("silent", False):
@@ -103,6 +112,7 @@ def main():
                 except Exception as e:
                     print(f"[ERROR] Failed to update Plex metadata for {ep.title}: {e}")
 
+    # Print summary
     if not config.get("silent", False):
         print(f"[INFO] {updated_count} metadata items updated.")
 
