@@ -56,35 +56,24 @@ if [ -f "$REQ_FILE_PATH" ]; then
         INSTALLED_PACKAGES["$NAME"]="$VER"
     done < <($PIP_BIN freeze)
 
-    # Check outdated packages
-    OUTDATED=$($PIP_BIN list --outdated --format=freeze)
+    # Read required packages from requirements.txt
+    while IFS= read -r req_line || [[ -n "$req_line" ]]; do
+        [[ "$req_line" =~ ^# ]] && continue  # skip comments
+        PKG=$(echo "$req_line" | cut -d= -f1)
+        REQ_VER=$(echo "$req_line" | cut -d= -f3)
+        INST_VER="${INSTALLED_PACKAGES[$PKG]}"
 
-    if [ -n "$OUTDATED" ]; then
-        while read -r line; do
-            PKG=$(echo "$line" | cut -d= -f1)
-            NEW_VER=$(echo "$line" | cut -d= -f3)
-            OLD_VER="${INSTALLED_PACKAGES[$PKG]}"
-            echo "$LOG_PREFIX Updating package: $PKG $OLD_VER → $NEW_VER"
-        done <<< "$OUTDATED"
-    fi
+        if [ -z "$INST_VER" ]; then
+            echo "$LOG_PREFIX Installing new package: $PKG $REQ_VER"
+            $PIP_BIN install --disable-pip-version-check -q "$req_line" >/dev/null 2>&1
+        elif [ "$INST_VER" != "$REQ_VER" ]; then
+            echo "$LOG_PREFIX Updating package: $PKG $INST_VER → $REQ_VER"
+            $PIP_BIN install --disable-pip-version-check -q "$req_line" >/dev/null 2>&1
+        fi
+        # 이미 설치된 동일 버전 패키지는 pip install 호출 안 함 → Requirement already satisfied 메시지 없음
+    done < "$REQ_FILE_PATH"
 
-    # Check missing packages
-    MISSING=$(comm -23 <(sort "$REQ_FILE_PATH") <($PIP_BIN freeze | cut -d= -f1 | sort))
-    if [ -n "$MISSING" ]; then
-        while read -r pkg; do
-            VER=$(grep -i "^$pkg==" "$REQ_FILE_PATH" | cut -d= -f3)
-            echo "$LOG_PREFIX Installing new package: $pkg $VER"
-        done <<< "$MISSING"
-    fi
-
-    # Install/update packages, suppress all pip output
-    $PIP_BIN install --upgrade --disable-pip-version-check -q -q -r "$REQ_FILE_PATH" >/dev/null 2>&1 || { echo "$LOG_PREFIX ERROR: pip install failed."; exit 1; }
-
-    if [ -z "$OUTDATED" ] && [ -z "$MISSING" ]; then
-        echo "$LOG_PREFIX All dependencies are already up to date."
-    else
-        echo "$LOG_PREFIX Dependencies installed/updated successfully."
-    fi
+    echo "$LOG_PREFIX Python dependencies check complete."
 else
     echo "$LOG_PREFIX requirements.txt not found. Skipping pip install."
 fi
