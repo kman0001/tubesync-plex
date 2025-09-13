@@ -70,20 +70,20 @@ if [ -f "$BASE_DIR/requirements.txt" ]; then
 
     PIP_BIN="$BASE_DIR/venv/bin/pip"
 
-    # 현재 설치된 패키지
-    INSTALLED_PACKAGES=$($PIP_BIN freeze)
+    # Get list of currently installed packages
+    INSTALLED=$($PIP_BIN freeze)
 
-    # 설치해야 할 패키지 (아직 설치되지 않은 것만)
-    MISSING_PACKAGES=$(grep -v '^#' "$BASE_DIR/requirements.txt" | while read -r pkg; do
-        echo "$INSTALLED_PACKAGES" | grep -i -q "^$pkg" || echo "$pkg"
+    # Find packages from requirements.txt that are not installed
+    MISSING=$(grep -v '^#' "$BASE_DIR/requirements.txt" | while read -r pkg; do
+        echo "$INSTALLED" | grep -i -q "^$pkg" || echo "$pkg"
     done)
 
-    # 업데이트 필요한 패키지
-    OUTDATED_PACKAGES=$($PIP_BIN list --outdated --format=freeze | cut -d= -f1)
+    # Get list of outdated packages
+    OUTDATED=$($PIP_BIN list --outdated --format=freeze)
 
-    if [ -n "$MISSING_PACKAGES" ] || [ -n "$OUTDATED_PACKAGES" ]; then
+    # Run pip install only if there are missing or outdated packages
+    if [ -n "$MISSING" ] || [ -n "$OUTDATED" ]; then
         echo "$LOG_PREFIX Installing/Updating Python dependencies..."
-        # requirements.txt 기반 설치 (설치 또는 업데이트 발생)
         if ! $PIP_BIN install --upgrade --disable-pip-version-check -q -q -r "$BASE_DIR/requirements.txt"; then
             echo "$LOG_PREFIX ERROR: pip install failed."
             exit 1
@@ -94,7 +94,6 @@ if [ -f "$BASE_DIR/requirements.txt" ]; then
 else
     echo "$LOG_PREFIX requirements.txt not found. Skipping pip install."
 fi
-
 
 # 5. Run tubesync-plex with the JSON configuration
 if [ -f "$BASE_DIR/tubesync-plex-metadata.py" ]; then
