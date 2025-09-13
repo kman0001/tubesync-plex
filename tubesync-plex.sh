@@ -19,10 +19,24 @@ if [ ! -d "$BASE_DIR/.git" ]; then
         git clone "$REPO_URL" "$BASE_DIR"
     fi
 else
-    echo "$LOG_PREFIX Updating repository..."
+    echo "$LOG_PREFIX Checking for updates in repository..."
     cd "$BASE_DIR" || exit 1
-    git reset --hard
-    git pull
+    git fetch origin
+    BRANCH="main"
+    CHANGED_FILES=$(git diff --name-only HEAD origin/$BRANCH)
+
+    if [ -n "$CHANGED_FILES" ]; then
+        echo "$LOG_PREFIX Updated files from GitHub:"
+        echo "$CHANGED_FILES"
+
+        # 병합 시도
+        if ! git merge --no-edit origin/$BRANCH; then
+            echo "$LOG_PREFIX Merge conflict detected. Overwriting with remote version..."
+            git reset --hard origin/$BRANCH
+        fi
+    else
+        echo "$LOG_PREFIX No updates from GitHub."
+    fi
 fi
 
 # 2. Check if python3-venv is installed
@@ -44,7 +58,6 @@ fi
 # 4. Install or update Python dependencies quietly, only if needed
 echo "$LOG_PREFIX Installing Python dependencies..."
 "$BASE_DIR/venv/bin/pip" install --upgrade-strategy only-if-needed -r "$BASE_DIR/requirements.txt" -q -q
-
 
 # 5. Run tubesync-plex with the JSON configuration
 if [ -f "$BASE_DIR/tubesync-plex-metadata.py" ]; then
