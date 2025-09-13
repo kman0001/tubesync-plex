@@ -54,7 +54,7 @@ if [ -f "$REQ_FILE_PATH" ]; then
     echo "$LOG_PREFIX Checking Python dependencies..."
     PIP_BIN="$BASE_DIR/venv/bin/pip"
 
-    # Get installed packages
+    # 현재 설치된 패키지 목록 (이름=버전)
     declare -A INSTALLED_PACKAGES
     while read -r line; do
         NAME=$(echo "$line" | cut -d= -f1)
@@ -62,23 +62,30 @@ if [ -f "$REQ_FILE_PATH" ]; then
         INSTALLED_PACKAGES["$NAME"]="$VER"
     done < <($PIP_BIN list --format=freeze)
 
-    # Process each package in requirements.txt
+    UPDATED=false
+    # requirements.txt 처리
     while IFS= read -r req_line || [[ -n "$req_line" ]]; do
-        [[ "$req_line" =~ ^# ]] && continue  # skip comments
+        [[ "$req_line" =~ ^# ]] && continue  # 주석 무시
         PKG=$(echo "$req_line" | cut -d= -f1)
         REQ_VER=$(echo "$req_line" | cut -d= -f3)
         INST_VER="${INSTALLED_PACKAGES[$PKG]}"
 
         if [ -z "$INST_VER" ]; then
-            echo "$LOG_PREFIX Installing new package: $PKG $REQ_VER"
+            echo "$LOG_PREFIX Installing: $PKG==$REQ_VER"
             $PIP_BIN install --disable-pip-version-check -q "$req_line" >/dev/null 2>&1
+            UPDATED=true
         elif [ "$INST_VER" != "$REQ_VER" ]; then
-            echo "$LOG_PREFIX Updating package: $PKG $INST_VER → $REQ_VER"
+            echo "$LOG_PREFIX Updating: $PKG $INST_VER → $REQ_VER"
             $PIP_BIN install --disable-pip-version-check -q "$req_line" >/dev/null 2>&1
+            UPDATED=true
         fi
     done < "$REQ_FILE_PATH"
 
-    echo "$LOG_PREFIX Python dependencies check complete."
+    if [ "$UPDATED" = false ]; then
+        echo "$LOG_PREFIX All Python dependencies up-to-date."
+    else
+        echo "$LOG_PREFIX Python dependencies updated."
+    fi
 else
     echo "$LOG_PREFIX requirements.txt not found. Skipping pip install."
 fi
