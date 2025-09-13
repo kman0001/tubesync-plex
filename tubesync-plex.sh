@@ -23,13 +23,16 @@ if [ ! -d "$BASE_DIR/.git" ]; then
 else
     echo "$LOG_PREFIX Checking for updates in repository..."
     pushd "$BASE_DIR" >/dev/null || { echo "$LOG_PREFIX ERROR: Cannot cd to $BASE_DIR"; exit 1; }
+
     git fetch origin || { echo "$LOG_PREFIX ERROR: git fetch failed."; popd >/dev/null; exit 1; }
-    BRANCH="main"
+
+    BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
     CHANGED_FILES=$(git diff --name-only HEAD origin/$BRANCH)
+
     if [ -n "$CHANGED_FILES" ]; then
         echo "$LOG_PREFIX Updated files from GitHub:"
         echo "$CHANGED_FILES"
-        git merge --no-edit origin/$BRANCH || git reset --hard origin/$BRANCH
+        git merge --no-edit origin/$BRANCH || git reset --merge origin/$BRANCH
     else
         echo "$LOG_PREFIX No updates from GitHub."
     fi
@@ -37,7 +40,9 @@ else
 fi
 
 # 4. Check python3-venv
-dpkg -s python3-venv &>/dev/null || { apt update && apt install -y python3-venv || { echo "$LOG_PREFIX ERROR: Failed to install python3-venv."; exit 1; }; }
+if ! dpkg -s python3-venv &>/dev/null; then
+    apt update && apt install -y python3-venv || { echo "$LOG_PREFIX ERROR: Failed to install python3-venv."; exit 1; }
+fi
 
 # 5. Create virtual environment
 [ -d "$BASE_DIR/venv" ] || python3 -m venv "$BASE_DIR/venv" || { echo "$LOG_PREFIX ERROR: Failed to create virtualenv."; exit 1; }
@@ -55,7 +60,7 @@ if [ -f "$REQ_FILE_PATH" ]; then
         NAME=$(echo "$line" | cut -d= -f1)
         VER=$(echo "$line" | cut -d= -f3)
         INSTALLED_PACKAGES["$NAME"]="$VER"
-    done < <($PIP_BIN freeze)
+    done < <($PIP_BIN list --format=freeze)
 
     # Process each package in requirements.txt
     while IFS= read -r req_line || [[ -n "$req_line" ]]; do
@@ -71,7 +76,6 @@ if [ -f "$REQ_FILE_PATH" ]; then
             echo "$LOG_PREFIX Updating package: $PKG $INST_VER → $REQ_VER"
             $PIP_BIN install --disable-pip-version-check -q "$req_line" >/dev/null 2>&1
         fi
-        # 이미 설치된 동일 버전 패키지는 pip install 호출 안 함 → pip 메시지 없음
     done < "$REQ_FILE_PATH"
 
     echo "$LOG_PREFIX Python dependencies check complete."
