@@ -72,13 +72,13 @@ genre: "{genre}"
 python json_to_nfo.py
 
 # YAML 템플릿 지정
-python json_to_nfo.py --yaml /volume1/docker/tubesync/nfo/tubesync.yaml
+python json_to_nfo.py --yaml /docker/tubesync/nfo/tubesync.yaml
 
 # JSON 폴더와 YAML 모두 지정
-python json_to_nfo.py --json-folder /volume1/docker/tubesync/nfo/videos --yaml /volume1/docker/tubesync/nfo/tubesync.yaml
+python json_to_nfo.py --json-folder /json_to_nfo/json --yaml /json_to_nfo/tubesync.yaml
 ```
 
-* `videos` 폴더 내 모든 `.json` 파일에 대해 NFO 파일이 생성됩니다.
+* `json` 폴더 내 모든 `.json` 파일에 대해 NFO 파일이 생성됩니다.
 * `.info.json`에서 `.info`는 제거되고 `.nfo`로 저장됩니다.
 * 같은 이름의 이미지 파일이 있으면 `<thumb>`에 적용됩니다.
 * 이미지가 없으면 info.json 내부 `thumbnail` URL이 사용됩니다.
@@ -104,5 +104,4 @@ python json_to_nfo.py --json-folder /volume1/docker/tubesync/nfo/videos --yaml /
 ## 추가 기능
 
 * YAML 템플릿과 JSON 폴더를 옵션으로 지정 가능
-* `yt-dlp` 다운로드 후 **자동 NFO 생성(Post-hook)** 으로 연동 가능
 * UTF-8 인코딩 포함으로 멀티바이트 문자 안전
