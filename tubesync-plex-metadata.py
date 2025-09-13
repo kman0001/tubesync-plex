@@ -51,8 +51,16 @@ def main(config_path, silent, syncAll, subtitles, detail):
                 ep.editTitle(title, locked=True)
                 ep.editSortTitle(aired, locked=True)
                 ep.editSummary(plot, locked=True)
-
                 updated_count += 1
+
+                # Delete NFO after successful update
+                try:
+                    os.remove(nfo_data_file_path)
+                    if detail:
+                        print(f"[-] Deleted NFO: {nfo_data_file_path}")
+                except Exception as e:
+                    if detail:
+                        print(f"[!] Failed to delete NFO: {e}")
 
     # Summary output
     if not silent and not detail:
