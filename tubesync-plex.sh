@@ -66,22 +66,17 @@ fi
 
 # 4. Install or update Python dependencies only if needed
 if [ -f "$BASE_DIR/requirements.txt" ]; then
-    echo "$LOG_PREFIX Checking Python dependencies..."
-    # freeze 형식으로 비교해서 업데이트 필요한지 확인
-    if "$BASE_DIR/venv/bin/pip" list --outdated --format=freeze | grep -q .; then
-        echo "$LOG_PREFIX Updating Python dependencies..."
-        if ! "$BASE_DIR/venv/bin/pip" install --upgrade-strategy only-if-needed \
-            --disable-pip-version-check -q -q \
-            -r "$BASE_DIR/requirements.txt"; then
-            echo "$LOG_PREFIX ERROR: pip install failed."
-            exit 1
-        fi
-    else
-        echo "$LOG_PREFIX All dependencies are already up to date."
+    echo "$LOG_PREFIX Installing/Updating Python dependencies..."
+    if ! "$BASE_DIR/venv/bin/pip" install --upgrade-strategy only-if-needed \
+        --disable-pip-version-check -q -q \
+        -r "$BASE_DIR/requirements.txt" 2>&1 | grep -v "Requirement already satisfied"; then
+        echo "$LOG_PREFIX ERROR: pip install failed."
+        exit 1
     fi
 else
     echo "$LOG_PREFIX requirements.txt not found. Skipping pip install."
 fi
+
 
 # 5. Run tubesync-plex with the JSON configuration
 if [ -f "$BASE_DIR/tubesync-plex-metadata.py" ]; then
