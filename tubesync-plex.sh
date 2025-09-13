@@ -21,7 +21,7 @@ if [ ! -d "$BASE_DIR/.git" ]; then
         git clone "$REPO_URL" "$BASE_DIR" || { echo "$LOG_PREFIX ERROR: Failed to clone repository."; exit 1; }
     fi
 else
-    echo "$LOG_PREFIX Checking for updates in repository..."
+    echo "$LOG_PREFIX Checking for repository updates..."
     pushd "$BASE_DIR" >/dev/null || { echo "$LOG_PREFIX ERROR: Cannot cd to $BASE_DIR"; exit 1; }
 
     git fetch origin || { echo "$LOG_PREFIX ERROR: git fetch failed."; popd >/dev/null; exit 1; }
@@ -44,22 +44,39 @@ if ! dpkg -s python3-venv &>/dev/null; then
     apt update && apt install -y python3-venv || { echo "$LOG_PREFIX ERROR: Failed to install python3-venv."; exit 1; }
 fi
 
-# 5. Create virtual environment
+# 5. Create virtual environment if not exists
 [ -d "$BASE_DIR/venv" ] || python3 -m venv "$BASE_DIR/venv" || { echo "$LOG_PREFIX ERROR: Failed to create virtualenv."; exit 1; }
 
-# 6. Install/update Python dependencies (quiet, only if needed)
-REQ_FILE_PATH="$BASE_DIR/requirements.txt"
+# 6. Install/update Python dependencies based on GitHub requirements.txt
+REQ_FILE="$BASE_DIR/requirements.txt"
+REQ_HASH_FILE="$BASE_DIR/.requirements_hash"
+PIP_BIN="$BASE_DIR/venv/bin/pip"
 
-if [ -f "$REQ_FILE_PATH" ]; then
+if [ -f "$REQ_FILE" ]; then
     echo "$LOG_PREFIX Checking Python dependencies..."
-    PIP_BIN="$BASE_DIR/venv/bin/pip"
+    NEW_HASH=$(md5sum "$REQ_FILE" | awk '{print $1}')
+    OLD_HASH=""
+    [ -f "$REQ_HASH_FILE" ] && OLD_HASH=$(cat "$REQ_HASH_FILE")
+    INSTALL_REQUIRED=false
 
-    DIFF=$($PIP_BIN list --format=freeze | diff - "$REQ_FILE_PATH")
+    # Check if requirements.txt has changed
+    if [ "$NEW_HASH" != "$OLD_HASH" ]; then
+        INSTALL_REQUIRED=true
+    else
+        # If requirements.txt unchanged, check if any packages are missing
+        while read -r line || [[ -n "$line" ]]; do
+            [[ "$line" =~ ^# ]] && continue  # Skip comment lines
+            PKG=$(echo "$line" | awk -F '==' '{print $1}')
+            $PIP_BIN show "$PKG" &>/dev/null || INSTALL_REQUIRED=true
+        done < "$REQ_FILE"
+    fi
 
-    if [ -n "$DIFF" ]; then
-        echo "$LOG_PREFIX Updating Python dependencies..."
-        $PIP_BIN install --disable-pip-version-check -q -r "$REQ_FILE_PATH" >/dev/null 2>&1
-        echo "$LOG_PREFIX Python dependencies updated."
+    # Install or update packages if needed
+    if [ "$INSTALL_REQUIRED" = true ]; then
+        echo "$LOG_PREFIX Installing/updating Python dependencies..."
+        $PIP_BIN install --disable-pip-version-check -q -r "$REQ_FILE" >/dev/null 2>&1
+        echo "$LOG_PREFIX Python dependencies installed/updated."
+        echo "$NEW_HASH" > "$REQ_HASH_FILE"
     else
         echo "$LOG_PREFIX All Python dependencies up-to-date."
     fi
@@ -67,7 +84,7 @@ else
     echo "$LOG_PREFIX requirements.txt not found. Skipping pip install."
 fi
 
-# 7. Run tubesync-plex
+# 7. Run tubesync-plex script
 if [ -f "$BASE_DIR/tubesync-plex-metadata.py" ]; then
     echo "$LOG_PREFIX Running tubesync-plex with config $CONFIG_FILE..."
     "$BASE_DIR/venv/bin/python" "$BASE_DIR/tubesync-plex-metadata.py" --config "$CONFIG_FILE" >/dev/null 2>&1 || { echo "$LOG_PREFIX ERROR: tubesync-plex-metadata.py execution failed."; exit 1; }
