@@ -1,0 +1,23 @@
+# custom_extractor.yaml
+title: "{title}"
+showtitle: "{showtitle}"
+season: "{season}"
+episode: "{episode}"
+ratings:
+  - name: "youtube"
+    max: 5
+    default: true
+    value: "{rating_value|default:0}"
+    votes: "{rating_votes|default:0}"
+plot: "{description}"
+thumb: "{thumbnail}"
+runtime: "{duration}"
+id: "{id}"
+uniqueid:
+  type: "youtube"
+  default: true
+  value: "{id}"
+studio: "{uploader}"
+aired: "{upload_date|date:%Y-%m-%d}"
+dateadded: "{dateadded|default:now:%Y-%m-%d %H:%M:%S}"
+genre: "{genre}"
