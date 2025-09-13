@@ -43,7 +43,8 @@ fi
 
 # 4. Install or update Python dependencies quietly, only if needed
 echo "$LOG_PREFIX Installing Python dependencies..."
-"$BASE_DIR/venv/bin/pip" install --upgrade-strategy only-if-needed -r "$BASE_DIR/requirements.txt" -q -q
+"$BASE_DIR/venv/bin/pip" install --upgrade-strategy only-if-needed -r "$BASE_DIR/requirements.txt" -q -q | grep -v "Requirement already satisfied"
+
 
 # 5. Run tubesync-plex with the JSON configuration
 if [ -f "$BASE_DIR/tubesync-plex-metadata.py" ]; then
