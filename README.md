@@ -1,3 +1,15 @@
+# TubeSync Plex Metadata Sync (Personal Update)
+
+This repository is a **personal fork** of [tgouverneur/tubesync-plex](https://github.com/tgouverneur/tubesync-plex) and has been updated for **personal use**.
+
+## Key Changes in this Fork
+- Simplified default log output
+- Added `-d / --detail` option for detailed metadata updates
+- Disallow simultaneous use of `-s / --silent` and `-d / --detail` options
+
+> ⚠️ **Note:** This fork is maintained for personal purposes and may differ from the original repository.
+
+
 # tubesync-plex
 
 After using TubeSync for a little while, I was frustrated that the title of my youtube videos were not synced from either the NFO or the MKV's metadata in Plex.
