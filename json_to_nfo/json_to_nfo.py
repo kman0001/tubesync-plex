@@ -8,8 +8,8 @@ from datetime import datetime
 
 # 커맨드라인 인자 처리
 parser = argparse.ArgumentParser(description="Batch JSON to NFO Converter")
-parser.add_argument("--json-folder", default="videos", help="info.json 파일이 있는 폴더")
-parser.add_argument("--yaml", default="/volume1/docker/tubesync/nfo/tubesync.yaml", help="사용할 YAML 템플릿 파일")
+parser.add_argument("--json-folder", default="/where/your/info.json", help="info.json 파일이 있는 폴더")
+parser.add_argument("--yaml", default="/where/your/yaml/tubesync.yaml", help="사용할 YAML 템플릿 파일")
 args = parser.parse_args()
 
 JSON_FOLDER = args.json_folder
