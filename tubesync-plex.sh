@@ -77,7 +77,7 @@ if [ -f "$REQ_FILE_PATH" ]; then
         done <<< "$MISSING"
     fi
 
-    # Install/update packages, suppress all output
+    # Install/update packages, suppress all pip output (stdout + stderr)
     $PIP_BIN install --upgrade --disable-pip-version-check -q -q -r "$REQ_FILE_PATH" >/dev/null 2>&1 || { echo "$LOG_PREFIX ERROR: pip install failed."; exit 1; }
 
     if [ -z "$OUTDATED" ] && [ -z "$MISSING" ]; then
