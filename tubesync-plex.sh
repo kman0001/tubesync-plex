@@ -66,12 +66,30 @@ fi
 
 # 4. Install or update Python dependencies only if needed
 if [ -f "$BASE_DIR/requirements.txt" ]; then
-    echo "$LOG_PREFIX Installing/Updating Python dependencies..."
-    if ! "$BASE_DIR/venv/bin/pip" install --upgrade-strategy only-if-needed \
-        --disable-pip-version-check -q -q \
-        -r "$BASE_DIR/requirements.txt" 2>&1 | grep -v "Requirement already satisfied"; then
-        echo "$LOG_PREFIX ERROR: pip install failed."
-        exit 1
+    echo "$LOG_PREFIX Checking Python dependencies..."
+
+    PIP_BIN="$BASE_DIR/venv/bin/pip"
+
+    # 현재 설치된 패키지
+    INSTALLED_PACKAGES=$($PIP_BIN freeze)
+
+    # 설치해야 할 패키지 (아직 설치되지 않은 것만)
+    MISSING_PACKAGES=$(grep -v '^#' "$BASE_DIR/requirements.txt" | while read -r pkg; do
+        echo "$INSTALLED_PACKAGES" | grep -i -q "^$pkg" || echo "$pkg"
+    done)
+
+    # 업데이트 필요한 패키지
+    OUTDATED_PACKAGES=$($PIP_BIN list --outdated --format=freeze | cut -d= -f1)
+
+    if [ -n "$MISSING_PACKAGES" ] || [ -n "$OUTDATED_PACKAGES" ]; then
+        echo "$LOG_PREFIX Installing/Updating Python dependencies..."
+        # requirements.txt 기반 설치 (설치 또는 업데이트 발생)
+        if ! $PIP_BIN install --upgrade --disable-pip-version-check -q -q -r "$BASE_DIR/requirements.txt"; then
+            echo "$LOG_PREFIX ERROR: pip install failed."
+            exit 1
+        fi
+    else
+        echo "$LOG_PREFIX All dependencies are already up to date."
     fi
 else
     echo "$LOG_PREFIX requirements.txt not found. Skipping pip install."
