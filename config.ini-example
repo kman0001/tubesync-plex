@@ -1,7 +1,0 @@
-[DEFAULT]
-plex_base_url = 'http://vod:32100'
-plex_token = ''
-plex_library_name = 'YouTube Channels'
-
-# 로컬 Tubesync 디렉토리
-base_dir = /volume1/docker/tubesync/tubesync-plex
