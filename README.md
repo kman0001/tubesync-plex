@@ -15,109 +15,132 @@ This repository is a **personal fork** of [tgouverneur/tubesync-plex](https://gi
 ---
 
 
-
 # TubeSync Plex Metadata Sync
 
-This project allows you to synchronize NFO metadata files with your Plex library.
+A tool to sync metadata from NFO files to your Plex library automatically.
 
-## Features
+---
 
-* Updates Plex metadata (title, aired date, plot) from NFO files.
-* Deletes NFO files after successful update.
-* Supports common video file types: `.mkv`, `.mp4`, `.avi`, `.mov`, `.wmv`, `.flv`, `.m4v`.
-* Supports subtitles upload (optional).
-* Logs detailed updates and errors.
+## Requirements
 
-## Installation
+* Python 3.10+
+* `python3-venv` package installed
+* Plex server with a valid token
+* Permissions to read/write Plex library metadata
+* Bash shell for running `tubesync-plex.sh`
 
-Clone the repository and set up the Python environment:
+---
+
+## Setup
+
+1. **Clone or download the repository**
+   You can either clone the repo manually or let the shell script handle it:
 
 ```bash
-git clone https://github.com/kman0001/tubesync-plex.git
-cd tubesync-plex
-python3 -m venv venv
-source venv/bin/activate
-pip install --upgrade pip
-pip install -r requirements.txt
+export CONFIG_FILE="./config.json"
+/bin/bash tubesync-plex.sh
 ```
 
-## Configuration
+2. **Python virtual environment**
+   The script will automatically create a `venv` in the same folder as `tubesync-plex.sh` and install dependencies from `requirements.txt`.
 
-The script uses a `config.json` file to store configuration options.
-
-### config.json Example
+3. **Configuration file (`config.json`)**
+   The first time you run the Python script, a default `config.json` will be created if it does not exist.
+   Edit it to provide your Plex server details:
 
 ```json
 {
-    "base_dir": ".",
-    "plex_base_url": "http://127.0.0.1:32400",
-    "plex_token": "YOUR_PLEX_TOKEN",
-    "plex_library_name": "TV Shows",
-    "video_extensions": [".mkv", ".mp4", ".avi", ".mov", ".wmv", ".flv", ".m4v"]
+    "_comment": {
+        "plex_base_url": "Your Plex server base URL, e.g., http://localhost:32400",
+        "plex_token": "Your Plex server token",
+        "plex_library_name": "Name of the library to sync metadata",
+        "silent": "true or false, whether to suppress logs",
+        "detail": "true or false, whether to show detailed update logs",
+        "syncAll": "true or false, whether to update all items",
+        "subtitles": "true or false, whether to upload subtitles if available"
+    },
+    "plex_base_url": "",
+    "plex_token": "",
+    "plex_library_name": "",
+    "silent": false,
+    "detail": false,
+    "syncAll": false,
+    "subtitles": false
 }
 ```
 
-* `base_dir`: Directory where the script resides (used for virtual environment and repo updates).
-* `plex_base_url`: URL of your Plex server.
-* `plex_token`: Your Plex token.
-* `plex_library_name`: The Plex library to update.
-* `video_extensions`: List of video file extensions to process.
+4. **Permissions**
+   Ensure the user running the script has read/write access to:
 
-**Note:** If `config.json` does not exist, the script will create it with default values and prompt you to fill in the necessary fields.
+   * Plex library folder for metadata updates
+   * NFO files in the library
+   * Log file location
 
-## Usage
+---
 
-### Python Script
+## Running
 
-Run the metadata sync:
-
-```bash
-python tubesync-plex-metadata.py [options]
-```
-
-**Options:**
-
-* `-s, --silent` : Run in silent mode (no output except errors).
-* `-d, --detail` : Show detailed logs.
-* `--all`        : Update all items in the library.
-* `--subtitles`  : Upload subtitles if found.
-
-**Example:**
+Run the shell script:
 
 ```bash
-python tubesync-plex-metadata.py --all -d --subtitles
+/bin/bash tubesync-plex.sh
 ```
 
-### Shell Script
+* It will clone or update the repository.
+* Check/install Python virtual environment.
+* Install/update dependencies.
+* Run the Python script using the JSON configuration.
 
-The `update.sh` script automates repository updates and runs the metadata sync.
+### Options in `config.json`
+
+* `silent`: Suppress console logs if true.
+* `detail`: Show detailed logs for each NFO processed.
+* `syncAll`: Update all items in the library instead of filtering by default title.
+* `subtitles`: Automatically upload subtitles if available.
+
+---
+
+## NFO Handling
+
+* Only video files with common extensions (`.mkv`, `.mp4`, `.avi`, `.mov`, `.wmv`, `.flv`, `.m4v`) are processed.
+* Metadata (title, aired date, plot) is read from NFO files and applied to Plex.
+* NFO files are **deleted only after successful metadata update**.
+* If parsing fails or Plex update fails, NFO files are **not deleted**.
+* Errors are logged, depending on the `silent` and `detail` options.
+
+---
+
+## Running Periodically with Cron
+
+1. Open the cron editor:
 
 ```bash
-./update.sh
+crontab -e
 ```
 
-You can specify a custom config file via environment variable:
+2. Add a line like this to run the script every day at 3 AM:
 
 ```bash
-export CONFIG_FILE="/path/to/config.json"
-./update.sh
+0 3 * * * /bin/bash /path/to/tubesync-plex.sh >> /path/to/tubesync.log 2>&1
 ```
 
-### Modifying `update.sh`
+* Replace `/path/to/tubesync-plex.sh` with the full path to your script.
+* `>> /path/to/tubesync.log 2>&1` logs all output including errors.
+* Adjust the schedule as needed:
 
-* `BASE_DIR` is determined from `CONFIG_FILE` automatically.
-* Python virtual environment is created in `BASE_DIR/venv`.
-* Dependencies are installed automatically.
+  * `*/30 * * * *` → every 30 minutes
+  * `0 0 * * 0` → every Sunday at midnight
 
-### Notes
+---
 
-* The script only deletes NFO files **after successful metadata update**.
-* Malformed or unreadable NFO files are logged, but **not deleted**.
-* The script processes only video files matching the extensions in `config.json`.
-* The script must have network access to the Plex server.
+## Notes
 
-## License
+* `tubesync-plex.sh` should have execution permission:
 
-MIT License
+```bash
+chmod +x tubesync-plex.sh
+```
 
+* Ensure Plex library user has sufficient permissions to update metadata and delete NFO files.
+* Python virtual environment and dependencies are automatically handled by the shell script.
 
