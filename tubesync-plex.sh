@@ -41,10 +41,10 @@ else
     echo "$LOG_PREFIX Virtual environment already exists."
 fi
 
-# 4. Install or update Python dependencies quietly (stdout suppressed, stderr preserved)
-echo "$LOG_PREFIX Installing Python dependencies..."
-"$BASE_DIR/venv/bin/pip" install --upgrade pip --quiet
-"$BASE_DIR/venv/bin/pip" install -r "$BASE_DIR/requirements.txt" --quiet
+# 4. Install or update Python dependencies only if needed
+echo "$LOG_PREFIX Installing Python dependencies if required..."
+"$BASE_DIR/venv/bin/pip" install --upgrade pip --quiet --disable-pip-version-check
+"$BASE_DIR/venv/bin/pip" install -r "$BASE_DIR/requirements.txt" --quiet --exists-action=w --disable-pip-version-check
 
 # 5. Run tubesync-plex with the JSON configuration
 if [ -f "$BASE_DIR/tubesync-plex-metadata.py" ]; then
