@@ -1,32 +1,39 @@
 import os
-import configparser
 import argparse
+import json
 from plexapi.server import PlexServer
 import lxml.etree as ET
 
-video_extensions = (".mkv", ".mp4", ".avi", ".mov", ".wmv", ".flv", ".m4v")
+video_extensions_default = [".mkv", ".mp4", ".avi", ".mov", ".wmv", ".flv", ".m4v"]
 
-def main(config_path, silent, detail, syncAll, subtitles):
-    config = configparser.ConfigParser()
+# 환경변수 CONFIG_FILE 우선, 없으면 ./config.json
+CONFIG_FILE = os.environ.get("CONFIG_FILE", "./config.json")
 
-    if not os.path.exists(config_path):
-        # 기본 config.ini 생성
-        config['DEFAULT'] = {
-            'plex_base_url': 'http://localhost:32400',
-            'plex_token': 'YOUR_PLEX_TOKEN',
-            'plex_library_name': 'YOUR_LIBRARY_NAME'
-        }
-        with open(config_path, 'w', encoding='utf-8') as f:
-            config.write(f)
-        print(f"[INFO] Created default config file: {config_path}")
-        print("Please edit this file to add your Plex server details, then run the script again.")
-        return  # 생성 후 바로 종료
+# config.json이 없으면 생성 후 안내
+if not os.path.exists(CONFIG_FILE):
+    default_config = {
+        "base_dir": ".",
+        "plex_base_url": "",
+        "plex_token": "",
+        "plex_library_name": "",
+        "video_extensions": video_extensions_default
+    }
+    with open(CONFIG_FILE, "w") as f:
+        json.dump(default_config, f, indent=4)
+    print(f"[INFO] Config file created at {CONFIG_FILE}. Please fill in the required fields and rerun.")
+    exit(1)
 
-    config.read(config_path)
+# config.json 로드
+with open(CONFIG_FILE) as f:
+    config = json.load(f)
 
-    plex_base_url = config['DEFAULT']['plex_base_url']
-    plex_token = config['DEFAULT']['plex_token']
-    plex_library_name = config['DEFAULT']['plex_library_name']
+video_extensions = tuple(config.get("video_extensions", video_extensions_default))
+base_dir = config.get("base_dir", ".")
+
+def main(silent, detail, syncAll, subtitles):
+    plex_base_url = config["plex_base_url"]
+    plex_token = config["plex_token"]
+    plex_library_name = config["plex_library_name"]
 
     plex = PlexServer(plex_base_url, plex_token)
     section = plex.library.section(plex_library_name)
@@ -40,60 +47,57 @@ def main(config_path, silent, detail, syncAll, subtitles):
             if not part.file.lower().endswith(video_extensions):
                 continue
 
-            nfo_path = os.path.splitext(part.file)[0] + ".nfo"
-
-            if os.path.exists(nfo_path):
+            nfo_file = os.path.splitext(part.file)[0] + ".nfo"
+            if os.path.exists(nfo_file):
                 if detail:
-                    print(f"[-] Parsing NFO: {nfo_path}")
+                    print(f"[-] Parsing NFO: {nfo_file}")
                 try:
                     parser = ET.XMLParser(recover=True)
-                    tree = ET.parse(nfo_path, parser=parser)
+                    tree = ET.parse(nfo_file, parser=parser)
                 except ET.XMLSyntaxError as e:
-                    print(f"[ERROR] Malformed NFO: {nfo_path}. Details: {e}")
+                    print(f"[ERROR] Malformed NFO: {nfo_file}, {e}")
                     continue
                 except Exception as e:
-                    print(f"[ERROR] Failed to read NFO: {nfo_path}. Details: {e}")
+                    print(f"[ERROR] Failed to read NFO {nfo_file}: {e}")
                     continue
 
                 root = tree.getroot()
                 if root is None:
                     continue
 
-                title = root.findtext('title', default='')
-                aired = root.findtext('aired', default='')
-                plot = root.findtext('plot', default='')
+                title = root.findtext("title", default="")
+                aired = root.findtext("aired", default="")
+                plot = root.findtext("plot", default="")
 
                 if detail:
-                    print(f"[-] Updating: {title} - Aired: {aired}")
+                    print(f"[-] Updating: {title} - {aired}")
 
                 ep.editTitle(title, locked=True)
                 ep.editSortTitle(aired, locked=True)
                 ep.editSummary(plot, locked=True)
-
                 updated_count += 1
 
+                # NFO 삭제
                 try:
-                    os.remove(nfo_path)
+                    os.remove(nfo_file)
                     if not silent:
-                        print(f"[-] Deleted NFO: {nfo_path}")
+                        print(f"[-] Deleted NFO: {nfo_file}")
                 except Exception as e:
-                    print(f"[ERROR] Failed to delete NFO: {nfo_path}. Details: {e}")
+                    print(f"[ERROR] Failed to delete NFO '{nfo_file}': {e}")
 
     if not silent:
         print(f"[INFO] {updated_count} metadata items updated.")
 
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="TubeSync Plex Media Metadata sync tool")
-    parser.add_argument('-c', '--config', type=str, default='./config.ini', help='Path to config file')
-    parser.add_argument('-s', '--silent', action='store_true', help='Run in silent mode')
-    parser.add_argument('-d', '--detail', action='store_true', help='Show detailed logs')
-    parser.add_argument('--all', action='store_true', help='Update all episodes')
-    parser.add_argument('--subtitles', action='store_true', help='Upload subtitles to Plex')
+    parser.add_argument("-s", "--silent", action="store_true", help="Silent mode")
+    parser.add_argument("-d", "--detail", action="store_true", help="Show detailed logs")
+    parser.add_argument("--all", action="store_true", help="Update all items")
+    parser.add_argument("--subtitles", action="store_true", help="Upload subtitles if found")
     args = parser.parse_args()
 
     if args.silent and args.detail:
         print("Error: --silent and --detail cannot be used together.")
         exit(1)
 
-    main(args.config, args.silent, args.detail, args.all, args.subtitles)
+    main(args.silent, args.detail, args.all, args.subtitles)
