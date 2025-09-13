@@ -41,7 +41,7 @@ else
     echo "$LOG_PREFIX Virtual environment already exists."
 fi
 
-# 4. Install or update Python dependencies quietly
+# 4. Install or update Python dependencies quietly (stdout suppressed, stderr preserved)
 echo "$LOG_PREFIX Installing Python dependencies..."
 "$BASE_DIR/venv/bin/pip" install --upgrade pip --quiet
 "$BASE_DIR/venv/bin/pip" install -r "$BASE_DIR/requirements.txt" --quiet
