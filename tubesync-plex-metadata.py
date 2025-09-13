@@ -54,6 +54,15 @@ def main(config_path, silent, detail, syncAll, subtitles):
                 ep.editSortTitle(aired, locked=True)
                 ep.editSummary(plot, locked=True)
 
+                # NFO 삭제
+                try:
+                    os.remove(nfo_data_file_path)
+                    if not silent:
+                        print(f"[-] Deleted NFO: {nfo_data_file_path}")
+                except Exception as e:
+                    print(f"[ERROR] Failed to delete NFO '{nfo_data_file_path}'. Details: {e}")
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='TubeSync Plex Media Metadata sync tool')
     parser.add_argument('-c', '--config', type=str, default='./config.ini', help='Path to the config file')
