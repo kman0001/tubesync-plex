@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      DOCKER_IMAGE: yourdockerhubusername/tubesync-plex:latest
+      DOCKER_IMAGE: kman0001/tubesync-plex:latest
 
     steps:
       # 1. GitHub 리포지토리 체크아웃
