@@ -10,14 +10,14 @@ jobs:
   cleanup:
     runs-on: ubuntu-latest
     steps:
-      - name: Install jq
-        run: sudo apt-get update && sudo apt-get install -y jq curl
+      - name: Install jq and python3
+        run: sudo apt-get update && sudo apt-get install -y jq python3 curl
 
       - name: Authenticate to Docker Hub
         run: |
           echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
 
-      - name: Delete old tags except latest
+      - name: List and delete old tags safely
         run: |
           REPO=${{ env.DOCKER_IMAGE }}
           USERNAME=${{ secrets.DOCKERHUB_USERNAME }}
@@ -31,8 +31,10 @@ jobs:
 
             for TAG in $TAGS; do
               if [[ "$TAG" != "latest" && "$TAG" != "latest-amd64" && "$TAG" != "latest-arm64" ]]; then
+                # URL 인코딩
+                TAG_ENCODED=$(python3 -c "import urllib.parse; print(urllib.parse.quote('''$TAG'''))")
                 echo "Deleting tag: $TAG"
-                curl -s -X DELETE -u $USERNAME:$TOKEN "https://hub.docker.com/v2/repositories/$REPO/tags/$TAG/"
+                curl -s -X DELETE -u $USERNAME:$TOKEN "https://hub.docker.com/v2/repositories/$REPO/tags/$TAG_ENCODED/"
               fi
             done
 
