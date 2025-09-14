@@ -1,6 +1,6 @@
 #!/bin/sh
 # s6 서비스용 NFO 감시 스크립트
 # 반드시 포그라운드 실행으로 유지
-exec /app/entrypoint/tubesync-plex/entrypoint_nfo_watch.sh \
+exec /app/entrypoint/entrypoint_nfo_watch.sh \
     --base-dir /app/entrypoint/tubesync-plex \
     --watch-dir /downloads
