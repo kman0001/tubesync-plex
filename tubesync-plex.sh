@@ -29,15 +29,11 @@ REPO_URL="https://github.com/kman0001/tubesync-plex.git"
 mkdir -p "$BASE_DIR"
 
 # -----------------------------
-# 1. Clone or update repository
+# 1. Clone or always update repository
 # -----------------------------
 if [ ! -d "$BASE_DIR/.git" ]; then
-    if [ -d "$BASE_DIR" ] && [ "$(ls -A "$BASE_DIR")" ]; then
-        echo "$BASE_DIR already exists and is not empty. Skipping clone."
-    else
-        echo "Cloning repository..."
-        git clone "$REPO_URL" "$BASE_DIR"
-    fi
+    echo "Cloning repository..."
+    git clone "$REPO_URL" "$BASE_DIR"
 else
     echo "Updating repository..."
     cd "$BASE_DIR" || exit 1
