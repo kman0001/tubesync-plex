@@ -1,5 +1,4 @@
 #!/bin/bash
-
 set -e
 
 log() {
@@ -8,25 +7,47 @@ log() {
 
 log "START"
 
-# 0. Config file (환경변수로 지정 가능)
-CONFIG_FILE="${CONFIG_FILE:-}"
+# 0. 기본값 설정
+FIXED_BASE_DIR="/tubesync-plex"
+BASE_DIR="$FIXED_BASE_DIR"
+CONFIG_FILE=""
 
-# 1. 유연한 BASE_DIR 탐색
-if [ -n "$CONFIG_FILE" ] && [ -f "$CONFIG_FILE" ]; then
-    BASE_DIR=$(dirname "$(realpath "$CONFIG_FILE")")
-elif [ -f "./tubesync-plex-metadata.py" ]; then
-    BASE_DIR=$(dirname "$(realpath ./tubesync-plex-metadata.py)")
-else
-    SCRIPT_PATH="$(realpath "$0")"
-    BASE_DIR="$(dirname "$SCRIPT_PATH")"
-fi
+# 1. 명령행 옵션 처리
+while [[ $# -gt 0 ]]; do
+    key="$1"
+    case $key in
+        --base-dir)
+        BASE_DIR="$2"
+        shift
+        shift
+        ;;
+        --config)
+        CONFIG_FILE="$2"
+        shift
+        shift
+        ;;
+        *)
+        shift
+        ;;
+    esac
+done
 
 log "BASE_DIR set to: $BASE_DIR"
+log "CONFIG_FILE set to: ${CONFIG_FILE:-none}"
 
-# 2. Repository URL
+# 2. 유연한 CONFIG_FILE 탐색
+if [ -z "$CONFIG_FILE" ]; then
+    if [ -f "$BASE_DIR/config.json" ]; then
+        CONFIG_FILE="$BASE_DIR/config.json"
+    else
+        log "WARNING: config.json not found in $BASE_DIR. You can pass it with --config"
+    fi
+fi
+
+# 3. Repository URL
 REPO_URL="https://github.com/kman0001/tubesync-plex.git"
 
-# 3. Clone or update repository
+# 4. Clone or update repository
 if [ ! -d "$BASE_DIR/.git" ]; then
     if [ -d "$BASE_DIR" ] && [ "$(ls -A "$BASE_DIR")" ]; then
         log "$BASE_DIR exists and is not empty. Skipping clone."
@@ -50,26 +71,24 @@ else
     popd >/dev/null
 fi
 
-# 4. Check python3-venv (Ubuntu/Debian 기준)
+# 5. Check python3-venv
 if ! dpkg -s python3-venv &>/dev/null; then
     log "Installing python3-venv..."
     apt update && apt install -y python3-venv || { log "ERROR: Failed to install python3-venv."; exit 1; }
 fi
 
-# 5. Create virtual environment
+# 6. Create virtual environment
 if [ ! -d "$BASE_DIR/venv" ]; then
     log "Creating virtual environment..."
     python3 -m venv "$BASE_DIR/venv" || { log "ERROR: Failed to create virtualenv."; exit 1; }
 fi
 
-# 6. Install/update Python dependencies
+# 7. Install/update Python dependencies
 REQ_FILE="$BASE_DIR/requirements.txt"
 PIP_BIN="$BASE_DIR/venv/bin/pip"
 
 if [ -f "$REQ_FILE" ]; then
     log "Checking Python dependencies..."
-    
-    # 현재 설치된 패키지 버전 가져오기
     declare -A INSTALLED
     while read -r line; do
         NAME=$(echo "$line" | cut -d= -f1)
@@ -77,7 +96,6 @@ if [ -f "$REQ_FILE" ]; then
         INSTALLED["$NAME"]="$VER"
     done < <($PIP_BIN freeze)
     
-    # requirements.txt 처리
     while IFS= read -r req || [[ -n "$req" ]]; do
         [[ "$req" =~ ^# ]] && continue
         PKG=$(echo "$req" | cut -d= -f1)
@@ -98,7 +116,7 @@ else
     log "requirements.txt not found. Skipping pip install."
 fi
 
-# 7. Run tubesync-plex
+# 8. Run tubesync-plex
 TS_SCRIPT="$BASE_DIR/tubesync-plex-metadata.py"
 if [ -f "$TS_SCRIPT" ]; then
     log "Running tubesync-plex with config $CONFIG_FILE..."
