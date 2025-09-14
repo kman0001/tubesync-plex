@@ -1,97 +1,143 @@
-import os
-import json
-from plexapi.server import PlexServer
-import lxml.etree as ET
+#!/bin/bash
+set -e
 
-# Supported video file extensions
-video_extensions = (".mkv", ".mp4", ".avi", ".mov", ".wmv", ".flv", ".m4v")
-CONFIG_FILE = "config.json"
-
-# Default config with English comments
-default_config = {
-    "_comment": {
-        "plex_base_url": "Your Plex server base URL, e.g., http://localhost:32400",
-        "plex_token": "Your Plex server token",
-        "plex_library_names": "List of library names to sync metadata. Example: [\"TV Shows\", \"Anime\"]. Just use double quotes, no need to escape.",
-        "silent": "true or false, whether to suppress logs",
-        "detail": "true or false, whether to show detailed update logs",
-        "subtitles": "true or false, whether to upload subtitles if available"
-    },
-    "plex_base_url": "",
-    "plex_token": "",
-    "plex_library_names": [""],
-    "silent": False,
-    "detail": False,
-    "subtitles": False
+# -----------------------------
+# 간단 로그 함수
+# -----------------------------
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"
 }
 
-# Create config.json if it does not exist
-if not os.path.exists(CONFIG_FILE):
-    with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-        json.dump(default_config, f, indent=4)
-    print(f"[INFO] {CONFIG_FILE} created. Please edit it with your Plex settings and rerun the script.")
-    exit(0)
+log "START"
 
-# Load config
-with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-    config = json.load(f)
+# -----------------------------
+# 0. 외부 옵션 처리
+# -----------------------------
+BASE_DIR=""
+CONFIG_FILE=""
 
-def main():
-    plex = PlexServer(config["plex_base_url"], config["plex_token"])
-    updated_count = 0
+while [[ $# -gt 0 ]]; do
+    key="$1"
+    case $key in
+        --base-dir)
+        BASE_DIR="$2"
+        shift 2
+        ;;
+        --config)
+        CONFIG_FILE="$2"
+        shift 2
+        ;;
+        *)
+        shift
+        ;;
+    esac
+done
 
-    # Iterate over multiple libraries
-    for library_name in config["plex_library_names"]:
-        section = plex.library.section(library_name)
+# BASE_DIR 필수 확인
+if [[ -z "$BASE_DIR" ]]; then
+    echo "Usage: $0 --base-dir <BASE_DIR> [--config <CONFIG_FILE>]"
+    exit 1
+fi
 
-        # Iterate over all episodes
-        for ep in section.search(libtype='episode'):
-            for part in ep.iterParts():
-                if not part.file.lower().endswith(video_extensions):
-                    continue
+# CONFIG_FILE 기본값: BASE_DIR/config.json
+CONFIG_FILE="${CONFIG_FILE:-$BASE_DIR/config.json}"
 
-                nfo_path = os.path.splitext(part.file)[0] + ".nfo"
-                if os.path.exists(nfo_path):
-                    if config.get("detail", False):
-                        print(f"[-] Parsing NFO: {nfo_path}")
-                    try:
-                        parser = ET.XMLParser(recover=True)
-                        tree = ET.parse(nfo_path, parser=parser)
-                    except ET.XMLSyntaxError as e:
-                        print(f"[ERROR] Malformed NFO: {nfo_path}. Details: {e}")
-                        continue
-                    except Exception as e:
-                        print(f"[ERROR] Failed to read NFO: {nfo_path}. Details: {e}")
-                        continue
+log "BASE_DIR set to: $BASE_DIR"
+log "CONFIG_FILE set to: $CONFIG_FILE"
 
-                    root = tree.getroot()
-                    if root is None:
-                        continue
+mkdir -p "$BASE_DIR"
 
-                    title = root.findtext('title', default='')
-                    aired = root.findtext('aired', default='')
-                    plot = root.findtext('plot', default='')
+# -----------------------------
+# 1. Repository URL
+# -----------------------------
+REPO_URL="https://github.com/kman0001/tubesync-plex.git"
 
-                    if config.get("detail", False):
-                        print(f"[-] Updating: {title} - Aired: {aired}")
+# -----------------------------
+# 2. Clone or update repository
+# -----------------------------
+if [ ! -d "$BASE_DIR/.git" ]; then
+    if [ -d "$BASE_DIR" ] && [ "$(ls -A "$BASE_DIR")" ]; then
+        log "$BASE_DIR exists and is not empty. Skipping clone."
+    else
+        log "Cloning repository..."
+        git clone "$REPO_URL" "$BASE_DIR" || { log "ERROR: Failed to clone repository."; exit 1; }
+    fi
+else
+    log "Checking for updates in repository..."
+    pushd "$BASE_DIR" >/dev/null
+    git fetch origin || { log "ERROR: git fetch failed."; popd >/dev/null; exit 1; }
+    BRANCH="main"
+    CHANGED_FILES=$(git diff --name-only HEAD origin/$BRANCH)
+    if [ -n "$CHANGED_FILES" ]; then
+        log "Updated files from GitHub:"
+        echo "$CHANGED_FILES"
+        git merge --no-edit origin/$BRANCH || git reset --hard origin/$BRANCH
+    else
+        log "No updates from GitHub."
+    fi
+    popd >/dev/null
+fi
 
-                    ep.editTitle(title, locked=True)
-                    ep.editSortTitle(aired, locked=True)
-                    ep.editSummary(plot, locked=True)
+# -----------------------------
+# 3. Check python3-venv
+# -----------------------------
+if ! dpkg -s python3-venv &>/dev/null; then
+    log "Installing python3-venv..."
+    apt update && apt install -y python3-venv || { log "ERROR: Failed to install python3-venv."; exit 1; }
+fi
 
-                    updated_count += 1
+# -----------------------------
+# 4. Create virtual environment
+# -----------------------------
+if [ ! -d "$BASE_DIR/venv" ]; then
+    log "Creating virtual environment..."
+    python3 -m venv "$BASE_DIR/venv" || { log "ERROR: Failed to create virtualenv."; exit 1; }
+fi
 
-                    # Delete NFO after successful update
-                    try:
-                        os.remove(nfo_path)
-                        if config.get("detail", False):
-                            print(f"[-] Deleted NFO: {nfo_path}")
-                    except Exception as e:
-                        print(f"[ERROR] Failed to delete NFO: {nfo_path}. Details: {e}")
+# -----------------------------
+# 5. Install/update Python dependencies
+# -----------------------------
+REQ_FILE="$BASE_DIR/requirements.txt"
+PIP_BIN="$BASE_DIR/venv/bin/pip"
 
-    # Show summary only if silent is False
-    if not config.get("silent", False):
-        print(f"[INFO] Total episodes updated: {updated_count}")
+if [ -f "$REQ_FILE" ]; then
+    log "Checking Python dependencies..."
+    declare -A INSTALLED
+    while read -r line; do
+        NAME=$(echo "$line" | cut -d= -f1)
+        VER=$(echo "$line" | cut -d= -f2)
+        INSTALLED["$NAME"]="$VER"
+    done < <($PIP_BIN freeze)
+    
+    while IFS= read -r req || [[ -n "$req" ]]; do
+        [[ "$req" =~ ^# ]] && continue
+        PKG=$(echo "$req" | cut -d= -f1)
+        REQ_VER=$(echo "$req" | cut -d= -f2)
+        INST_VER="${INSTALLED[$PKG]}"
+        
+        if [ -z "$INST_VER" ]; then
+            log "Installing new package: $PKG $REQ_VER"
+            $PIP_BIN install --disable-pip-version-check -q "$req"
+        elif [ "$INST_VER" != "$REQ_VER" ]; then
+            log "Updating package: $PKG $INST_VER → $REQ_VER"
+            $PIP_BIN install --disable-pip-version-check -q "$req"
+        fi
+    done < "$REQ_FILE"
+    log "Python dependencies check complete."
+else
+    log "requirements.txt not found. Skipping pip install."
+fi
 
-if __name__ == "__main__":
-    main()
+# -----------------------------
+# 6. Run tubesync-plex
+# -----------------------------
+TS_SCRIPT="$BASE_DIR/tubesync-plex-metadata.py"
+if [ -f "$TS_SCRIPT" ]; then
+    log "Running tubesync-plex with config $CONFIG_FILE..."
+    "$BASE_DIR/venv/bin/python" "$TS_SCRIPT" --config "$CONFIG_FILE"
+else
+    log "ERROR: tubesync-plex-metadata.py not found in $BASE_DIR."
+    exit 1
+fi
+
+log "END"
