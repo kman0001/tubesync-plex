@@ -31,13 +31,14 @@ jobs:
           while [ -n "$URL" ]; do
             RESPONSE=$(curl -s -u $USERNAME:$TOKEN "$URL" || true)
 
-            # 응답 검사
-            if [[ -z "$RESPONSE" ]] || [[ "$RESPONSE" == "null" ]]; then
-              echo "No response or repository not found, stopping."
+            # JSON 유효성 검사
+            if ! echo "$RESPONSE" | jq empty >/dev/null 2>&1; then
+              echo "API did not return valid JSON. Stopping."
               break
             fi
 
-            TAGS=$(echo "$RESPONSE" | jq -r '.results[].name // empty')
+            # null-safe 태그 추출
+            TAGS=$(echo "$RESPONSE" | jq -r '.results[]?.name // empty')
 
             for TAG in $TAGS; do
               if [[ "$TAG" != "latest" && "$TAG" != "latest-amd64" && "$TAG" != "latest-arm64" ]]; then
