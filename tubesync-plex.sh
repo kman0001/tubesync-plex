@@ -30,11 +30,14 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# 필수 옵션 확인
-if [[ -z "$BASE_DIR" || -z "$CONFIG_FILE" ]]; then
-    echo "Usage: $0 --base-dir <BASE_DIR> --config <CONFIG_FILE>"
+# BASE_DIR 필수 확인
+if [[ -z "$BASE_DIR" ]]; then
+    echo "Usage: $0 --base-dir <BASE_DIR> [--config <CONFIG_FILE>]"
     exit 1
 fi
+
+# CONFIG_FILE 기본값: BASE_DIR/config.json
+CONFIG_FILE="${CONFIG_FILE:-$BASE_DIR/config.json}"
 
 log "BASE_DIR set to: $BASE_DIR"
 log "CONFIG_FILE set to: $CONFIG_FILE"
