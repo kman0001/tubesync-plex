@@ -2,29 +2,24 @@ import os
 import json
 from plexapi.server import PlexServer
 import lxml.etree as ET
-import argparse
-
-# Supported video file extensions
-video_extensions = (".mkv", ".mp4", ".avi", ".mov", ".wmv", ".flv", ".m4v")
 
 # -----------------------------
-# argparse로 --config 절대경로 받기
+# CONFIG_FILE 설정
 # -----------------------------
-parser = argparse.ArgumentParser()
-parser.add_argument("--config", required=True, help="Path to config.json")
-args = parser.parse_args()
+CONFIG_FILE = os.environ.get("CONFIG_FILE", "config.json")
+CONFIG_FILE = os.path.abspath(CONFIG_FILE)
 
-CONFIG_FILE = args.config  # Bash에서 전달한 절대경로 사용
-
-# Default config
+# -----------------------------
+# 기본 config
+# -----------------------------
 default_config = {
     "_comment": {
         "plex_base_url": "Your Plex server base URL, e.g., http://localhost:32400",
         "plex_token": "Your Plex server token",
-        "plex_library_names": "List of library names to sync metadata. Example: [\"TV Shows\", \"Anime\"]",
-        "silent": "true or false, whether to suppress logs",
-        "detail": "true or false, whether to show detailed update logs",
-        "subtitles": "true or false, whether to upload subtitles if available"
+        "plex_library_names": '["TV Shows", "Anime"]',
+        "silent": "true or false",
+        "detail": "true or false",
+        "subtitles": "true or false"
     },
     "plex_base_url": "",
     "plex_token": "",
@@ -34,16 +29,25 @@ default_config = {
     "subtitles": False
 }
 
-# Create config.json if it does not exist
+# -----------------------------
+# config.json 생성
+# -----------------------------
 if not os.path.exists(CONFIG_FILE):
     with open(CONFIG_FILE, "w", encoding="utf-8") as f:
         json.dump(default_config, f, indent=4)
-    print(f"[INFO] {CONFIG_FILE} created. Please edit it with your Plex settings and rerun the script.")
+    print(f"[INFO] {CONFIG_FILE} created. Please edit it and rerun.")
     exit(0)
 
-# Load config
+# -----------------------------
+# config 로드
+# -----------------------------
 with open(CONFIG_FILE, "r", encoding="utf-8") as f:
     config = json.load(f)
+
+# -----------------------------
+# Plex 연결 및 NFO 업데이트
+# -----------------------------
+video_extensions = (".mkv", ".mp4", ".avi", ".mov", ".wmv", ".flv", ".m4v")
 
 def main():
     plex = PlexServer(config["plex_base_url"], config["plex_token"])
@@ -51,49 +55,23 @@ def main():
 
     for library_name in config["plex_library_names"]:
         section = plex.library.section(library_name)
-
-        for ep in section.search(libtype='episode'):
+        for ep in section.search(libtype="episode"):
             for part in ep.iterParts():
-                if not part.file.lower().endswith(video_extensions):
-                    continue
-
                 nfo_path = os.path.splitext(part.file)[0] + ".nfo"
                 if os.path.exists(nfo_path):
-                    if config.get("detail", False):
-                        print(f"[-] Parsing NFO: {nfo_path}")
                     try:
-                        parser = ET.XMLParser(recover=True)
-                        tree = ET.parse(nfo_path, parser=parser)
-                    except ET.XMLSyntaxError as e:
-                        print(f"[ERROR] Malformed NFO: {nfo_path}. Details: {e}")
-                        continue
-                    except Exception as e:
-                        print(f"[ERROR] Failed to read NFO: {nfo_path}. Details: {e}")
-                        continue
-
-                    root = tree.getroot()
-                    if root is None:
-                        continue
-
-                    title = root.findtext('title', default='')
-                    aired = root.findtext('aired', default='')
-                    plot = root.findtext('plot', default='')
-
-                    if config.get("detail", False):
-                        print(f"[-] Updating: {title} - Aired: {aired}")
-
-                    ep.editTitle(title, locked=True)
-                    ep.editSortTitle(aired, locked=True)
-                    ep.editSummary(plot, locked=True)
-
-                    updated_count += 1
-
-                    try:
+                        tree = ET.parse(nfo_path, parser=ET.XMLParser(recover=True))
+                        root = tree.getroot()
+                        title = root.findtext("title", default="")
+                        aired = root.findtext("aired", default="")
+                        plot = root.findtext("plot", default="")
+                        ep.editTitle(title, locked=True)
+                        ep.editSortTitle(aired, locked=True)
+                        ep.editSummary(plot, locked=True)
+                        updated_count += 1
                         os.remove(nfo_path)
-                        if config.get("detail", False):
-                            print(f"[-] Deleted NFO: {nfo_path}")
                     except Exception as e:
-                        print(f"[ERROR] Failed to delete NFO: {nfo_path}. Details: {e}")
+                        print(f"[ERROR] {nfo_path}: {e}")
 
     if not config.get("silent", False):
         print(f"[INFO] Total episodes updated: {updated_count}")
