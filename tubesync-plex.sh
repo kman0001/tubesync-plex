@@ -15,7 +15,7 @@ CONFIG_FILE="${CONFIG_FILE:-}"
 if [ -n "$CONFIG_FILE" ] && [ -f "$CONFIG_FILE" ]; then
     BASE_DIR=$(dirname "$(realpath "$CONFIG_FILE")")
 elif [ -f "./tubesync-plex-metadata.py" ]; then
-    BASE_DIR=$(dirname "$(realpath ./tubesync-plex-metadata.py")")
+    BASE_DIR=$(dirname "$(realpath ./tubesync-plex-metadata.py)")
 else
     SCRIPT_PATH="$(realpath "$0")"
     BASE_DIR="$(dirname "$SCRIPT_PATH")"
