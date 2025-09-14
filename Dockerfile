@@ -2,22 +2,21 @@ FROM python:3.11-slim
 
 # 필수 패키지 설치
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends inotify-tools curl git s6 && \
+    apt-get install -y --no-install-recommends inotify-tools curl && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# 요구사항 및 코드 복사
-COPY requirements.txt .
-COPY entrypoint/ /app/entrypoint/
+# 필요 파일 복사
+COPY entrypoint/tubesync-plex /app/entrypoint/tubesync-plex
 
-# Python 가상환경 생성 및 패키지 설치
-RUN python -m venv /app/entrypoint/venv && \
-    /app/entrypoint/venv/bin/pip install --upgrade pip && \
-    /app/entrypoint/venv/bin/pip install -r requirements.txt
+# 가상환경 준비
+RUN python -m venv /app/entrypoint/tubesync-plex/venv
 
-# s6 서비스 폴더 복사
-COPY services.d/ /etc/services.d/
+# s6 설치 (간단 예시)
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends s6 && \
+    rm -rf /var/lib/apt/lists/*
 
-# s6-init 실행
-ENTRYPOINT ["/init"]
+# s6 초기화 스크립트 복사
+COPY s6/ /etc/services.d/
