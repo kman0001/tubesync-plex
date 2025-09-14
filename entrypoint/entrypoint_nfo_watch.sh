@@ -1,36 +1,31 @@
-#!/bin/bash
+#!/bin/sh
 set -e
 
+WATCH_DIR=""
 BASE_DIR=""
-WATCH_DIR="/downloads"
 
+# 인자 처리
 while [ "$#" -gt 0 ]; do
     case $1 in
-        --base-dir) BASE_DIR="$2"; shift 2 ;;
         --watch-dir) WATCH_DIR="$2"; shift 2 ;;
-        *) echo "Unknown option: $1"; exit 1 ;;
+        --base-dir) BASE_DIR="$2"; shift 2 ;;
+        *) echo "Unknown argument: $1"; exit 1 ;;
     esac
 done
 
-if [ -z "$BASE_DIR" ]; then
-    echo "ERROR: --base-dir must be specified"
-    exit 1
-fi
+[ -z "$WATCH_DIR" ] && echo "ERROR: --watch-dir must be specified" && exit 1
+[ -z "$BASE_DIR" ] && echo "ERROR: --base-dir must be specified" && exit 1
 
+CONFIG_FILE="$BASE_DIR/config/config.json"
 PYTHON_BIN="$BASE_DIR/venv/bin/python"
 PLEX_SCRIPT="$BASE_DIR/tubesync-plex-metadata.py"
-CONFIG_FILE="$BASE_DIR/config.json"
 
-# Start NFO watch
-echo "[INFO] Starting NFO watch on $WATCH_DIR..."
-(
-    inotifywait -m -e create --format "%f" "$WATCH_DIR" | while read FILE; do
-        [[ "$FILE" == *.nfo ]] && echo "[INFO] Detected $FILE, running Plex sync..." && \
-        "$PYTHON_BIN" "$PLEX_SCRIPT" --config "$CONFIG_FILE"
-    done
-) &
-
-echo "[INFO] NFO watch running in background."
-
-# Execute additional commands if any
-exec "$@"
+# 새 NFO 감시
+inotifywait -m -e create --format "%f" "$WATCH_DIR" | while read FILE; do
+    case "$FILE" in
+        *.nfo)
+            echo "[INFO] Detected new NFO: $FILE"
+            "$PYTHON_BIN" "$PLEX_SCRIPT" --config "$CONFIG_FILE" "$WATCH_DIR/$FILE"
+            ;;
+    esac
+done
