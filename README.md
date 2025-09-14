@@ -3,13 +3,15 @@
 This repository is a **personal fork** of [tgouverneur/tubesync-plex](https://github.com/tgouverneur/tubesync-plex) and has been updated for **personal use**.
 
 ## Key Changes in this Fork
-- Simplified default log output
-- Added `-d / --detail` option for detailed metadata updates
-- Added `subtitles` option to automatically extract and upload embedded subtitles to Plex
-- Disallow simultaneous use of `-s / --silent` and `-d / --detail` options
-- Supports Windows, Linux, and Docker environments with automatic ffmpeg/ffprobe path detection
-- Handles multiple subtitle tracks and automatically maps language codes to Plex-compatible ISO 639-1 codes
-- Added Batch JSON to NFO Converter for `info.json` to `.nfo` conversion
+- Simplified default log output.
+- Added `-d / --detail` option for detailed metadata updates.
+- Added `subtitles` option to automatically extract and upload embedded subtitles to Plex.
+- Disallow simultaneous use of `-s / --silent` and `-d / --detail` options.
+- Supports Windows, Linux, and Docker environments with automatic ffmpeg/ffprobe path detection.
+- Handles multiple subtitle tracks and automatically maps language codes to Plex-compatible ISO 639-1 codes.
+- Fully handles extraction failures: PGS/VobSub or other non-text subtitle tracks are safely ignored with warnings.
+- Ensures all NFO updates are performed for all supported video files, even if `subtitles=false`.
+- Added Batch JSON to NFO Converter for `info.json` to `.nfo` conversion.
 
 > ⚠️ **Note:** This fork is maintained for personal purposes and may differ from the original repository.
 
@@ -24,7 +26,11 @@ TubeSync-Plex is a Python script to automatically sync episode metadata from `.n
 - Sync metadata (title, aired date, plot) from `.nfo` files to Plex.
 - Supports multiple Plex libraries.
 - Automatically deletes `.nfo` files after successful update.
-- Extracts embedded MKV subtitles and uploads them to Plex with proper language mapping.
+- Extracts embedded subtitles (MKV or other formats) and uploads them to Plex.
+  - Only extractable tracks (SRT, ASS) are uploaded.
+  - Non-extractable tracks (PGS, VobSub) are safely ignored with warnings.
+- Handles multiple subtitle tracks with proper language mapping (ISO 639-1 codes).
+- NFO updates are performed for all supported video files, regardless of subtitle extraction.
 - Handles malformed NFO files gracefully.
 - Configurable logging (`silent` and `detail` modes).
 - Cross-platform: Windows, Linux, Docker.
@@ -69,7 +75,7 @@ Edit `config.json` with your Plex server details:
     "plex_library_names": ["TV Shows", "Anime"],
     "silent": false,
     "detail": true,
-    "subtitles": false
+    "subtitles": true
 }
 ```
 
@@ -78,7 +84,7 @@ Edit `config.json` with your Plex server details:
 - `plex_library_names`: List of Plex libraries to sync  
 - `silent`: Suppress logs if true  
 - `detail`: Show detailed update logs if true  
-- `subtitles`: Extract embedded subtitles from MKV files and upload to Plex
+- `subtitles`: Extract embedded subtitles and upload to Plex; safely ignores non-extractable tracks with warnings
 
 ## Bash Options
 
@@ -106,6 +112,7 @@ The script will:
 3. Install/update required Python packages.  
 4. Run metadata sync using `tubesync-plex-metadata.py`.  
 5. Optionally extract embedded subtitles and upload them to Plex if `subtitles=true`.
+6. Safely ignore non-extractable subtitle tracks with warning messages.
 
 ## Cron Job Example
 
@@ -129,7 +136,7 @@ See the [`json_to_nfo`](https://github.com/kman0001/tubesync-plex/tree/main/json
 - The script will **never overwrite existing local files**, except processed `.nfo` files which it deletes after sync.  
 - For repository updates, the script resets the repository to match the remote `main` branch to avoid local conflicts.  
 - Use `silent` mode to reduce console output in automated environments.  
-- The `subtitles` feature supports multiple tracks per MKV file and automatically maps language codes to Plex-compatible ISO 639-1 codes.  
+- The `subtitles` feature supports multiple tracks per video file, uploads only extractable tracks, and automatically maps language codes to Plex-compatible ISO 639-1 codes.  
 - Compatible with Windows, Linux, and Docker environments. If ffmpeg/ffprobe are not in PATH, set `FFMPEG_PATH` / `FFPROBE_PATH` in environment variables.
 
 ## License
