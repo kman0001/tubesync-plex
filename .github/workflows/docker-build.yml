@@ -1,22 +1,25 @@
 name: Build and Push Docker Image
 
-# main 브랜치에 푸시될 때마다 실행
 on:
   push:
     branches:
       - main
+  workflow_dispatch:
 
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
 
+    env:
+      DOCKER_IMAGE: yourdockerhubusername/tubesync-plex:latest
+
     steps:
-      # 1. 코드 체크아웃
+      # 1. GitHub 리포지토리 체크아웃
       - name: Checkout repository
         uses: actions/checkout@v3
 
-      # 2. Docker Hub 로그인
-      - name: Log in to Docker Hub
+      # 2. DockerHub 로그인
+      - name: Log in to DockerHub
         uses: docker/login-action@v2
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
@@ -25,12 +28,9 @@ jobs:
       # 3. Docker 이미지 빌드
       - name: Build Docker image
         run: |
-          docker build \
-            --build-arg BASE_DIR=/app/entrypoint/tubesync-plex \
-            --build-arg WATCH_DIR=/downloads \
-            -t ${{ secrets.DOCKERHUB_USERNAME }}/tubesync-plex:latest .
+          docker build -t $DOCKER_IMAGE .
 
-      # 4. Docker Hub로 푸시
+      # 4. DockerHub 푸시
       - name: Push Docker image
         run: |
-          docker push ${{ secrets.DOCKERHUB_USERNAME }}/tubesync-plex:latest
+          docker push $DOCKER_IMAGE
