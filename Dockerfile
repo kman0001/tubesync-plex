@@ -25,7 +25,8 @@ RUN python -m venv /app/venv && \
     /app/venv/bin/pip install -r requirements.txt
 
 # 엔트리포인트 스크립트 권한
-RUN chmod +x /app/entrypoint/entrypoint_nfo_watch.sh
+RUN chmod +x /app/entrypoint/entrypoint_nfo_watch.sh \
+    && chmod +x /app/entrypoint/entrypoint.sh
 
 # 환경변수 기본값
 ENV BASE_DIR=/app \
