@@ -1,0 +1,16 @@
+{
+  "_comment": {
+    "plex_base_url": "Your Plex server base URL, e.g., http://localhost:32400",
+    "plex_token": "Your Plex server token",
+    "plex_library_names": "[\"TV Shows\", \"Anime\"]",
+    "silent": "true or false",
+    "detail": "true or false",
+    "subtitles": "true or false"
+  },
+  "plex_base_url": "",
+  "plex_token": "",
+  "plex_library_names": [""],
+  "silent": false,
+  "detail": false,
+  "subtitles": false
+}
