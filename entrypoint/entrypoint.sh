@@ -1,28 +1,23 @@
-#!/bin/sh
+#!/bin/bash
 set -e
 
-WATCH_DIR="/downloads"
 BASE_DIR="/app"
+WATCH_DIR="/downloads"
 CONFIG_FILE="/app/config/config.json"
+PYTHON_BIN="$BASE_DIR/venv/bin/python"
+PLEX_SCRIPT="$BASE_DIR/tubesync-plex-metadata.py"
 
-log() { echo "[INFO] $1"; }
+log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"; }
 
-# ----------------------------
-# 1. 기존 NFO 처리
-# ----------------------------
-for file in "$WATCH_DIR"/*.nfo; do
-    [ -f "$file" ] && log "Processing existing NFO: $file" && \
-    "$BASE_DIR/venv/bin/python" "$BASE_DIR/tubesync-plex-metadata.py" --config "$CONFIG_FILE" "$file"
-done
+log "Processing existing NFO files..."
+# 기존 NFO 1회 처리
+"$PYTHON_BIN" "$PLEX_SCRIPT" --config "$CONFIG_FILE" --process-existing --watch-dir "$WATCH_DIR"
 
-# ----------------------------
-# 2. NFO 감시 시작 (백그라운드)
-# ----------------------------
-log "Starting NFO watch on $WATCH_DIR..."
-"$BASE_DIR/entrypoint/entrypoint_nfo_watch.sh" --base-dir "$BASE_DIR" --watch-dir "$WATCH_DIR" &
+log "Starting NFO watch in background..."
+# 백그라운드 감시
+"$BASE_DIR/entrypoint_nfo_watch.sh" --base-dir "$BASE_DIR" --watch-dir "$WATCH_DIR" &
+
 log "NFO watch running in background."
 
-# ----------------------------
-# 3. Main Tubesync process 실행
-# ----------------------------
-exec "$BASE_DIR/venv/bin/python" "$BASE_DIR/tubesync-plex-metadata.py" --config "$CONFIG_FILE"
+# 메인 프로세스 실행 (필요시)
+exec "$BASE_DIR/main_tubesync_process.sh"
