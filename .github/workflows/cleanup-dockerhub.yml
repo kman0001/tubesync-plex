@@ -1,13 +1,13 @@
-name: Docker Hub Cleanup (Actual Deletion)
+name: Docker Hub Cleanup Multi-Arch Manifest
 
 on:
   workflow_dispatch:
 
 env:
-  DOCKER_IMAGE: your-dockerhub-username/tubesync-plex
+  DOCKER_IMAGE: kman0001/tubesync-plex
 
 jobs:
-  cleanup:
+  cleanup-manifest:
     runs-on: ubuntu-latest
     steps:
       - name: Install dependencies
@@ -17,16 +17,15 @@ jobs:
         run: |
           echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
 
-      - name: Delete old tags except latest
+      - name: Delete old tags and their manifests
         run: |
           REPO=${{ env.DOCKER_IMAGE }}
           USERNAME=${{ secrets.DOCKERHUB_USERNAME }}
           TOKEN=${{ secrets.DOCKERHUB_TOKEN }}
 
-          # REPO URL 인코딩
+          # URL 인코딩
           REPO_ENCODED=$(python3 -c "import urllib.parse; print(urllib.parse.quote('''$REPO'''))")
 
-          # 페이지네이션 처리
           URL="https://hub.docker.com/v2/repositories/$REPO_ENCODED/tags/?page_size=100"
           while [ -n "$URL" ]; do
             RESPONSE=$(curl -s -u $USERNAME:$TOKEN "$URL" || true)
@@ -42,10 +41,19 @@ jobs:
 
             for TAG in $TAGS; do
               if [[ "$TAG" != "latest" && "$TAG" != "latest-amd64" && "$TAG" != "latest-arm64" ]]; then
-                # TAG URL 인코딩
                 TAG_ENCODED=$(python3 -c "import urllib.parse; print(urllib.parse.quote('''$TAG'''))")
-                echo "Deleting tag: $TAG"
+                echo "Deleting tag and manifests: $TAG"
+
+                # 1️⃣ 먼저 태그 삭제
                 curl -s -X DELETE -u $USERNAME:$TOKEN "https://hub.docker.com/v2/repositories/$REPO_ENCODED/tags/$TAG_ENCODED/" || true
+
+                # 2️⃣ 해당 태그에 연결된 manifests 삭제
+                DIGESTS=$(curl -s -u $USERNAME:$TOKEN "https://hub.docker.com/v2/repositories/$REPO_ENCODED/tags/$TAG_ENCODED/" | jq -r '.images[].digest // empty')
+                for DIGEST in $DIGESTS; do
+                  DIGEST_ENCODED=$(python3 -c "import urllib.parse; print(urllib.parse.quote('''$DIGEST'''))")
+                  echo "Deleting manifest: $DIGEST"
+                  curl -s -X DELETE -u $USERNAME:$TOKEN "https://hub.docker.com/v2/repositories/$REPO_ENCODED/manifests/$DIGEST_ENCODED/" || true
+                done
               fi
             done
 
