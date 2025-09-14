@@ -9,6 +9,7 @@ This repository is a **personal fork** of [tgouverneur/tubesync-plex](https://gi
 - Disallow simultaneous use of `-s / --silent` and `-d / --detail` options
 - Supports Windows, Linux, and Docker environments with automatic ffmpeg/ffprobe path detection
 - Handles multiple subtitle tracks and automatically maps language codes to Plex-compatible ISO 639-1 codes
+- Added Batch JSON to NFO Converter for `info.json` to `.nfo` conversion
 
 > ⚠️ **Note:** This fork is maintained for personal purposes and may differ from the original repository.
 
@@ -28,6 +29,7 @@ TubeSync-Plex is a Python script to automatically sync episode metadata from `.n
 - Configurable logging (`silent` and `detail` modes).
 - Cross-platform: Windows, Linux, Docker.
 - Works in Docker or host environments.
+- Supports converting JSON metadata to NFO files using the included Batch JSON to NFO Converter.
 
 ## Requirements
 
@@ -112,6 +114,15 @@ Automate updates every day at 2:00 AM:
 ```cron
 0 2 * * * /bin/bash /tubesync-plex/tubesync-plex.sh --base-dir /tubesync-plex >> /tubesync-plex/tubesync.log 2>&1
 ```
+
+## Additional Tools
+
+### Batch JSON to NFO Converter (UTF-8 Support)
+
+A simple script to convert `info.json` files into `.nfo` files.  
+Supports UTF-8 encoded JSON files.  
+
+See the [`json_to_nfo`](https://github.com/kman0001/tubesync-plex/tree/main/json_to_nfo) folder for details and usage examples.
 
 ## Notes
 
