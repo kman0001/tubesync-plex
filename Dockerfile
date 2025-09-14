@@ -13,25 +13,22 @@ RUN apt-get update && \
 # 작업 디렉토리
 WORKDIR /app
 
-# 필요한 파일 복사
+# Python 의존성 복사
 COPY requirements.txt .
+RUN python -m venv venv
+RUN ./venv/bin/pip install --upgrade pip
+RUN ./venv/bin/pip install -r requirements.txt
+
+# 앱 파일 복사
 COPY tubesync-plex-metadata.py .
-COPY entrypoint/entrypoint_nfo_watch.sh /app/entrypoint/entrypoint_nfo_watch.sh
+
+# 엔트리포인트 스크립트 복사
 COPY entrypoint/entrypoint.sh /app/entrypoint/entrypoint.sh
+COPY entrypoint/entrypoint_nfo_watch.sh /app/entrypoint/entrypoint_nfo_watch.sh
 
-# 파이썬 가상환경 생성 및 패키지 설치
-RUN python -m venv /app/venv && \
-    /app/venv/bin/pip install --upgrade pip setuptools wheel && \
-    /app/venv/bin/pip install -r requirements.txt
+# 실행 권한
+RUN chmod +x /app/entrypoint/entrypoint.sh
+RUN chmod +x /app/entrypoint/entrypoint_nfo_watch.sh
 
-# 엔트리포인트 스크립트 권한
-RUN chmod +x /app/entrypoint/entrypoint_nfo_watch.sh \
-    && chmod +x /app/entrypoint/entrypoint.sh
-
-# 환경변수 기본값
-ENV BASE_DIR=/app \
-    WATCH_DIR=/downloads \
-    CONFIG_FILE=/app/config/config.json
-
-# 엔트리포인트
-ENTRYPOINT ["/app/entrypoint/entrypoint_nfo_watch.sh"]
+# 엔트리포인트 지정
+ENTRYPOINT ["/app/entrypoint/entrypoint.sh"]
