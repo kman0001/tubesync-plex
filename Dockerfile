@@ -17,6 +17,7 @@ WORKDIR /app
 COPY requirements.txt .
 COPY tubesync-plex-metadata.py .
 COPY entrypoint/entrypoint_nfo_watch.sh /app/entrypoint/entrypoint_nfo_watch.sh
+COPY entrypoint/entrypoint.sh /app/entrypoint/entrypoint.sh
 
 # 파이썬 가상환경 생성 및 패키지 설치
 RUN python -m venv /app/venv && \
