@@ -1,0 +1,80 @@
+name: Build, Push Multi-Arch Docker Image & Cleanup
+
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - '.github/workflows/**'  # workflow만 수정될 경우 실행 안 함
+  workflow_dispatch:
+
+env:
+  DOCKER_IMAGE: kman0001/tubesync-plex
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      # 1. 소스 체크아웃
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # 2. Docker Buildx 설정
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # 3. Docker Hub 로그인
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # 4. 멀티아키 이미지 빌드 및 푸시
+      - name: Build & push multi-arch image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: |
+            ${{ env.DOCKER_IMAGE }}:latest
+            ${{ env.DOCKER_IMAGE }}:latest-amd64
+            ${{ env.DOCKER_IMAGE }}:latest-arm64
+
+  cleanup:
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    steps:
+      - name: Install jq and python3
+        run: sudo apt-get update && sudo apt-get install -y jq python3 curl
+
+      - name: Authenticate to Docker Hub
+        run: |
+          echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
+
+      - name: Delete old tags except latest
+        run: |
+          REPO=${{ env.DOCKER_IMAGE }}
+          USERNAME=${{ secrets.DOCKERHUB_USERNAME }}
+          TOKEN=${{ secrets.DOCKERHUB_TOKEN }}
+
+          # 페이지네이션 처리
+          URL="https://hub.docker.com/v2/repositories/$REPO/tags/?page_size=100"
+          while [ -n "$URL" ]; do
+            RESPONSE=$(curl -s -u $USERNAME:$TOKEN "$URL")
+            TAGS=$(echo "$RESPONSE" | jq -r '.results[].name')
+
+            for TAG in $TAGS; do
+              if [[ "$TAG" != "latest" && "$TAG" != "latest-amd64" && "$TAG" != "latest-arm64" ]]; then
+                # URL 인코딩
+                TAG_ENCODED=$(python3 -c "import urllib.parse; print(urllib.parse.quote('''$TAG'''))")
+                echo "Deleting tag: $TAG"
+                curl -s -X DELETE -u $USERNAME:$TOKEN "https://hub.docker.com/v2/repositories/$REPO/tags/$TAG_ENCODED/"
+              fi
+            done
+
+            # 다음 페이지 URL
+            URL=$(echo "$RESPONSE" | jq -r '.next')
+          done
