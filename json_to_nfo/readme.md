@@ -1,31 +1,31 @@
-# Batch JSON to NFO Converter (UTF-8 지원)
+# Batch JSON to NFO Converter (UTF-8 Support)
 
-이 스크립트는 `yt-dlp`로 다운로드한 `info.json` 파일을 기반으로 **Plex/Kodi 호환 NFO 파일**을 자동으로 생성합니다.
-UTF-8 인코딩을 포함하여 일본어, 한글, 특수문자가 깨지지 않도록 처리합니다.
-같은 이름의 이미지 파일(`.jpg`, `.png`, `.jpeg`, `.webp`)이 존재하면 NFO의 섬네일로 자동 적용됩니다.
-YAML 템플릿과 JSON 폴더를 **커맨드라인 옵션**으로 지정할 수 있습니다.
+This script automatically generates **Plex/Kodi compatible NFO files** from `yt-dlp` downloaded `info.json` files.
+It includes UTF-8 encoding to ensure Japanese, Korean, and special characters display correctly.
+If an image file with the same name exists (`.jpg`, `.png`, `.jpeg`, `.webp`), it will automatically be used as the NFO thumbnail.
+Both the YAML template and the JSON folder can be specified via **command-line options**.
 
 ---
 
-## 폴더 구조 예시
+## Example Folder Structure
 
 ```
 /project
-  ├─ videos/                     # info.json 파일과 이미지 파일 저장
+  ├─ videos/                     # Folder containing info.json and image files
   │    ├─ video1.info.json
   │    ├─ video1.jpg
   │    ├─ video2.info.json
   │    └─ video2.webp
-  ├─ tubesync.yaml               # YAML 템플릿
-  └─ json_to_nfo.py              # 변환 스크립트 (UTF-8 포함)
+  ├─ tubesync.yaml               # YAML template
+  └─ json_to_nfo.py              # Conversion script (UTF-8 included)
 ```
 
 ---
 
-## 요구 사항
+## Requirements
 
-* Python 3.7 이상
-* PyYAML 설치
+* Python 3.7 or higher
+* PyYAML
 
 ```bash
 pip install pyyaml
@@ -33,12 +33,11 @@ pip install pyyaml
 
 ---
 
-## 사용 방법
+## Usage
 
-1. `videos` 폴더에 `yt-dlp`로 생성된 `.info.json` 파일과 이미지 파일을 준비합니다.
+1. Place the `.info.json` files and optional image files in the `videos` folder.
 
-2. YAML 템플릿 파일을 작성합니다.
-   기본 구조 예시는 다음과 같습니다:
+2. Create a YAML template file. Example structure:
 
 ```yaml
 title: "{title}"
@@ -65,43 +64,44 @@ dateadded: "{dateadded|default:now:%Y-%m-%d %H:%M:%S}"
 genre: "{genre}"
 ```
 
-3. 스크립트 실행:
+3. Run the script:
 
 ```bash
-# 기본 옵션
+# Default options
 python json_to_nfo.py
 
-# YAML 템플릿 지정
-python json_to_nfo.py --yaml /docker/tubesync/nfo/tubesync.yaml
+# Specify a YAML template
+python json_to_nfo.py --yaml /volume1/docker/tubesync/nfo/tubesync.yaml
 
-# JSON 폴더와 YAML 모두 지정
-python json_to_nfo.py --json-folder /json_to_nfo/json --yaml /json_to_nfo/tubesync.yaml
+# Specify both JSON folder and YAML template
+python json_to_nfo.py --json-folder /volume1/docker/tubesync/nfo/videos --yaml /volume1/docker/tubesync/nfo/tubesync.yaml
 ```
 
-* `json` 폴더 내 모든 `.json` 파일에 대해 NFO 파일이 생성됩니다.
-* `.info.json`에서 `.info`는 제거되고 `.nfo`로 저장됩니다.
-* 같은 이름의 이미지 파일이 있으면 `<thumb>`에 적용됩니다.
-* 이미지가 없으면 info.json 내부 `thumbnail` URL이 사용됩니다.
+* NFO files will be generated for all `.json` files in the `videos` folder.
+* The `.info` part of `.info.json` filenames is automatically removed, creating `.nfo` files.
+* If an image file with the same name exists, it will be used as the `<thumb>`.
+* If no image file exists, the `thumbnail` URL in the info.json will be used.
 
 ---
 
-## Plex/Kodi 호환
+## Plex/Kodi Compatibility
 
-* 생성된 NFO 파일은 Plex와 Kodi에서 TV 시리즈 및 영화 메타데이터로 바로 사용 가능합니다.
-* UTF-8 인코딩 포함으로 일본어, 한글, 특수문자도 깨지지 않고 표시됩니다.
-* 섬네일, 제목, 시즌/에피소드, 줄거리, 스튜디오, 장르, 평가 정보가 포함됩니다.
-
----
-
-## 주의 사항
-
-* JSON 파일과 이미지 파일 이름이 정확히 일치해야 섬네일이 적용됩니다.
-* `.info.json` 파일명에서 `.info`는 자동으로 제거됩니다.
-* 폴더 전체를 처리하므로, 불필요한 JSON 파일은 제거 후 실행하세요.
+* Generated NFO files can be used directly in Plex and Kodi for TV series and movie metadata.
+* UTF-8 encoding ensures Japanese, Korean, and special characters are displayed correctly.
+* Includes thumbnail, title, season/episode, plot, studio, genre, and rating information.
 
 ---
 
-## 추가 기능
+## Notes
 
-* YAML 템플릿과 JSON 폴더를 옵션으로 지정 가능
-* UTF-8 인코딩 포함으로 멀티바이트 문자 안전
+* JSON and image filenames must match exactly for thumbnails to be applied.
+* `.info` in `.info.json` filenames is automatically removed.
+* All files in the folder are processed, so remove any unnecessary JSON files before running.
+
+---
+
+## Additional Features
+
+* Specify YAML template and JSON folder via command-line options.
+* Can be integrated as a **Post-hook** after `yt-dlp` downloads.
+* UTF-8 encoding ensures multi-byte characters are safe.
