@@ -2,17 +2,26 @@ import os
 import json
 from plexapi.server import PlexServer
 import lxml.etree as ET
+import argparse
 
 # Supported video file extensions
 video_extensions = (".mkv", ".mp4", ".avi", ".mov", ".wmv", ".flv", ".m4v")
-CONFIG_FILE = "config.json"
 
-# Default config with English comments
+# -----------------------------
+# argparse로 --config 절대경로 받기
+# -----------------------------
+parser = argparse.ArgumentParser()
+parser.add_argument("--config", required=True, help="Path to config.json")
+args = parser.parse_args()
+
+CONFIG_FILE = args.config  # Bash에서 전달한 절대경로 사용
+
+# Default config
 default_config = {
     "_comment": {
         "plex_base_url": "Your Plex server base URL, e.g., http://localhost:32400",
         "plex_token": "Your Plex server token",
-        "plex_library_names": "List of library names to sync metadata. Example: [\"TV Shows\", \"Anime\"]. Just use double quotes, no need to escape.",
+        "plex_library_names": "List of library names to sync metadata. Example: [\"TV Shows\", \"Anime\"]",
         "silent": "true or false, whether to suppress logs",
         "detail": "true or false, whether to show detailed update logs",
         "subtitles": "true or false, whether to upload subtitles if available"
@@ -40,11 +49,9 @@ def main():
     plex = PlexServer(config["plex_base_url"], config["plex_token"])
     updated_count = 0
 
-    # Iterate over multiple libraries
     for library_name in config["plex_library_names"]:
         section = plex.library.section(library_name)
 
-        # Iterate over all episodes
         for ep in section.search(libtype='episode'):
             for part in ep.iterParts():
                 if not part.file.lower().endswith(video_extensions):
@@ -81,7 +88,6 @@ def main():
 
                     updated_count += 1
 
-                    # Delete NFO after successful update
                     try:
                         os.remove(nfo_path)
                         if config.get("detail", False):
@@ -89,7 +95,6 @@ def main():
                     except Exception as e:
                         print(f"[ERROR] Failed to delete NFO: {nfo_path}. Details: {e}")
 
-    # Show summary only if silent is False
     if not config.get("silent", False):
         print(f"[INFO] Total episodes updated: {updated_count}")
 
