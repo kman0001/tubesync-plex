@@ -2,7 +2,7 @@
 set -e
 
 BASE_DIR=${BASE_DIR:-/app}
-WATCH_DIR=${WATCH_DIR:-/downloads}
+WATCH_DIR=${WATCH_DIR:-/your/plex/library}
 CONFIG_FILE=${CONFIG_FILE:-/app/config/config.json}
 
 # Python 의존성 설치 확인
