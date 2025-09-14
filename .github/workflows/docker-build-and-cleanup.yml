@@ -1,36 +1,32 @@
-name: Build, Push Multi-Arch Docker Image & Cleanup
+name: Build Multi-Arch Docker & Cleanup Old Tags
 
 on:
   push:
     branches:
       - main
     paths-ignore:
-      - '.github/workflows/**'  # workflow만 수정될 경우 실행 안 함
+      - '.github/workflows/**'
   workflow_dispatch:
 
 env:
-  DOCKER_IMAGE: kman0001/tubesync-plex
+  DOCKER_IMAGE: your-dockerhub-username/tubesync-plex
 
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
     steps:
-      # 1. 소스 체크아웃
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2. Docker Buildx 설정
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # 3. Docker Hub 로그인
       - name: Log in to Docker Hub
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      # 4. 멀티아키 이미지 빌드 및 푸시
       - name: Build & push multi-arch image
         uses: docker/build-push-action@v5
         with:
@@ -47,7 +43,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: build-and-push
     steps:
-      - name: Install jq and python3
+      - name: Install dependencies
         run: sudo apt-get update && sudo apt-get install -y jq python3 curl
 
       - name: Authenticate to Docker Hub
@@ -60,18 +56,28 @@ jobs:
           USERNAME=${{ secrets.DOCKERHUB_USERNAME }}
           TOKEN=${{ secrets.DOCKERHUB_TOKEN }}
 
+          # REPO URL 인코딩
+          REPO_ENCODED=$(python3 -c "import urllib.parse; print(urllib.parse.quote('''$REPO'''))")
+
           # 페이지네이션 처리
-          URL="https://hub.docker.com/v2/repositories/$REPO/tags/?page_size=100"
+          URL="https://hub.docker.com/v2/repositories/$REPO_ENCODED/tags/?page_size=100"
           while [ -n "$URL" ]; do
-            RESPONSE=$(curl -s -u $USERNAME:$TOKEN "$URL")
-            TAGS=$(echo "$RESPONSE" | jq -r '.results[].name')
+            RESPONSE=$(curl -s -u $USERNAME:$TOKEN "$URL" || true)
+
+            # JSON 유효성 검사
+            if ! echo "$RESPONSE" | jq empty >/dev/null 2>&1; then
+              echo "API did not return valid JSON. Stopping."
+              break
+            fi
+
+            # null-safe 태그 추출
+            TAGS=$(echo "$RESPONSE" | jq -r '.results[]?.name // empty')
 
             for TAG in $TAGS; do
               if [[ "$TAG" != "latest" && "$TAG" != "latest-amd64" && "$TAG" != "latest-arm64" ]]; then
-                # URL 인코딩
                 TAG_ENCODED=$(python3 -c "import urllib.parse; print(urllib.parse.quote('''$TAG'''))")
                 echo "Deleting tag: $TAG"
-                curl -s -X DELETE -u $USERNAME:$TOKEN "https://hub.docker.com/v2/repositories/$REPO/tags/$TAG_ENCODED/"
+                curl -s -X DELETE -u $USERNAME:$TOKEN "https://hub.docker.com/v2/repositories/$REPO_ENCODED/tags/$TAG_ENCODED/" || true
               fi
             done
 
