@@ -1,8 +1,7 @@
 # 베이스 이미지
 FROM python:3.11-slim
 
-# 환경 설정
-ENV PYTHONUNBUFFERED=1
+# 작업 디렉토리 설정
 WORKDIR /app
 
 # 필수 패키지 설치
@@ -11,19 +10,20 @@ RUN apt-get update && \
         inotify-tools \
         git \
         curl \
-    && rm -rf /var/lib/apt/lists/*
+        && rm -rf /var/lib/apt/lists/*
 
-# 소스 코드 복사
+# 의존성 파일 복사
 COPY requirements.txt .
+RUN python -m pip install --upgrade pip
+RUN pip install --no-cache-dir -r requirements.txt
+
+# tubesync-plex 스크립트 및 entrypoint 복사
 COPY tubesync-plex-metadata.py .
-COPY entrypoint/ /app/entrypoint/
+COPY entrypoint/ /app/entrypoint/tubesync-plex/
+RUN chmod +x /app/entrypoint/tubesync-plex/*.sh
 
-# Python 가상환경 생성
-RUN python -m venv /app/venv
+# Config 파일 경로 (컨테이너 안)
+VOLUME ["/app/config"]
 
-# 패키지 설치
-RUN /app/venv/bin/pip install --upgrade pip
-RUN /app/venv/bin/pip install --upgrade -r requirements.txt
-
-# 엔트리포인트
-ENTRYPOINT ["/bin/sh", "-c", "/app/entrypoint/entrypoint_nfo_watch.sh --base-dir /app --watch-dir /downloads"]
+# 엔트리포인트 지정
+ENTRYPOINT ["/app/entrypoint/tubesync-plex/entrypoint_nfo_watch.sh"]
