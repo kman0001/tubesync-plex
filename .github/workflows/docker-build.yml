@@ -1,40 +1,27 @@
-name: Build and Push Tubesync-Plex Docker
+# 베이스 이미지
+FROM python:3.11-slim
 
-on:
-  push:
-    branches:
-      - main
+# 필수 패키지 설치
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        inotify-tools \
+        git \
+        curl \
+    && rm -rf /var/lib/apt/lists/*
 
-jobs:
-  build-and-push:
-    runs-on: ubuntu-latest
+# 작업 디렉토리
+WORKDIR /app
 
-    env:
-      DOCKER_IMAGE: kman0001/tubesync-plex:latest
+# 코드 복사 (venv는 제외)
+COPY requirements.txt .
+COPY tubesync-plex-metadata.py .
+COPY config.json .
+COPY entrypoint/ /app/entrypoint/
 
-    steps:
-      # 1. 레포 체크아웃
-      - name: Checkout repository
-        uses: actions/checkout@v3
+# Python 가상환경 생성
+RUN python3 -m venv /app/venv && \
+    /app/venv/bin/pip install --upgrade pip && \
+    /app/venv/bin/pip install --upgrade -r requirements.txt
 
-      # 2. Docker 로그인 (DockerHub 계정 정보는 Secrets에 저장)
-      - name: Log in to DockerHub
-        uses: docker/login-action@v2
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      # 3. config.json 생성
-      - name: Create config.json from secret
-        run: |
-          echo "${{ secrets.CONFIG_JSON }}" > config.json
-
-      # 4. Docker 빌드
-      - name: Build Docker image
-        run: |
-          docker build -t $DOCKER_IMAGE .
-
-      # 5. DockerHub에 푸시
-      - name: Push Docker image
-        run: |
-          docker push $DOCKER_IMAGE
+# 엔트리포인트 실행
+ENTRYPOINT ["/app/entrypoint/entrypoint_nfo_watch.sh"]
