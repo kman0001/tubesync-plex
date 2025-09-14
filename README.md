@@ -15,196 +15,107 @@ This repository is a **personal fork** of [tgouverneur/tubesync-plex](https://gi
 ---
 
 
-# TubeSync Plex Metadata Sync Tool
+# TubeSync-Plex
 
-This tool syncs metadata from `.nfo` files to your Plex library. It reads metadata from NFO files associated with video files in your Plex library and updates the corresponding Plex items. After a successful update, the NFO file is deleted.
+TubeSync-Plex is a Python script to automatically sync episode metadata from `.nfo` files into your Plex libraries. It supports multiple libraries and can safely remove processed `.nfo` files.
 
 ## Features
 
-* Supports common video formats: `.mkv`, `.mp4`, `.avi`, `.mov`, `.wmv`, `.flv`, `.m4v`.
-* Reads metadata from NFO files and updates Plex title, aired date, and plot.
-* Deletes NFO files after successful metadata sync.
-* Supports multiple Plex libraries.
-* Optional detailed logs (`--detail`).
-* Optional subtitle uploads (`--subtitles`).
+- Sync metadata (title, aired date, plot) from `.nfo` files to Plex.
+- Supports multiple Plex libraries.
+- Automatically deletes `.nfo` files after successful update.
+- Handles malformed NFO files gracefully.
+- Configurable logging and silent mode.
+- Works in Docker or host environments.
 
 ## Requirements
 
-* Python 3.10+
-* Plex server and API token
-* `pip` dependencies (installed automatically by `tubesync-plex.sh`)
+- Python 3.10+  
+- pip (Python package manager)  
+- python3-venv for virtual environment creation  
+- Plex server with valid `plex_token`
 
-## Installation & Usage
+## Installation
 
-### 1. Clone or update repository
-
-You can use the provided `tubesync-plex.sh` script:
+1. Create a directory for TubeSync-Plex:
 
 ```bash
-chmod +x tubesync-plex.sh
-./tubesync-plex.sh
+mkdir -p /volume1/docker/tubesync/tubesync-plex
+cd /volume1/docker/tubesync/tubesync-plex
 ```
 
-* The script will clone the repository if it does not exist, or pull updates if it does.
-* Python virtual environment (`venv`) will be created automatically.
-* Python dependencies will be installed automatically.
+2. Download `tubesync-plex.sh` and `tubesync-plex-metadata.py` from this repository.
 
-### 2. Configure
+3. Run the setup script (inside Docker or on host):
 
-The script uses `config.json` for configuration. On first run, it will create a default `config.json` in the current folder:
+```bash
+bash /volume1/docker/tubesync/tubesync-plex/tubesync-plex.sh --base-dir /volume1/docker/tubesync/tubesync-plex
+```
+
+> The script will create a virtual environment, install required Python packages, and create a default `config.json` if it does not exist.
+
+## Configuration
+
+Edit `config.json` with your Plex server details:
 
 ```json
 {
-    "_comment": {
-        "plex_base_url": "Your Plex server base URL, e.g., http://localhost:32400",
-        "plex_token": "Your Plex server token",
-        "plex_library_names": ["Library1", "Library2"],
-        "silent": "true or false, suppress log output",
-        "detail": "true or false, show detailed logs",
-        "subtitles": "true or false, upload subtitles if available"
-    },
-    "plex_base_url": "",
-    "plex_token": "",
-    "plex_library_names": ["YourLibraryName"],
+    "plex_base_url": "http://localhost:32400",
+    "plex_token": "YOUR_PLEX_TOKEN",
+    "plex_library_names": ["TV Shows", "Anime"],
     "silent": false,
-    "detail": false,
+    "detail": true,
     "subtitles": false
 }
 ```
 
-Edit `config.json` with your Plex information and desired settings before rerunning the script.
+- `plex_base_url`: URL to your Plex server
+- `plex_token`: Your Plex server token
+- `plex_library_names`: List of Plex libraries to sync
+- `silent`: Suppress logs if true
+- `detail`: Show detailed update logs if true
+- `subtitles`: Upload subtitles if available
 
-### 3. Run manually
+## Bash Options
+
+- `--base-dir <path>`: Set the base directory where the repository and virtual environment are located. Default: `/volume1/docker/tubesync/tubesync-plex`.
+- `--config-file <path>`: (Optional) Specify a custom `config.json` path. If omitted, the script assumes `config.json` is in the base directory.
+
+Example:
 
 ```bash
-./tubesync-plex.sh
+bash tubesync-plex.sh --base-dir /volume1/docker/tubesync/tubesync-plex --config-file /volume1/docker/tubesync/tubesync-plex/config.json
 ```
 
-### 4. Cron job (optional)
+## Usage
 
-To run periodically, add a cron job:
+Run manually:
 
 ```bash
-# Edit crontab
-crontab -e
+bash /volume1/docker/tubesync/tubesync-plex/tubesync-plex.sh --base-dir /volume1/docker/tubesync/tubesync-plex
+```
 
-# Example: run daily at 3 AM
-0 3 * * * /path/to/tubesync-plex.sh >> /path/to/tubesync.log 2>&1
+The script will:
+
+1. Update the repository (git fetch + reset to remote `main`).
+2. Create a Python virtual environment if missing.
+3. Install/update required Python packages.
+4. Run metadata sync using `tubesync-plex-metadata.py`.
+
+## Cron Job Example
+
+Automate updates every day at 2:00 AM:
+
+```cron
+0 2 * * * /bin/bash /volume1/docker/tubesync/tubesync-plex/tubesync-plex.sh --base-dir /volume1/docker/tubesync/tubesync-plex >> /volume1/docker/tubesync/tubesync-plex/tubesync.log 2>&1
 ```
 
 ## Notes
 
-* The script references Plex libraries; the user running the script must have access to Plex library folders.
-* NFO files are deleted **only after successful metadata updates**.
-* Detailed logs are shown if `detail` is `true`.
-* Silent mode suppresses most log outputs if `silent` is `true`.
+- The script will **never overwrite existing local files**, except processed `.nfo` files which it deletes after sync.
+- For repository updates, the script resets the repository to match the remote `main` branch to avoid local conflicts.
+- Use `silent` mode to reduce console output in automated environments.
 
+## License
 
-
-
----
-
-# TubeSync Plex Metadata Sync Tool
-
-## 소개
-
-TubeSync Plex Metadata Sync Tool은 Plex 라이브러리의 에피소드 메타데이터를 TubeSync에서 가져온 NFO 파일을 기준으로 업데이트합니다. 또한, NFO 파일을 적용 후 삭제하여 라이브러리를 깔끔하게 유지할 수 있습니다.
-
----
-
-## 요구 사항
-
-* Python 3.10 이상
-* plexapi
-* lxml
-* requests
-
-설치는 `tubesync-plex.sh` 실행 시 자동으로 이루어집니다.
-
----
-
-## 설치 및 실행
-
-1. GitHub 저장소 클론 또는 업데이트:
-
-```bash
-./tubesync-plex.sh
-```
-
-2. 가상환경 자동 생성 및 Python 패키지 설치가 진행됩니다.
-3. `tubesync-plex-metadata.py` 스크립트가 실행되어 Plex 메타데이터를 동기화합니다.
-
-> **참고:** `tubesync-plex.sh` 파일에 실행 권한이 필요합니다.
-
-```bash
-chmod +x tubesync-plex.sh
-```
-
----
-
-## 설정 파일 (config.json)
-
-스크립트 실행 시 `config.json`이 없으면 자동 생성됩니다. 생성된 파일을 열어 Plex 설정을 입력하고 다시 실행하세요.
-
-```json
-{
-    "_comment": {
-        "plex_base_url": "Your Plex server base URL, e.g., http://localhost:32400",
-        "plex_token": "Your Plex server token",
-        "plex_library_names": ["Library1", "Library2"],
-        "silent": "true or false, whether to suppress logs",
-        "detail": "true or false, whether to show detailed update logs",
-        "subtitles": "true or false, whether to upload subtitles if available"
-    },
-    "plex_base_url": "",
-    "plex_token": "",
-    "plex_library_names": [""],
-    "silent": false,
-    "detail": false,
-    "subtitles": false
-}
-```
-
-* `plex_library_names`: 배열 형태로 여러 라이브러리 지정 가능
-* `silent`: true로 설정 시 로그 출력 최소화
-* `detail`: true로 설정 시 세부 업데이트 로그 출력
-* `subtitles`: true로 설정 시 VTT 자막 파일이 있는 경우 업로드
-
----
-
-## 사용법
-
-```bash
-./tubesync-plex.sh
-```
-
-* 기본적으로 `config.json`을 읽어서 설정 적용
-* 환경변수로 다른 설정 파일 사용 가능:
-
-```bash
-CONFIG_FILE="/path/to/config.json" ./tubesync-plex.sh
-```
-
----
-
-## 권한
-
-* 스크립트 실행 권한 필요
-* Plex 서버 접근 권한 필요 (API 토큰)
-
----
-
-## 주기적 실행 (Cron)
-
-예시: 매일 오전 3시에 실행
-
-```cron
-0 3 * * * /path/to/tubesync-plex.sh
-```
-
----
-
-## 참고
-
-* 스크립트는 Plex 라이브러리에서만 메타데이터를 업데이트하며, 로컬 NFO 파일은 적용 후 삭제됩니다.
-* 업데이트 없는 항목은 로그에 기본적으로 표시되지 않으며, `--detail` 옵션에서 확인 가능합니다.
+MIT License
