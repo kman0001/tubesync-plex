@@ -7,7 +7,7 @@ log() {
 
 log "START"
 
-# 0. 기본값 설정
+# 0. 기본값
 FIXED_BASE_DIR="/tubesync-plex"
 BASE_DIR="$FIXED_BASE_DIR"
 CONFIG_FILE=""
@@ -35,7 +35,7 @@ done
 log "BASE_DIR set to: $BASE_DIR"
 log "CONFIG_FILE set to: ${CONFIG_FILE:-none}"
 
-# 2. 유연한 CONFIG_FILE 탐색
+# 2. CONFIG_FILE 자동 탐색
 if [ -z "$CONFIG_FILE" ]; then
     if [ -f "$BASE_DIR/config.json" ]; then
         CONFIG_FILE="$BASE_DIR/config.json"
@@ -110,7 +110,6 @@ if [ -f "$REQ_FILE" ]; then
             $PIP_BIN install --disable-pip-version-check -q "$req"
         fi
     done < "$REQ_FILE"
-
     log "Python dependencies check complete."
 else
     log "requirements.txt not found. Skipping pip install."
