@@ -1,10 +1,10 @@
-name: Docker Hub Cleanup (Test Mode)
+name: Docker Hub Cleanup (Safe Test Mode)
 
 on:
   workflow_dispatch:  # 수동 실행
 
 env:
-  DOCKER_IMAGE: kman0001/tubesync-plex
+  DOCKER_IMAGE: your-dockerhub-username/tubesync-plex
 
 jobs:
   cleanup:
@@ -23,22 +23,22 @@ jobs:
           USERNAME=${{ secrets.DOCKERHUB_USERNAME }}
           TOKEN=${{ secrets.DOCKERHUB_TOKEN }}
 
-          # URL 인코딩
+          # REPO URL 인코딩
           REPO_ENCODED=$(python3 -c "import urllib.parse; print(urllib.parse.quote('''$REPO'''))")
 
           # 페이지네이션 처리
           URL="https://hub.docker.com/v2/repositories/$REPO_ENCODED/tags/?page_size=100"
           while [ -n "$URL" ]; do
-            RESPONSE=$(curl -s -u $USERNAME:$TOKEN "$URL")
+            RESPONSE=$(curl -s -u $USERNAME:$TOKEN "$URL" || true)
             TAGS=$(echo "$RESPONSE" | jq -r '.results[].name')
 
             for TAG in $TAGS; do
               if [[ "$TAG" != "latest" && "$TAG" != "latest-amd64" && "$TAG" != "latest-arm64" ]]; then
-                # URL 인코딩
+                # TAG URL 인코딩
                 TAG_ENCODED=$(python3 -c "import urllib.parse; print(urllib.parse.quote('''$TAG'''))")
                 echo "[TEST MODE] Would delete tag: $TAG"
-                # 실제 삭제는 주석 처리
-                # curl -s -X DELETE -u $USERNAME:$TOKEN "https://hub.docker.com/v2/repositories/$REPO_ENCODED/tags/$TAG_ENCODED/"
+                # 실제 삭제 시 아래 주석 해제
+                # curl -s -X DELETE -u $USERNAME:$TOKEN "https://hub.docker.com/v2/repositories/$REPO_ENCODED/tags/$TAG_ENCODED/" || true
               fi
             done
 
