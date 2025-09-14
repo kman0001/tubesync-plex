@@ -1,6 +1,28 @@
 #!/bin/sh
-# s6 서비스용 NFO 감시 스크립트
-# 반드시 포그라운드 실행으로 유지
-exec /app/entrypoint/entrypoint_nfo_watch.sh \
-    --base-dir /app/entrypoint/tubesync-plex \
-    --watch-dir /downloads
+# s6 서비스 run 스크립트
+# NFO 감시를 백그라운드로 실행
+
+# 로그 함수
+log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"; }
+
+WATCH_DIR="/downloads"
+BASE_DIR="/app/entrypoint/tubesync-plex"
+PYTHON_BIN="$BASE_DIR/venv/bin/python"
+PLEX_SCRIPT="$BASE_DIR/tubesync-plex-metadata.py"
+CONFIG_FILE="/app/config/config.json"
+
+# inotify-tools 설치 확인
+if ! command -v inotifywait >/dev/null 2>&1; then
+    log "ERROR: inotify-tools not found."
+    exit 1
+fi
+
+log "Starting NFO watch on $WATCH_DIR..."
+exec inotifywait -m -e create --format "%f" "$WATCH_DIR" | while read FILE; do
+    case "$FILE" in
+        *.nfo)
+            log "Detected new NFO: $FILE, running Plex metadata sync..."
+            "$PYTHON_BIN" "$PLEX_SCRIPT" --config "$CONFIG_FILE"
+            ;;
+    esac
+done
