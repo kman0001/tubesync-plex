@@ -1,36 +1,40 @@
-name: Build and Push Docker Image
+name: Build and Push Tubesync-Plex Docker
 
 on:
   push:
     branches:
       - main
-  workflow_dispatch:
 
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
 
     env:
-      DOCKER_IMAGE: kman0001/tubesync-plex:latest
+      DOCKER_IMAGE: your-dockerhub-username/tubesync-plex:latest
 
     steps:
-      # 1. GitHub 리포지토리 체크아웃
+      # 1. 레포 체크아웃
       - name: Checkout repository
         uses: actions/checkout@v3
 
-      # 2. DockerHub 로그인
+      # 2. Docker 로그인 (DockerHub 계정 정보는 Secrets에 저장)
       - name: Log in to DockerHub
         uses: docker/login-action@v2
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      # 3. Docker 이미지 빌드
+      # 3. config.json 생성
+      - name: Create config.json from secret
+        run: |
+          echo "${{ secrets.CONFIG_JSON }}" > config.json
+
+      # 4. Docker 빌드
       - name: Build Docker image
         run: |
           docker build -t $DOCKER_IMAGE .
 
-      # 4. DockerHub 푸시
+      # 5. DockerHub에 푸시
       - name: Push Docker image
         run: |
           docker push $DOCKER_IMAGE
