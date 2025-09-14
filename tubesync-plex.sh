@@ -1,13 +1,27 @@
 #!/bin/bash
 
-LOG_PREFIX="[$(date '+%Y-%m-%d %H:%M:%S')]"
-echo "$LOG_PREFIX START"
+set -e
 
-# 0. Config file
-CONFIG_FILE="${CONFIG_FILE:-./config.json}"
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"
+}
 
-# 1. Base directory = folder containing config file
-BASE_DIR=$(dirname "$(realpath "$CONFIG_FILE")")
+log "START"
+
+# 0. Config file (환경변수로 지정 가능)
+CONFIG_FILE="${CONFIG_FILE:-}"
+
+# 1. 유연한 BASE_DIR 탐색
+if [ -n "$CONFIG_FILE" ] && [ -f "$CONFIG_FILE" ]; then
+    BASE_DIR=$(dirname "$(realpath "$CONFIG_FILE")")
+elif [ -f "./tubesync-plex-metadata.py" ]; then
+    BASE_DIR=$(dirname "$(realpath ./tubesync-plex-metadata.py")")
+else
+    SCRIPT_PATH="$(realpath "$0")"
+    BASE_DIR="$(dirname "$SCRIPT_PATH")"
+fi
+
+log "BASE_DIR set to: $BASE_DIR"
 
 # 2. Repository URL
 REPO_URL="https://github.com/kman0001/tubesync-plex.git"
@@ -15,77 +29,83 @@ REPO_URL="https://github.com/kman0001/tubesync-plex.git"
 # 3. Clone or update repository
 if [ ! -d "$BASE_DIR/.git" ]; then
     if [ -d "$BASE_DIR" ] && [ "$(ls -A "$BASE_DIR")" ]; then
-        echo "$LOG_PREFIX $BASE_DIR exists and is not empty. Skipping clone."
+        log "$BASE_DIR exists and is not empty. Skipping clone."
     else
-        echo "$LOG_PREFIX Cloning repository..."
-        git clone "$REPO_URL" "$BASE_DIR" || { echo "$LOG_PREFIX ERROR: Failed to clone repository."; exit 1; }
+        log "Cloning repository..."
+        git clone "$REPO_URL" "$BASE_DIR" || { log "ERROR: Failed to clone repository."; exit 1; }
     fi
 else
-    echo "$LOG_PREFIX Checking for updates in repository..."
-    pushd "$BASE_DIR" >/dev/null || { echo "$LOG_PREFIX ERROR: Cannot cd to $BASE_DIR"; exit 1; }
-    git fetch origin || { echo "$LOG_PREFIX ERROR: git fetch failed."; popd >/dev/null; exit 1; }
+    log "Checking for updates in repository..."
+    pushd "$BASE_DIR" >/dev/null
+    git fetch origin || { log "ERROR: git fetch failed."; popd >/dev/null; exit 1; }
     BRANCH="main"
     CHANGED_FILES=$(git diff --name-only HEAD origin/$BRANCH)
     if [ -n "$CHANGED_FILES" ]; then
-        echo "$LOG_PREFIX Updated files from GitHub:"
+        log "Updated files from GitHub:"
         echo "$CHANGED_FILES"
         git merge --no-edit origin/$BRANCH || git reset --hard origin/$BRANCH
     else
-        echo "$LOG_PREFIX No updates from GitHub."
+        log "No updates from GitHub."
     fi
     popd >/dev/null
 fi
 
-# 4. Check python3-venv
-dpkg -s python3-venv &>/dev/null || { apt update && apt install -y python3-venv || { echo "$LOG_PREFIX ERROR: Failed to install python3-venv."; exit 1; }; }
+# 4. Check python3-venv (Ubuntu/Debian 기준)
+if ! dpkg -s python3-venv &>/dev/null; then
+    log "Installing python3-venv..."
+    apt update && apt install -y python3-venv || { log "ERROR: Failed to install python3-venv."; exit 1; }
+fi
 
 # 5. Create virtual environment
-[ -d "$BASE_DIR/venv" ] || python3 -m venv "$BASE_DIR/venv" || { echo "$LOG_PREFIX ERROR: Failed to create virtualenv."; exit 1; }
+if [ ! -d "$BASE_DIR/venv" ]; then
+    log "Creating virtual environment..."
+    python3 -m venv "$BASE_DIR/venv" || { log "ERROR: Failed to create virtualenv."; exit 1; }
+fi
 
-# 6. Install/update Python dependencies (quiet, only if needed)
-REQ_FILE_PATH="$BASE_DIR/requirements.txt"
+# 6. Install/update Python dependencies
+REQ_FILE="$BASE_DIR/requirements.txt"
+PIP_BIN="$BASE_DIR/venv/bin/pip"
 
-if [ -f "$REQ_FILE_PATH" ]; then
-    echo "$LOG_PREFIX Checking Python dependencies..."
-    PIP_BIN="$BASE_DIR/venv/bin/pip"
-
-    # Get installed packages
-    declare -A INSTALLED_PACKAGES
+if [ -f "$REQ_FILE" ]; then
+    log "Checking Python dependencies..."
+    
+    # 현재 설치된 패키지 버전 가져오기
+    declare -A INSTALLED
     while read -r line; do
         NAME=$(echo "$line" | cut -d= -f1)
-        VER=$(echo "$line" | cut -d= -f3)
-        INSTALLED_PACKAGES["$NAME"]="$VER"
+        VER=$(echo "$line" | cut -d= -f2)
+        INSTALLED["$NAME"]="$VER"
     done < <($PIP_BIN freeze)
-
-    # Process each package in requirements.txt
-    while IFS= read -r req_line || [[ -n "$req_line" ]]; do
-        [[ "$req_line" =~ ^# ]] && continue  # skip comments
-        PKG=$(echo "$req_line" | cut -d= -f1)
-        REQ_VER=$(echo "$req_line" | cut -d= -f3)
-        INST_VER="${INSTALLED_PACKAGES[$PKG]}"
-
+    
+    # requirements.txt 처리
+    while IFS= read -r req || [[ -n "$req" ]]; do
+        [[ "$req" =~ ^# ]] && continue
+        PKG=$(echo "$req" | cut -d= -f1)
+        REQ_VER=$(echo "$req" | cut -d= -f2)
+        INST_VER="${INSTALLED[$PKG]}"
+        
         if [ -z "$INST_VER" ]; then
-            echo "$LOG_PREFIX Installing new package: $PKG $REQ_VER"
-            $PIP_BIN install --disable-pip-version-check -q "$req_line" >/dev/null 2>&1
+            log "Installing new package: $PKG $REQ_VER"
+            $PIP_BIN install --disable-pip-version-check -q "$req"
         elif [ "$INST_VER" != "$REQ_VER" ]; then
-            echo "$LOG_PREFIX Updating package: $PKG $INST_VER → $REQ_VER"
-            $PIP_BIN install --disable-pip-version-check -q "$req_line" >/dev/null 2>&1
+            log "Updating package: $PKG $INST_VER → $REQ_VER"
+            $PIP_BIN install --disable-pip-version-check -q "$req"
         fi
-        # 이미 설치된 동일 버전 패키지는 pip install 호출 안 함 → pip 메시지 없음
-    done < "$REQ_FILE_PATH"
+    done < "$REQ_FILE"
 
-    echo "$LOG_PREFIX Python dependencies check complete."
+    log "Python dependencies check complete."
 else
-    echo "$LOG_PREFIX requirements.txt not found. Skipping pip install."
+    log "requirements.txt not found. Skipping pip install."
 fi
 
 # 7. Run tubesync-plex
-if [ -f "$BASE_DIR/tubesync-plex-metadata.py" ]; then
-    echo "$LOG_PREFIX Running tubesync-plex with config $CONFIG_FILE..."
-    "$BASE_DIR/venv/bin/python" "$BASE_DIR/tubesync-plex-metadata.py" --config "$CONFIG_FILE" >/dev/null 2>&1 || { echo "$LOG_PREFIX ERROR: tubesync-plex-metadata.py execution failed."; exit 1; }
+TS_SCRIPT="$BASE_DIR/tubesync-plex-metadata.py"
+if [ -f "$TS_SCRIPT" ]; then
+    log "Running tubesync-plex with config $CONFIG_FILE..."
+    "$BASE_DIR/venv/bin/python" "$TS_SCRIPT" --config "$CONFIG_FILE"
 else
-    echo "$LOG_PREFIX ERROR: tubesync-plex-metadata.py not found in $BASE_DIR."
+    log "ERROR: tubesync-plex-metadata.py not found in $BASE_DIR."
     exit 1
 fi
 
-echo "$LOG_PREFIX END"
+log "END"
