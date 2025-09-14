@@ -67,14 +67,16 @@ else
     pushd "$BASE_DIR" >/dev/null
     git fetch origin || { log "ERROR: git fetch failed."; popd >/dev/null; exit 1; }
     BRANCH="main"
-    CHANGED_FILES=$(git diff --name-only HEAD origin/$BRANCH)
-    if [ -n "$CHANGED_FILES" ]; then
-        log "Updated files from GitHub:"
-        echo "$CHANGED_FILES"
-        git merge --no-edit origin/$BRANCH || git reset --hard origin/$BRANCH
-    else
-        log "No updates from GitHub."
+
+    # 로컬 변경 사항이 있으면 강제 초기화
+    if ! git diff-index --quiet HEAD --; then
+        log "Local changes detected. Resetting to origin/$BRANCH"
+        git reset --hard origin/$BRANCH
     fi
+
+    # 병합 또는 fast-forward
+    git merge --ff-only origin/$BRANCH || git reset --hard origin/$BRANCH
+
     popd >/dev/null
 fi
 
