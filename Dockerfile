@@ -1,29 +1,22 @@
-# 베이스 이미지
 FROM python:3.11-slim
 
-# 작업 디렉토리 설정
+# s6 설치
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    inotify-tools curl git s6 && rm -rf /var/lib/apt/lists/*
+
+# 작업 디렉토리
 WORKDIR /app
 
-# 필수 패키지 설치
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-        inotify-tools \
-        git \
-        curl \
-        && rm -rf /var/lib/apt/lists/*
+# entrypoint 복사
+COPY entrypoint/tubesync-plex /app/entrypoint/tubesync-plex
+COPY config /app/config
 
-# 의존성 파일 복사
-COPY requirements.txt .
-RUN python -m pip install --upgrade pip
-RUN pip install --no-cache-dir -r requirements.txt
+# s6 서비스 폴더 복사
+COPY services.d /app/services.d
 
-# tubesync-plex 스크립트 및 entrypoint 복사
-COPY tubesync-plex-metadata.py .
-COPY entrypoint/ /app/entrypoint/tubesync-plex/
-RUN chmod +x /app/entrypoint/tubesync-plex/*.sh
+# 권한
+RUN chmod -R +x /app/entrypoint/tubesync-plex \
+    && chmod -R +x /app/services.d
 
-# Config 파일 경로 (컨테이너 안)
-VOLUME ["/app/config"]
-
-# 엔트리포인트 지정
-ENTRYPOINT ["/app/entrypoint/tubesync-plex/entrypoint_nfo_watch.sh"]
+# s6가 PID 1로 실행되도록
+ENTRYPOINT ["/bin/s6-svscan", "/app/services.d"]
