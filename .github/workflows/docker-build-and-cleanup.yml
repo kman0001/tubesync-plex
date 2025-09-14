@@ -1,11 +1,6 @@
-name: Build Multi-Arch Docker & Cleanup Old Tags
+name: Build Multi-Arch Docker & Auto Cleanup
 
 on:
-  push:
-    branches:
-      - main
-    paths-ignore:
-      - '.github/workflows/**'
   workflow_dispatch:
 
 env:
@@ -50,37 +45,60 @@ jobs:
         run: |
           echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
 
-      - name: Delete old tags except latest
+      - name: Test Mode: List tags and manifests
+        id: test-list
         run: |
           REPO=${{ env.DOCKER_IMAGE }}
           USERNAME=${{ secrets.DOCKERHUB_USERNAME }}
           TOKEN=${{ secrets.DOCKERHUB_TOKEN }}
-
-          # REPO URL 인코딩
           REPO_ENCODED=$(python3 -c "import urllib.parse; print(urllib.parse.quote('''$REPO'''))")
-
-          # 페이지네이션 처리
           URL="https://hub.docker.com/v2/repositories/$REPO_ENCODED/tags/?page_size=100"
+          echo "TEST_TAGS=[]" >> $GITHUB_ENV
+
           while [ -n "$URL" ]; do
             RESPONSE=$(curl -s -u $USERNAME:$TOKEN "$URL" || true)
-
-            # JSON 유효성 검사
             if ! echo "$RESPONSE" | jq empty >/dev/null 2>&1; then
               echo "API did not return valid JSON. Stopping."
               break
             fi
-
-            # null-safe 태그 추출
             TAGS=$(echo "$RESPONSE" | jq -r '.results[]?.name // empty')
+            for TAG in $TAGS; do
+              if [[ "$TAG" != "latest" && "$TAG" != "latest-amd64" && "$TAG" != "latest-arm64" ]]; then
+                echo "[TEST MODE] Would delete tag: $TAG"
+                DIGESTS=$(curl -s -u $USERNAME:$TOKEN "https://hub.docker.com/v2/repositories/$REPO_ENCODED/tags/$(python3 -c "import urllib.parse; print(urllib.parse.quote('''$TAG'''))")/" | jq -r '.images[].digest // empty')
+                for DIGEST in $DIGESTS; do
+                  echo "[TEST MODE] Would delete manifest: $DIGEST"
+                done
+              fi
+            done
+            URL=$(echo "$RESPONSE" | jq -r '.next')
+          done
 
+      - name: Confirm and Delete
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          echo "Starting actual deletion..."
+          REPO=${{ env.DOCKER_IMAGE }}
+          USERNAME=${{ secrets.DOCKERHUB_USERNAME }}
+          TOKEN=${{ secrets.DOCKERHUB_TOKEN }}
+          REPO_ENCODED=$(python3 -c "import urllib.parse; print(urllib.parse.quote('''$REPO'''))")
+          URL="https://hub.docker.com/v2/repositories/$REPO_ENCODED/tags/?page_size=100"
+
+          while [ -n "$URL" ]; do
+            RESPONSE=$(curl -s -u $USERNAME:$TOKEN "$URL" || true)
+            TAGS=$(echo "$RESPONSE" | jq -r '.results[]?.name // empty')
             for TAG in $TAGS; do
               if [[ "$TAG" != "latest" && "$TAG" != "latest-amd64" && "$TAG" != "latest-arm64" ]]; then
                 TAG_ENCODED=$(python3 -c "import urllib.parse; print(urllib.parse.quote('''$TAG'''))")
                 echo "Deleting tag: $TAG"
                 curl -s -X DELETE -u $USERNAME:$TOKEN "https://hub.docker.com/v2/repositories/$REPO_ENCODED/tags/$TAG_ENCODED/" || true
+                DIGESTS=$(curl -s -u $USERNAME:$TOKEN "https://hub.docker.com/v2/repositories/$REPO_ENCODED/tags/$TAG_ENCODED/" | jq -r '.images[].digest // empty')
+                for DIGEST in $DIGESTS; do
+                  DIGEST_ENCODED=$(python3 -c "import urllib.parse; print(urllib.parse.quote('''$DIGEST'''))")
+                  echo "Deleting manifest: $DIGEST"
+                  curl -s -X DELETE -u $USERNAME:$TOKEN "https://hub.docker.com/v2/repositories/$REPO_ENCODED/manifests/$DIGEST_ENCODED/" || true
+                done
               fi
             done
-
-            # 다음 페이지 URL
             URL=$(echo "$RESPONSE" | jq -r '.next')
           done
