@@ -5,27 +5,28 @@ This repository is a **personal fork** of [tgouverneur/tubesync-plex](https://gi
 ## Key Changes in this Fork
 - Simplified default log output
 - Added `-d / --detail` option for detailed metadata updates
+- Added `subtitles` option to automatically extract and upload embedded subtitles to Plex
 - Disallow simultaneous use of `-s / --silent` and `-d / --detail` options
+- Supports Windows, Linux, and Docker environments with automatic ffmpeg/ffprobe path detection
+- Handles multiple subtitle tracks and automatically maps language codes to Plex-compatible ISO 639-1 codes
 
 > ⚠️ **Note:** This fork is maintained for personal purposes and may differ from the original repository.
 
-
-
 ---
----
-
 
 # TubeSync-Plex
 
-TubeSync-Plex is a Python script to automatically sync episode metadata from `.nfo` files into your Plex libraries. It supports multiple libraries and can safely remove processed `.nfo` files.
+TubeSync-Plex is a Python script to automatically sync episode metadata from `.nfo` files into your Plex libraries and optionally upload embedded subtitles. It supports multiple libraries and can safely remove processed `.nfo` files.
 
 ## Features
 
 - Sync metadata (title, aired date, plot) from `.nfo` files to Plex.
 - Supports multiple Plex libraries.
 - Automatically deletes `.nfo` files after successful update.
+- Extracts embedded MKV subtitles and uploads them to Plex with proper language mapping.
 - Handles malformed NFO files gracefully.
-- Configurable logging and silent mode.
+- Configurable logging (`silent` and `detail` modes).
+- Cross-platform: Windows, Linux, Docker.
 - Works in Docker or host environments.
 
 ## Requirements
@@ -33,6 +34,7 @@ TubeSync-Plex is a Python script to automatically sync episode metadata from `.n
 - Python 3.10+  
 - pip (Python package manager)  
 - python3-venv for virtual environment creation  
+- ffmpeg / ffprobe installed and in PATH (or set via `FFMPEG_PATH` / `FFPROBE_PATH`)  
 - Plex server with valid `plex_token`
 
 ## Installation
@@ -69,17 +71,17 @@ Edit `config.json` with your Plex server details:
 }
 ```
 
-- `plex_base_url`: URL to your Plex server
-- `plex_token`: Your Plex server token
-- `plex_library_names`: List of Plex libraries to sync
-- `silent`: Suppress logs if true
-- `detail`: Show detailed update logs if true
-- `subtitles`: Upload subtitles if available
+- `plex_base_url`: URL to your Plex server  
+- `plex_token`: Your Plex server token  
+- `plex_library_names`: List of Plex libraries to sync  
+- `silent`: Suppress logs if true  
+- `detail`: Show detailed update logs if true  
+- `subtitles`: Extract embedded subtitles from MKV files and upload to Plex
 
 ## Bash Options
 
-- `--base-dir <path>`: Set the base directory where the repository and virtual environment are located.
-- `--config-file <path>`: (Optional) Specify a custom `config.json` path. If omitted, the script assumes `config.json` is in the base directory.
+- `--base-dir <path>`: Set the base directory where the repository and virtual environment are located.  
+- `--config-file <path>`: (Optional) Specify a custom `config.json` path. If omitted, the script assumes `config.json` is in the base directory.  
 
 Example:
 
@@ -97,10 +99,11 @@ bash /tubesync-plex.sh --base-dir /tubesync-plex
 
 The script will:
 
-1. Update the repository (git fetch + reset to remote `main`).
-2. Create a Python virtual environment if missing.
-3. Install/update required Python packages.
-4. Run metadata sync using `tubesync-plex-metadata.py`.
+1. Update the repository (git fetch + reset to remote `main`).  
+2. Create a Python virtual environment if missing.  
+3. Install/update required Python packages.  
+4. Run metadata sync using `tubesync-plex-metadata.py`.  
+5. Optionally extract embedded subtitles and upload them to Plex if `subtitles=true`.
 
 ## Cron Job Example
 
@@ -112,9 +115,11 @@ Automate updates every day at 2:00 AM:
 
 ## Notes
 
-- The script will **never overwrite existing local files**, except processed `.nfo` files which it deletes after sync.
-- For repository updates, the script resets the repository to match the remote `main` branch to avoid local conflicts.
-- Use `silent` mode to reduce console output in automated environments.
+- The script will **never overwrite existing local files**, except processed `.nfo` files which it deletes after sync.  
+- For repository updates, the script resets the repository to match the remote `main` branch to avoid local conflicts.  
+- Use `silent` mode to reduce console output in automated environments.  
+- The `subtitles` feature supports multiple tracks per MKV file and automatically maps language codes to Plex-compatible ISO 639-1 codes.  
+- Compatible with Windows, Linux, and Docker environments. If ffmpeg/ffprobe are not in PATH, set `FFMPEG_PATH` / `FFPROBE_PATH` in environment variables.
 
 ## License
 
