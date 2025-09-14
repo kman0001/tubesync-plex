@@ -1,0 +1,41 @@
+name: Cleanup Docker Hub Tags
+
+on:
+  workflow_dispatch:  # 수동 실행
+
+env:
+  DOCKER_IMAGE: your-dockerhub-username/tubesync-plex
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq curl
+
+      - name: Authenticate to Docker Hub
+        run: |
+          echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
+
+      - name: Delete old tags except latest
+        run: |
+          REPO=${{ env.DOCKER_IMAGE }}
+          USERNAME=${{ secrets.DOCKERHUB_USERNAME }}
+          TOKEN=${{ secrets.DOCKERHUB_TOKEN }}
+
+          # 페이지네이션 처리
+          URL="https://hub.docker.com/v2/repositories/$REPO/tags/?page_size=100"
+          while [ -n "$URL" ]; do
+            RESPONSE=$(curl -s -u $USERNAME:$TOKEN "$URL")
+            TAGS=$(echo "$RESPONSE" | jq -r '.results[].name')
+
+            for TAG in $TAGS; do
+              if [[ "$TAG" != "latest" && "$TAG" != "latest-amd64" && "$TAG" != "latest-arm64" ]]; then
+                echo "Deleting tag: $TAG"
+                curl -s -X DELETE -u $USERNAME:$TOKEN "https://hub.docker.com/v2/repositories/$REPO/tags/$TAG/"
+              fi
+            done
+
+            # 다음 페이지 URL
+            URL=$(echo "$RESPONSE" | jq -r '.next')
+          done
