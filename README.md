@@ -131,6 +131,13 @@ Supports UTF-8 encoded JSON files.
 
 See the [`json_to_nfo`](https://github.com/kman0001/tubesync-plex/tree/main/json_to_nfo) folder for details and usage examples.
 
+
+### TubeSync-Plex NFO Watch Docker
+
+This Docker container watches your Plex library for .nfo files and automatically applies metadata.
+
+See the [`READMD.md`](https://github.com/kman0001/tubesync-plex/blob/main/entrypoint/READMD.md)) for details.
+
 ## Notes
 
 - The script will **never overwrite existing local files**, except processed `.nfo` files which it deletes after sync.  
