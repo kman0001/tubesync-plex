@@ -7,13 +7,13 @@ import lxml.etree as ET
 import platform
 
 # -----------------------------
-# CONFIG_FILE 설정
+# CONFIG_FILE setting
 # -----------------------------
 CONFIG_FILE = os.environ.get("CONFIG_FILE", "config.json")
 CONFIG_FILE = os.path.abspath(CONFIG_FILE)
 
 # -----------------------------
-# 기본 config
+# Default config
 # -----------------------------
 default_config = {
     "_comment": {
@@ -33,7 +33,7 @@ default_config = {
 }
 
 # -----------------------------
-# config.json 생성
+# Create config.json if missing
 # -----------------------------
 if not os.path.exists(CONFIG_FILE):
     with open(CONFIG_FILE, "w", encoding="utf-8") as f:
@@ -42,33 +42,33 @@ if not os.path.exists(CONFIG_FILE):
     sys.exit(0)
 
 # -----------------------------
-# config 로드
+# Load config
 # -----------------------------
 with open(CONFIG_FILE, "r", encoding="utf-8") as f:
     config = json.load(f)
 
 # -----------------------------
-# Plex 연결
+# Connect to Plex
 # -----------------------------
 try:
     plex = PlexServer(config["plex_base_url"], config["plex_token"])
 except Exception as e:
-    print(f"[ERROR] Plex 연결 실패: {e}")
+    print(f"[ERROR] Failed to connect to Plex: {e}")
     sys.exit(1)
 
 # -----------------------------
-# OS별 ffmpeg/ffprobe 경로 처리
+# Set ffmpeg/ffprobe paths depending on OS
 # -----------------------------
 FFMPEG_CMD = "ffmpeg"
 FFPROBE_CMD = "ffprobe"
 
 if platform.system() == "Windows":
-    # Windows 환경에서는 필요 시 절대경로 지정
+    # On Windows, use absolute path if needed
     FFMPEG_CMD = os.environ.get("FFMPEG_PATH", "ffmpeg.exe")
     FFPROBE_CMD = os.environ.get("FFPROBE_PATH", "ffprobe.exe")
 
 # -----------------------------
-# 언어 코드 매핑 (ffmpeg → Plex ISO 639-1)
+# Map language codes (ffmpeg → Plex ISO 639-1)
 # -----------------------------
 LANG_MAP = {
     "eng": "en",
@@ -88,7 +88,7 @@ def map_language_code(code):
     return LANG_MAP.get(code.lower(), "und")
 
 # -----------------------------
-# MKV 내장 자막 추출 (다중 트랙)
+# Extract embedded MKV subtitles (multiple tracks)
 # -----------------------------
 def extract_subtitles_multi(video_path):
     base, ext = os.path.splitext(video_path)
@@ -107,7 +107,7 @@ def extract_subtitles_multi(video_path):
         import json as js
         streams = js.loads(result.stdout).get("streams", [])
     except Exception as e:
-        print(f"[ERROR] ffprobe 실패: {video_path} - {e}")
+        print(f"[ERROR] ffprobe failed: {video_path} - {e}")
         return extracted_files
 
     for stream in streams:
@@ -115,7 +115,7 @@ def extract_subtitles_multi(video_path):
         lang_code = map_language_code(stream.get("tags", {}).get("language", "und"))
         srt_file = f"{base}.{lang_code}.srt"
         if os.path.exists(srt_file):
-            continue  # 이미 존재하면 스킵
+            continue  # Skip if already exists
         try:
             cmd = [
                 FFMPEG_CMD,
@@ -128,22 +128,22 @@ def extract_subtitles_multi(video_path):
             if os.path.exists(srt_file):
                 extracted_files.append((srt_file, lang_code))
         except Exception as e:
-            print(f"[ERROR] 자막 추출 실패: {video_path} 트랙 {idx} - {e}")
+            print(f"[ERROR] Subtitle extraction failed: {video_path} track {idx} - {e}")
 
     return extracted_files
 
 # -----------------------------
-# Plex에 자막 강제 등록
+# Upload subtitles to Plex
 # -----------------------------
 def add_subtitles_to_plex(part, srt_files):
     for srt_file, lang in srt_files:
         try:
             part.uploadSubtitles(srt_file, language=lang)
         except Exception as e:
-            print(f"[ERROR] Plex에 자막 등록 실패 {srt_file}: {e}")
+            print(f"[ERROR] Failed to upload subtitles to Plex {srt_file}: {e}")
 
 # -----------------------------
-# NFO 업데이트 및 자막 처리
+# Update NFO metadata and handle subtitles
 # -----------------------------
 video_extensions = (".mkv", ".mp4", ".avi", ".mov", ".wmv", ".flv", ".m4v")
 
@@ -154,7 +154,7 @@ def main():
         try:
             section = plex.library.section(library_name)
         except Exception as e:
-            print(f"[ERROR] 라이브러리 '{library_name}' 접근 실패: {e}")
+            print(f"[ERROR] Failed to access library '{library_name}': {e}")
             continue
 
         for ep in section.search(libtype="episode"):
@@ -172,7 +172,7 @@ def main():
                         aired = root.findtext("aired", default="")
                         plot = root.findtext("plot", default="")
 
-                        # Plex 메타데이터 업데이트
+                        # Update Plex metadata
                         ep.edit(
                             title=title if title else None,
                             originallyAvailableAt=aired if aired else None,
@@ -180,7 +180,7 @@ def main():
                             lockedFields=["title", "originallyAvailableAt", "summary"]
                         )
 
-                        # 자막 처리
+                        # Handle subtitles
                         if config.get("subtitles", False) and part.file.lower().endswith(".mkv"):
                             extracted = extract_subtitles_multi(part.file)
                             if extracted:
