@@ -1,22 +1,23 @@
 FROM python:3.11-slim
 
-# s6 설치
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    inotify-tools curl git s6 && rm -rf /var/lib/apt/lists/*
+# 필수 패키지 설치
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends inotify-tools curl git s6 && \
+    rm -rf /var/lib/apt/lists/*
 
-# 작업 디렉토리
 WORKDIR /app
 
-# entrypoint 복사
-COPY entrypoint/tubesync-plex /app/entrypoint/tubesync-plex
-COPY config /app/config
+# 요구사항 및 코드 복사
+COPY requirements.txt .
+COPY entrypoint/ /app/entrypoint/
+
+# Python 가상환경 생성 및 패키지 설치
+RUN python -m venv /app/entrypoint/venv && \
+    /app/entrypoint/venv/bin/pip install --upgrade pip && \
+    /app/entrypoint/venv/bin/pip install -r requirements.txt
 
 # s6 서비스 폴더 복사
-COPY services.d /app/services.d
+COPY services.d/ /etc/services.d/
 
-# 권한
-RUN chmod -R +x /app/entrypoint/tubesync-plex \
-    && chmod -R +x /app/services.d
-
-# s6가 PID 1로 실행되도록
-ENTRYPOINT ["/bin/s6-svscan", "/app/services.d"]
+# s6-init 실행
+ENTRYPOINT ["/init"]
