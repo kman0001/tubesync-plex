@@ -29,17 +29,23 @@ REPO_URL="https://github.com/kman0001/tubesync-plex.git"
 mkdir -p "$BASE_DIR"
 
 # -----------------------------
+# Helper function for logs
+# -----------------------------
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"
+}
+
+# -----------------------------
 # 1. Clone or fetch/reset repository
 # -----------------------------
 cd "$BASE_DIR"
 
 if [ ! -d "$BASE_DIR/.git" ]; then
-    # 최초 실행: git fetch → reset 시도
-    echo "Initializing git repository..."
+    log "Initializing git repository..."
     git init
     git remote add origin "$REPO_URL"
     if ! git fetch origin; then
-        echo "git fetch failed, running git clone..."
+        log "git fetch failed, running git clone..."
         cd ..
         rm -rf "$BASE_DIR"
         git clone "$REPO_URL" "$BASE_DIR"
@@ -48,8 +54,7 @@ if [ ! -d "$BASE_DIR/.git" ]; then
         git reset --hard origin/main
     fi
 else
-    # 기존 repo: 항상 최신 상태 유지
-    echo "Updating repository..."
+    log "Updating repository..."
     git fetch origin
     git reset --hard origin/main
 fi
@@ -58,28 +63,57 @@ fi
 # 2. Check python3-venv
 # -----------------------------
 if ! dpkg -s python3-venv &>/dev/null; then
-    echo "Installing python3-venv..."
+    log "Installing python3-venv..."
     apt update && apt install -y python3-venv
+else
+    log "python3-venv already installed."
 fi
 
 # -----------------------------
 # 3. Create virtual environment if not exists
 # -----------------------------
 if [ ! -d "$BASE_DIR/venv" ]; then
-    echo "Creating virtual environment..."
+    log "Creating virtual environment..."
     python3 -m venv "$BASE_DIR/venv"
+else
+    log "Virtual environment already exists."
 fi
 
 PIP_BIN="$BASE_DIR/venv/bin/pip"
+REQ_FILE="$BASE_DIR/requirements.txt"
 
 # -----------------------------
 # 4. Install / update Python dependencies
 # -----------------------------
-REQ_FILE="$BASE_DIR/requirements.txt"
 if [ -f "$REQ_FILE" ]; then
-    echo "Installing Python dependencies..."
-    "$PIP_BIN" install --upgrade pip --quiet
-    "$PIP_BIN" install -r "$REQ_FILE" --quiet
+    log "Checking Python dependencies..."
+
+    # 현재 설치된 패키지
+    declare -A INSTALLED
+    while read -r line; do
+        NAME=$(echo "$line" | cut -d= -f1)
+        VER=$(echo "$line" | cut -d= -f3)
+        INSTALLED["$NAME"]="$VER"
+    done < <("$PIP_BIN" freeze)
+
+    while IFS= read -r req || [[ -n "$req" ]]; do
+        [[ "$req" =~ ^# ]] && continue
+        PKG=$(echo "$req" | cut -d= -f1)
+        REQ_VER=$(echo "$req" | cut -d= -f3)
+        INST_VER="${INSTALLED[$PKG]}"
+
+        if [ -z "$INST_VER" ]; then
+            log "Installing new package: $PKG $REQ_VER"
+            "$PIP_BIN" install --disable-pip-version-check "$req"
+        elif [ "$INST_VER" != "$REQ_VER" ]; then
+            log "Updating package: $PKG $INST_VER → $REQ_VER"
+            "$PIP_BIN" install --disable-pip-version-check "$req"
+        fi
+    done < "$REQ_FILE"
+
+    log "Python dependencies check complete."
+else
+    log "requirements.txt not found. Skipping pip install."
 fi
 
 # -----------------------------
@@ -87,9 +121,9 @@ fi
 # -----------------------------
 PY_FILE="$BASE_DIR/tubesync-plex-metadata.py"
 if [ -f "$PY_FILE" ]; then
-    echo "Running tubesync-plex..."
+    log "Running tubesync-plex..."
     exec "$BASE_DIR/venv/bin/python" "$PY_FILE" --config "$CONFIG_FILE"
 else
-    echo "ERROR: tubesync-plex-metadata.py not found."
+    log "ERROR: tubesync-plex-metadata.py not found."
     exit 1
 fi
