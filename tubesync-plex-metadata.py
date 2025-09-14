@@ -1,4 +1,5 @@
 import os
+import sys
 import json
 from plexapi.server import PlexServer
 import lxml.etree as ET
@@ -36,7 +37,7 @@ if not os.path.exists(CONFIG_FILE):
     with open(CONFIG_FILE, "w", encoding="utf-8") as f:
         json.dump(default_config, f, indent=4)
     print(f"[INFO] {CONFIG_FILE} created. Please edit it and rerun.")
-    exit(0)
+    sys.exit(0)
 
 # -----------------------------
 # config 로드
@@ -45,31 +46,57 @@ with open(CONFIG_FILE, "r", encoding="utf-8") as f:
     config = json.load(f)
 
 # -----------------------------
-# Plex 연결 및 NFO 업데이트
+# Plex 연결
+# -----------------------------
+try:
+    plex = PlexServer(config["plex_base_url"], config["plex_token"])
+except Exception as e:
+    print(f"[ERROR] Plex 연결 실패: {e}")
+    sys.exit(1)
+
+# -----------------------------
+# NFO 업데이트
 # -----------------------------
 video_extensions = (".mkv", ".mp4", ".avi", ".mov", ".wmv", ".flv", ".m4v")
 
 def main():
-    plex = PlexServer(config["plex_base_url"], config["plex_token"])
     updated_count = 0
 
     for library_name in config["plex_library_names"]:
-        section = plex.library.section(library_name)
+        try:
+            section = plex.library.section(library_name)
+        except Exception as e:
+            print(f"[ERROR] 라이브러리 '{library_name}' 접근 실패: {e}")
+            continue
+
         for ep in section.search(libtype="episode"):
             for part in ep.iterParts():
+                if not part.file.lower().endswith(video_extensions):
+                    continue
+
                 nfo_path = os.path.splitext(part.file)[0] + ".nfo"
                 if os.path.exists(nfo_path):
                     try:
                         tree = ET.parse(nfo_path, parser=ET.XMLParser(recover=True))
                         root = tree.getroot()
+
                         title = root.findtext("title", default="")
                         aired = root.findtext("aired", default="")
                         plot = root.findtext("plot", default="")
-                        ep.editTitle(title, locked=True)
-                        ep.editSortTitle(aired, locked=True)
-                        ep.editSummary(plot, locked=True)
+
+                        ep.edit(
+                            title=title if title else None,
+                            originallyAvailableAt=aired if aired else None,
+                            summary=plot if plot else None,
+                            lockedFields=["title", "originallyAvailableAt", "summary"]
+                        )
+
                         updated_count += 1
+                        if config.get("detail", False):
+                            print(f"[UPDATED] {part.file} → {title}")
+
                         os.remove(nfo_path)
+
                     except Exception as e:
                         print(f"[ERROR] {nfo_path}: {e}")
 
