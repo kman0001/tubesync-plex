@@ -1,22 +1,29 @@
+# 베이스 이미지
 FROM python:3.11-slim
 
 # 필수 패키지 설치
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends inotify-tools curl && \
+    apt-get install -y --no-install-recommends inotify-tools git curl && \
     rm -rf /var/lib/apt/lists/*
 
+# 작업 디렉토리
 WORKDIR /app
 
-# 필요 파일 복사
-COPY entrypoint/tubesync-plex /app/entrypoint/tubesync-plex
+# Python 요구사항과 스크립트 복사
+COPY requirements.txt .
+COPY tubesync-plex-metadata.py .
+COPY entrypoint/ /app/entrypoint/
 
-# 가상환경 준비
-RUN python -m venv /app/entrypoint/tubesync-plex/venv
+# Python 가상환경 생성 및 패키지 설치
+RUN python -m venv /app/venv && \
+    /app/venv/bin/pip install --upgrade pip && \
+    /app/venv/bin/pip install -r requirements.txt
 
-# s6 설치 (간단 예시)
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends s6 && \
-    rm -rf /var/lib/apt/lists/*
+# 엔트리포인트 스크립트 권한
+RUN chmod +x /app/entrypoint/entrypoint_nfo_watch.sh
 
-# s6 초기화 스크립트 복사
-COPY s6/ /etc/services.d/
+# 외부 config.json 마운트 경로
+VOLUME ["/app/config", "/downloads"]
+
+# 엔트리포인트 실행
+ENTRYPOINT ["/app/entrypoint/entrypoint_nfo_watch.sh"]
