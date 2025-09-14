@@ -88,7 +88,6 @@ REQ_FILE="$BASE_DIR/requirements.txt"
 if [ -f "$REQ_FILE" ]; then
     log "Checking Python dependencies..."
 
-    # 현재 설치된 패키지
     declare -A INSTALLED
     while read -r line; do
         NAME=$(echo "$line" | cut -d= -f1)
@@ -109,6 +108,7 @@ if [ -f "$REQ_FILE" ]; then
             log "Updating package: $PKG $INST_VER → $REQ_VER"
             "$PIP_BIN" install --disable-pip-version-check "$req"
         fi
+        # 동일 버전 패키지는 pip 호출 안 함 → 로그 없음
     done < "$REQ_FILE"
 
     log "Python dependencies check complete."
