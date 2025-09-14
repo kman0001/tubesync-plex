@@ -1,4 +1,4 @@
-name: Docker Hub Cleanup (Safe Test Mode)
+name: Docker Hub Cleanup (Actual Deletion)
 
 on:
   workflow_dispatch:
@@ -17,7 +17,7 @@ jobs:
         run: |
           echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
 
-      - name: List tags and simulate deletion
+      - name: Delete old tags except latest
         run: |
           REPO=${{ env.DOCKER_IMAGE }}
           USERNAME=${{ secrets.DOCKERHUB_USERNAME }}
@@ -44,9 +44,8 @@ jobs:
               if [[ "$TAG" != "latest" && "$TAG" != "latest-amd64" && "$TAG" != "latest-arm64" ]]; then
                 # TAG URL 인코딩
                 TAG_ENCODED=$(python3 -c "import urllib.parse; print(urllib.parse.quote('''$TAG'''))")
-                echo "[TEST MODE] Would delete tag: $TAG"
-                # 실제 삭제 시 아래 주석 해제
-                # curl -s -X DELETE -u $USERNAME:$TOKEN "https://hub.docker.com/v2/repositories/$REPO_ENCODED/tags/$TAG_ENCODED/" || true
+                echo "Deleting tag: $TAG"
+                curl -s -X DELETE -u $USERNAME:$TOKEN "https://hub.docker.com/v2/repositories/$REPO_ENCODED/tags/$TAG_ENCODED/" || true
               fi
             done
 
