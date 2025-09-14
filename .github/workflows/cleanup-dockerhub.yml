@@ -1,7 +1,7 @@
 name: Docker Hub Cleanup (Safe Test Mode)
 
 on:
-  workflow_dispatch:  # 수동 실행
+  workflow_dispatch:
 
 env:
   DOCKER_IMAGE: your-dockerhub-username/tubesync-plex
@@ -10,7 +10,7 @@ jobs:
   cleanup:
     runs-on: ubuntu-latest
     steps:
-      - name: Install jq and python3
+      - name: Install dependencies
         run: sudo apt-get update && sudo apt-get install -y jq python3 curl
 
       - name: Authenticate to Docker Hub
@@ -30,7 +30,14 @@ jobs:
           URL="https://hub.docker.com/v2/repositories/$REPO_ENCODED/tags/?page_size=100"
           while [ -n "$URL" ]; do
             RESPONSE=$(curl -s -u $USERNAME:$TOKEN "$URL" || true)
-            TAGS=$(echo "$RESPONSE" | jq -r '.results[].name')
+
+            # 응답 검사
+            if [[ -z "$RESPONSE" ]] || [[ "$RESPONSE" == "null" ]]; then
+              echo "No response or repository not found, stopping."
+              break
+            fi
+
+            TAGS=$(echo "$RESPONSE" | jq -r '.results[].name // empty')
 
             for TAG in $TAGS; do
               if [[ "$TAG" != "latest" && "$TAG" != "latest-amd64" && "$TAG" != "latest-arm64" ]]; then
