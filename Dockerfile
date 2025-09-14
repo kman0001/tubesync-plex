@@ -1,28 +1,27 @@
+# 베이스 이미지
 FROM python:3.11-slim
 
-WORKDIR /app
-
-# System dependencies
+# 필수 패키지 설치
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         inotify-tools \
         git \
         curl \
-        && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/*
 
-# Copy project files
+# 작업 디렉토리
+WORKDIR /app
+
+# 코드 복사 (venv는 제외)
 COPY requirements.txt .
 COPY tubesync-plex-metadata.py .
 COPY config.json .
 COPY entrypoint/ /app/entrypoint/
 
-# Python venv and dependencies
-RUN python -m venv /app/venv && \
-    /app/venv/bin/pip install --upgrade pip setuptools wheel && \
+# Python 가상환경 생성
+RUN python3 -m venv /app/venv && \
+    /app/venv/bin/pip install --upgrade pip && \
     /app/venv/bin/pip install --upgrade -r requirements.txt
 
-# Entrypoint
-ENTRYPOINT ["/bin/bash", "/app/entrypoint/entrypoint_nfo_watch.sh"]
-
-# Default CMD
-CMD ["--base-dir", "/app", "--watch-dir", "/downloads"]
+# 엔트리포인트 실행
+ENTRYPOINT ["/app/entrypoint/entrypoint_nfo_watch.sh"]
