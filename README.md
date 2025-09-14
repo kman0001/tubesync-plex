@@ -40,16 +40,16 @@ TubeSync-Plex is a Python script to automatically sync episode metadata from `.n
 1. Create a directory for TubeSync-Plex:
 
 ```bash
-mkdir -p /volume1/docker/tubesync/tubesync-plex
-cd /volume1/docker/tubesync/tubesync-plex
+mkdir -p /tubesync-plex
+cd /tubesync-plex
 ```
 
-2. Download `tubesync-plex.sh` and `tubesync-plex-metadata.py` from this repository.
+2. Download `tubesync-plex.sh` from this repository.
 
 3. Run the setup script (inside Docker or on host):
 
 ```bash
-bash /volume1/docker/tubesync/tubesync-plex/tubesync-plex.sh --base-dir /volume1/docker/tubesync/tubesync-plex
+bash /tubesync-plex.sh --base-dir /tubesync-plex
 ```
 
 > The script will create a virtual environment, install required Python packages, and create a default `config.json` if it does not exist.
@@ -78,13 +78,13 @@ Edit `config.json` with your Plex server details:
 
 ## Bash Options
 
-- `--base-dir <path>`: Set the base directory where the repository and virtual environment are located. Default: `/volume1/docker/tubesync/tubesync-plex`.
+- `--base-dir <path>`: Set the base directory where the repository and virtual environment are located.
 - `--config-file <path>`: (Optional) Specify a custom `config.json` path. If omitted, the script assumes `config.json` is in the base directory.
 
 Example:
 
 ```bash
-bash tubesync-plex.sh --base-dir /volume1/docker/tubesync/tubesync-plex --config-file /volume1/docker/tubesync/tubesync-plex/config.json
+bash tubesync-plex.sh --base-dir /tubesync-plex --config-file /tubesync-plex/config.json
 ```
 
 ## Usage
@@ -92,7 +92,7 @@ bash tubesync-plex.sh --base-dir /volume1/docker/tubesync/tubesync-plex --config
 Run manually:
 
 ```bash
-bash /volume1/docker/tubesync/tubesync-plex/tubesync-plex.sh --base-dir /volume1/docker/tubesync/tubesync-plex
+bash /tubesync-plex.sh --base-dir /tubesync-plex
 ```
 
 The script will:
@@ -107,7 +107,7 @@ The script will:
 Automate updates every day at 2:00 AM:
 
 ```cron
-0 2 * * * /bin/bash /volume1/docker/tubesync/tubesync-plex/tubesync-plex.sh --base-dir /volume1/docker/tubesync/tubesync-plex >> /volume1/docker/tubesync/tubesync-plex/tubesync.log 2>&1
+0 2 * * * /bin/bash /tubesync-plex/tubesync-plex.sh --base-dir /tubesync-plex >> /tubesync-plex/tubesync.log 2>&1
 ```
 
 ## Notes
