@@ -31,8 +31,7 @@ run_job() {
 WATCH_DIR_LIST=()
 IFS=',' read -ra DIR_ARRAY <<< "$WATCH_DIRS"
 for DIR in "${DIR_ARRAY[@]}"; do
-    # 공백 제거
-    DIR=$(echo "$DIR" | xargs)
+    DIR=$(echo "$DIR" | xargs)  # 공백 제거
     if [[ -d "$DIR" ]]; then
         WATCH_DIR_LIST+=("$DIR")
     else
@@ -40,9 +39,12 @@ for DIR in "${DIR_ARRAY[@]}"; do
     fi
 done
 
+# ================================
+# 감시할 디렉터리 없는 경우 대기
+# ================================
 if [[ ${#WATCH_DIR_LIST[@]} -eq 0 ]]; then
-    echo "[ERROR] No valid directories to watch. Exiting."
-    exit 1
+    echo "[INFO] No valid directories to watch. Container will wait..."
+    while true; do sleep 60; done
 fi
 
 # ================================
