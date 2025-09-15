@@ -10,9 +10,12 @@ log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"; }
 # Parse arguments
 # ----------------------------
 BASE_DIR=""
+DISABLE_WATCHDOG=false
+
 while [[ $# -gt 0 ]]; do
     case $1 in
         --base-dir) BASE_DIR="$2"; shift 2 ;;
+        --disable-watchdog) DISABLE_WATCHDOG=true; shift ;;
         *) echo "Unknown option: $1"; exit 1 ;;
     esac
 done
@@ -57,9 +60,9 @@ fi
 # ----------------------------
 # 3. Install / update Python dependencies
 # ----------------------------
+log "Installing/updating Python dependencies..."
 if [ -f "$REQ_FILE" ]; then
-    log "Installing/updating Python dependencies..."
-    "$PIP_BIN" install --upgrade -r "$REQ_FILE"
+    "$PIP_BIN" install --disable-pip-version-check -r "$REQ_FILE"
 fi
 
 # ----------------------------
@@ -67,7 +70,11 @@ fi
 # ----------------------------
 if [ -f "$PY_FILE" ]; then
     log "Running tubesync-plex..."
-    exec "$BASE_DIR/venv/bin/python" "$PY_FILE" --config "$BASE_DIR/config.json"
+    CMD="$BASE_DIR/venv/bin/python $PY_FILE --config $BASE_DIR/config.json"
+    if [ "$DISABLE_WATCHDOG" = true ]; then
+        CMD="$CMD --disable-watchdog"
+    fi
+    exec $CMD
 else
     log "ERROR: tubesync-plex-metadata.py not found."
     exit 1
