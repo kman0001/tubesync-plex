@@ -96,7 +96,7 @@ def map_language_code(code):
     return LANG_MAP.get(code.lower(), "und")
 
 # -----------------------------
-# Extract subtitles (only extractable tracks)
+# Extract subtitles
 # -----------------------------
 def extract_subtitles_multi(video_path):
     base, _ = os.path.splitext(video_path)
@@ -123,7 +123,6 @@ def extract_subtitles_multi(video_path):
             continue
 
         try:
-            # FFmpeg가 SRT로 변환 가능한 경우만 추출
             cmd = [FFMPEG_CMD, "-y", "-i", video_path, "-map", f"0:s:{idx}", srt_file]
             subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
@@ -167,32 +166,43 @@ def main():
 
                 nfo_path = os.path.splitext(part.file)[0] + ".nfo"
                 if os.path.exists(nfo_path):
-                    try:
-                        tree = ET.parse(nfo_path, parser=ET.XMLParser(recover=True))
-                        root = tree.getroot()
-                        title = root.findtext("title", default="")
-                        aired = root.findtext("aired", default="")
-                        plot = root.findtext("plot", default="")
+                    video_base = os.path.abspath(os.path.splitext(part.file)[0])
+                    nfo_base = os.path.abspath(os.path.splitext(nfo_path)[0])
 
-                        ep.edit(
-                            title=title if title else None,
-                            originallyAvailableAt=aired if aired else None,
-                            summary=plot if plot else None,
-                            lockedFields=["title","originallyAvailableAt","summary"]
-                        )
-
-                        if config.get("subtitles", False):
-                            extracted = extract_subtitles_multi(part.file)
-                            if extracted:
-                                add_subtitles_to_plex(part, extracted)
-
-                        updated_count += 1
+                    if video_base == nfo_base:
                         if config.get("detail", False):
-                            print(f"[UPDATED] {part.file} → {title}")
+                            print(f"[MATCH] {part.file} ↔ {nfo_path}")
 
-                        os.remove(nfo_path)
-                    except Exception as e:
-                        print(f"[ERROR] {nfo_path}: {e}")
+                        try:
+                            tree = ET.parse(nfo_path, parser=ET.XMLParser(recover=True))
+                            root = tree.getroot()
+                            title = root.findtext("title", default="")
+                            plot = root.findtext("plot", default="")
+                            aired = root.findtext("aired", default="")
+
+                            ep.edit(
+                                title=title if title else None,
+                                summary=plot if plot else None,
+                                originallyAvailableAt=aired if aired else None,
+                                lockedFields=["title","summary","originallyAvailableAt"]
+                            )
+
+                            if config.get("subtitles", False):
+                                extracted = extract_subtitles_multi(part.file)
+                                if extracted:
+                                    add_subtitles_to_plex(part, extracted)
+
+                            updated_count += 1
+                            if config.get("detail", False):
+                                print(f"[UPDATED] {part.file} → {title}")
+
+                            os.remove(nfo_path)
+
+                        except Exception as e:
+                            print(f"[ERROR] Failed to apply {nfo_path}: {e}")
+                    else:
+                        if config.get("detail", False):
+                            print(f"[SKIP] No match for {nfo_path}")
 
     if not config.get("silent", False):
         print(f"[INFO] Total episodes updated: {updated_count}")
