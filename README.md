@@ -135,7 +135,7 @@ See the [`json_to_nfo`](https://github.com/kman0001/tubesync-plex/tree/main/json
 
 This Docker container watches your Plex library for .nfo files and automatically applies metadata.
 
-See the [`READMD.md`](https://github.com/kman0001/tubesync-plex/blob/main/entrypoint/READMD.md) for details.
+See the [`README.md`](https://github.com/kman0001/tubesync-plex/blob/main/entrypoint/README.md) for details.
 
 ## Notes
 
