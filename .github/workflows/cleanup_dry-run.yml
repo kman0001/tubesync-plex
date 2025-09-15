@@ -9,7 +9,7 @@ on:
         default: "true"
 
 env:
-  DOCKER_IMAGE: your-dockerhub-username/tubesync-plex
+  DOCKER_IMAGE: kman0001/tubesync-plex
   TEST_MODE: ${{ github.event.inputs.test_mode }}
 
 jobs:
