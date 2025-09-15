@@ -18,7 +18,7 @@ services:
       - /your/plex/library:/your/plex/library
     environment:
       - BASE_DIR=/app
-      - WATCH_DIR=/your/plex/library./your/plex/library2,/your/plex/library3
+      - WATCH_DIR="/your/plex/library./your/plex/library,/your/plex/library3"
       - CONFIG_FILE=/app/config/config.json
     entrypoint: ["/app/entrypoint/entrypoint_nfo_watch.sh", "--base-dir", "/app", "--watch-dir", "/your/plex/library"]
 ```
