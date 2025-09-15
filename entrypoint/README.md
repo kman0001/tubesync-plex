@@ -15,10 +15,14 @@ services:
     restart: unless-stopped
     volumes:
       - /your/tubesync-plex/config.json:/app/config/config.json:ro
-      - /your/plex/library:/your/plex/library
+      - /your/plex/library1:/your/plex/library1
+      - /your/plex/library2:/your/plex/library2
+      - /your/plex/library3:/your/plex/library3
     environment:
       - BASE_DIR=/app
-      - WATCH_DIR="/your/plex/library./your/plex/library,/your/plex/library3"
+      - WATCH_DIR1=/your/plex/library1
+      - WATCH_DIR2=/your/plex/library2
+      - WATCH_DIR3=/your/plex/library3
       - CONFIG_FILE=/app/config/config.json
     entrypoint: ["/app/entrypoint/entrypoint_nfo_watch.sh", "--base-dir", "/app", "--watch-dir", "/your/plex/library"]
 ```
@@ -53,4 +57,6 @@ cp config.sample.json config.json
 ### Notes
 
 * Only the mounted Plex library folder (`/your/plex/library`) needs **write/delete permission** for NFO updates.
+* `volumes`: maps host directories into the container for access to media and configuration files; `WATCH_DIR1`, `WATCH_DIR2`, etc. specify which directories inside the container should be monitored for `.nfo` file changes.
+* `WATCH_DIR1`, `WATCH_DIR2`, etc. can be added as needed, but each corresponding host folder must also be included in the `volumes` section.
 * The container runs in the foreground; it is recommended to use a process manager (like Docker Compose) to keep it running.
