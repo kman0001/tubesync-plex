@@ -12,9 +12,7 @@ This repository is a **personal fork** of [tgouverneur/tubesync-plex](https://gi
 * Fully handles extraction failures: PGS/VobSub or other non-text subtitle tracks are safely ignored with warnings.
 * Ensures all NFO updates are performed for all supported video files, even if `subtitles=false`.
 * Added Batch JSON to NFO Converter for `info.json` to `.nfo` conversion.
-* Automatically creates `config.json` if missing and exits with an instruction message.
-* ThreadPool support for stable Plex API calls.
-* Updated with English comments and messages for easier readability.
+* **Added optional folder watching** (`watch_directories`) to automatically process new `.nfo` files.
 
 > ⚠️ **Note:** This fork is maintained for personal purposes and may differ from the original repository.
 
@@ -22,7 +20,7 @@ This repository is a **personal fork** of [tgouverneur/tubesync-plex](https://gi
 
 # TubeSync-Plex
 
-TubeSync-Plex is a Python script to automatically sync episode metadata from `.nfo` files into your Plex libraries and optionally upload embedded subtitles. It supports multiple libraries and safely removes processed `.nfo` files.
+TubeSync-Plex is a Python script to automatically sync episode metadata from `.nfo` files into your Plex libraries and optionally upload embedded subtitles. It supports multiple libraries and can safely remove processed `.nfo` files.
 
 ## Features
 
@@ -37,18 +35,22 @@ TubeSync-Plex is a Python script to automatically sync episode metadata from `.n
 * NFO updates are performed for all supported video files, regardless of subtitle extraction.
 * Handles malformed NFO files gracefully.
 * Configurable logging (`silent` and `detail` modes).
+* Optional folder watching for new `.nfo` files (`watch_directories` in `config.json`).
 * Cross-platform: Windows, Linux, Docker.
 * Works in Docker or host environments.
 * Supports converting JSON metadata to NFO files using the included Batch JSON to NFO Converter.
-* Automatically generates `config.json` if missing and exits with a message.
+
+---
 
 ## Requirements
 
 * Python 3.10+
-* pip
+* pip (Python package manager)
 * python3-venv for virtual environment creation
 * ffmpeg / ffprobe installed and in PATH (or set via `FFMPEG_PATH` / `FFPROBE_PATH`)
-* Plex server with a valid `plex_token`
+* Plex server with valid `plex_token`
+
+---
 
 ## Installation
 
@@ -69,21 +71,26 @@ bash /tubesync-plex.sh --base-dir /tubesync-plex
 
 > The script will create a virtual environment, install required Python packages, and create a default `config.json` if it does not exist.
 
-## Configuration
+---
 
-Edit `config.json` with your Plex server details:
+## Configuration (`config.json`)
+
+Example:
 
 ```json
 {
     "plex_base_url": "http://localhost:32400",
     "plex_token": "YOUR_PLEX_TOKEN",
-    "plex_library_names": ["TV Shows", "Anime"],
+    "plex_library_names": ["TV Shows", "Movies"],
     "silent": false,
-    "detail": true,
-    "subtitles": true,
+    "detail": false,
+    "subtitles": false,
     "threads": 8,
     "max_concurrent_requests": 4,
-    "request_delay": 0.1
+    "request_delay": 0.1,
+    "retry_count": 3,
+    "retry_delay": 1,
+    "watch_directories": false
 }
 ```
 
@@ -92,21 +99,17 @@ Edit `config.json` with your Plex server details:
 * `plex_library_names`: List of Plex libraries to sync
 * `silent`: Suppress logs if true
 * `detail`: Show detailed update logs if true
-* `subtitles`: Extract embedded subtitles and upload to Plex; safely ignores non-extractable tracks with warnings
-* `threads`: Number of threads for ThreadPool
-* `max_concurrent_requests`: Maximum concurrent Plex API requests
-* `request_delay`: Delay in seconds between Plex API requests
+* `subtitles`: Extract embedded subtitles and upload to Plex
+* `threads`: Number of concurrent threads for metadata processing
+* `max_concurrent_requests`: Maximum simultaneous Plex API calls
+* `request_delay`: Delay between Plex API requests (seconds)
+* `retry_count`: Number of retries if Plex API edit fails
+* `retry_delay`: Delay between retries (seconds)
+* `watch_directories`: **Enable automatic folder watching** for new `.nfo` files (`true` or `false`)
 
-## Bash Options
+> ⚠️ **Important:** When running the script via **cron**, set `"watch_directories": false` to prevent the script from blocking indefinitely waiting for file system events.
 
-* `--base-dir <path>`: Set the base directory where the repository and virtual environment are located.
-* `--config-file <path>`: Optionally specify a custom `config.json` path. If omitted, the script assumes `config.json` is in the base directory.
-
-Example:
-
-```bash
-bash tubesync-plex.sh --base-dir /tubesync-plex --config-file /tubesync-plex/config.json
-```
+---
 
 ## Usage
 
@@ -123,8 +126,10 @@ The script will:
 3. Install/update required Python packages.
 4. Run metadata sync using `tubesync-plex-metadata.py`.
 5. Optionally extract embedded subtitles and upload them to Plex if `subtitles=true`.
-6. Safely ignore non-extractable subtitle tracks with warning messages.
-7. Exit with an instruction if `config.json` is missing, prompting the user to fill it in.
+6. Optionally watch configured directories for new `.nfo` files (`watch_directories=true`).
+7. Safely ignore non-extractable subtitle tracks with warning messages.
+
+---
 
 ## Cron Job Example
 
@@ -133,6 +138,10 @@ Automate updates every day at 2:00 AM:
 ```cron
 0 2 * * * /bin/bash /tubesync-plex/tubesync-plex.sh --base-dir /tubesync-plex >> /tubesync-plex/tubesync.log 2>&1
 ```
+
+> ⚠️ **Note:** Make sure `"watch_directories": false` in `config.json` when running via cron.
+
+---
 
 ## Additional Tools
 
@@ -143,19 +152,7 @@ Supports UTF-8 encoded JSON files.
 
 See the [`json_to_nfo`](https://github.com/kman0001/tubesync-plex/tree/main/json_to_nfo) folder for details and usage examples.
 
-### TubeSync-Plex NFO Watch Docker
-
-This Docker container watches your Plex library for `.nfo` files and automatically applies metadata.
-
-See the [`README.md`](https://github.com/kman0001/tubesync-plex/blob/main/entrypoint/README.md) for details.
-
-## Notes
-
-* The script will **never overwrite existing local files**, except processed `.nfo` files which it deletes after sync.
-* For repository updates, the script resets the repository to match the remote `main` branch to avoid local conflicts.
-* Use `silent` mode to reduce console output in automated environments.
-* The `subtitles` feature supports multiple tracks per video file, uploads only extractable tracks, and automatically maps language codes to Plex-compatible ISO 639-1 codes.
-* Compatible with Windows, Linux, and Docker environments. If ffmpeg/ffprobe are not in PATH, set `FFMPEG_PATH` / `FFPROBE_PATH` in environment variables.
+---
 
 ## License
 
