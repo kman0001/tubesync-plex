@@ -58,26 +58,8 @@ fi
 # 3. Install / update Python dependencies
 # ----------------------------
 if [ -f "$REQ_FILE" ]; then
-    declare -A INSTALLED
-    while read -r line; do
-        NAME=$(echo "$line" | cut -d= -f1)
-        VER=$(echo "$line" | cut -d= -f3)
-        INSTALLED["$NAME"]="$VER"
-    done < <("$PIP_BIN" freeze)
-
-    while IFS= read -r req || [[ -n "$req" ]]; do
-        [[ "$req" =~ ^# ]] && continue
-        PKG=$(echo "$req" | cut -d= -f1)
-        REQ_VER=$(echo "$req" | cut -d= -f3)
-        INST_VER="${INSTALLED[$PKG]}"
-        if [ -z "$INST_VER" ]; then
-            log "Installing new package: $PKG $REQ_VER"
-            "$PIP_BIN" install --disable-pip-version-check "$req"
-        elif [ "$INST_VER" != "$REQ_VER" ]; then
-            log "Updating package: $PKG $INST_VER → $REQ_VER"
-            "$PIP_BIN" install --disable-pip-version-check "$req"
-        fi
-    done < "$REQ_FILE"
+    log "Installing/updating Python dependencies..."
+    "$PIP_BIN" install --upgrade -r "$REQ_FILE"
 fi
 
 # ----------------------------
