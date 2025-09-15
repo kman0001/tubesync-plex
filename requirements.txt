@@ -22,3 +22,8 @@ PlexAPI==4.15.16
 # Folder watching
 # -------------------------------
 watchdog==2.3.1
+
+# -------------------------------
+# Process monitoring (for cron detection)
+# -------------------------------
+psutil==5.9.9
