@@ -1,7 +1,9 @@
 #!/bin/bash
 set -euo pipefail
 
-# 필수 환경 변수 확인
+# ================================
+# 환경 변수 체크
+# ================================
 if [[ -z "${WATCH_DIR:-}" ]]; then
     echo "[ERROR] WATCH_DIR is not set"
     exit 1
@@ -12,14 +14,12 @@ if [[ -z "${CONFIG_FILE:-}" ]]; then
     exit 1
 fi
 
-DEBOUNCE_DELAY=2  # 감지 후 대기 시간 (초)
-TIMER_PID=""
+DEBOUNCE_DELAY=2  # 마지막 이벤트 후 실행 대기 시간(초)
+TIMER_PID=""      # 현재 대기 중인 타이머 프로세스 ID
 
-echo "[INFO] Processing existing NFO files in $WATCH_DIR..."
-/app/venv/bin/python /app/tubesync-plex-metadata.py --config "$CONFIG_FILE"
-
-echo "[INFO] Starting NFO watch on $WATCH_DIR (recursive)..."
-
+# ================================
+# 실행 함수
+# ================================
 run_job() {
     (
         flock -n 200 || {
@@ -31,13 +31,25 @@ run_job() {
     ) 200>/tmp/tubesync-plex.lock
 }
 
-# inotifywait로 감시
-exec inotifywait -m -r -e create --format "%w%f" "$WATCH_DIR" | while read -r FILE; do
+# ================================
+# 1회 실행: 기존 NFO 처리
+# ================================
+echo "[INFO] Processing existing NFO files in $WATCH_DIR..."
+run_job
+
+# ================================
+# inotify 감시 시작
+# ================================
+echo "[INFO] Starting NFO watch on $WATCH_DIR (recursive)..."
+
+exec inotifywait -m -r \
+  -e close_write,create,moved_to \
+  --format "%w%f" "$WATCH_DIR" | while read -r FILE; do
     case "$FILE" in
         *.nfo)
             echo "[INFO] Detected NFO: $FILE"
 
-            # 기존 타이머가 있으면 종료 (타이머 리셋)
+            # 기존 타이머 취소 → 타이머 리셋
             if [[ -n "$TIMER_PID" ]] && kill -0 "$TIMER_PID" 2>/dev/null; then
                 echo "[INFO] Resetting debounce timer..."
                 kill "$TIMER_PID"
