@@ -6,7 +6,6 @@ set -euo pipefail
 # ================================
 BASE_DIR="${BASE_DIR:-/app}"
 CONFIG_FILE="${CONFIG_FILE:-$BASE_DIR/config/config.json}"
-WATCH_DIRS="${WATCH_DIR:-/your/plex/library}"  # 쉼표로 구분 가능
 DEBOUNCE_DELAY="${DEBOUNCE_DELAY:-2}"          # 마지막 이벤트 후 실행 대기 시간(초)
 
 TIMER_PID=""
@@ -26,11 +25,13 @@ run_job() {
 }
 
 # ================================
-# WATCH_DIRS → 배열 변환 (쉼표 구분)
+# 환경 변수에서 폴더 수집
 # ================================
 WATCH_DIR_LIST=()
-IFS=',' read -ra DIR_ARRAY <<< "$WATCH_DIRS"
-for DIR in "${DIR_ARRAY[@]}"; do
+for VAR in WATCH_DIR1 WATCH_DIR2 WATCH_DIR3 WATCH_DIR4 WATCH_DIR5; do
+    DIR="${!VAR:-}"
+    [[ -n "$DIR" ]] || continue  # 빈 값이면 건너뜀
+
     # 앞뒤 공백 제거
     DIR="${DIR#"${DIR%%[![:space:]]*}"}"
     DIR="${DIR%"${DIR##*[![:space:]]}"}"
@@ -43,7 +44,7 @@ for DIR in "${DIR_ARRAY[@]}"; do
 done
 
 # ================================
-# 감시할 디렉터리 없는 경우 대기
+# 감시할 폴더 없는 경우 대기
 # ================================
 if [[ ${#WATCH_DIR_LIST[@]} -eq 0 ]]; then
     echo "[INFO] No valid directories to watch. Container will wait..."
