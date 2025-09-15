@@ -6,11 +6,9 @@
         "silent": "true or false (suppress output)",
         "detail": "true or false (show detailed logs)",
         "subtitles": "true or false (extract & upload subtitles)",
-        "threads": "number of concurrent threads, e.g., 4",
-        "max_concurrent_requests": "maximum concurrent Plex API requests, e.g., 2",
-        "request_delay": "delay in seconds between Plex API requests, e.g., 0.5",
-        "retry_count": "number of retry attempts when editing metadata, e.g., 3",
-        "retry_delay": "seconds to wait between retry attempts, e.g., 1"
+        "threads": "number of concurrent threads, e.g., 8",
+        "max_concurrent_requests": "maximum concurrent Plex API requests, e.g., 4",
+        "request_delay": "delay in seconds between Plex API requests, e.g., 0.1"
     },
     "plex_base_url": "http://localhost:32400",
     "plex_token": "YOUR_PLEX_TOKEN_HERE",
@@ -18,9 +16,7 @@
     "silent": false,
     "detail": true,
     "subtitles": true,
-    "threads": 4,
-    "max_concurrent_requests": 2,
-    "request_delay": 0.5,
-    "retry_count": 3,
-    "retry_delay": 1
+    "threads": 8,
+    "max_concurrent_requests": 4,
+    "request_delay": 0.1
 }
