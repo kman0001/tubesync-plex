@@ -1,14 +1,21 @@
 #!/bin/sh
-set -e
+set -euo pipefail
 
-BASE_DIR=${BASE_DIR:-/app}
-WATCH_DIR=${WATCH_DIR:-/your/plex/library}
-CONFIG_FILE=${CONFIG_FILE:-/app/config/config.json}
+# ================================
+# 기본 환경 변수
+# ================================
+BASE_DIR="${BASE_DIR:-/app}"
+CONFIG_FILE="${CONFIG_FILE:-$BASE_DIR/config/config.json}"
+DEBOUNCE_DELAY="${DEBOUNCE_DELAY:-2}"
 
+# ================================
 # Python 의존성 설치 확인
-./venv/bin/pip install --upgrade pip
-./venv/bin/pip install -r /app/requirements.txt
+# ================================
+"$BASE_DIR/venv/bin/pip" install --upgrade pip
+"$BASE_DIR/venv/bin/pip" install -r "$BASE_DIR/requirements.txt"
 
-# 재귀 감시 실행
-echo "[INFO] Starting recursive NFO watch on ${WATCH_DIR}..."
-exec /app/entrypoint/entrypoint_nfo_watch.sh --base-dir "${BASE_DIR}" --watch-dir "${WATCH_DIR}" -r
+# ================================
+# NFO 감시 스크립트 실행
+# ================================
+echo "[INFO] Starting recursive NFO watch..."
+exec "$BASE_DIR/entrypoint/entrypoint_nfo_watch.sh"
