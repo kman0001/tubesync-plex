@@ -45,13 +45,13 @@ jobs:
         run: |
           echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
 
-      - name: Test Mode: List tags and manifests
+      -      - name: Test Mode: List tags and manifests
         id: test-list
         run: |
-          REPO=${{ env.DOCKER_IMAGE }}
-          USERNAME=${{ secrets.DOCKERHUB_USERNAME }}
-          TOKEN=${{ secrets.DOCKERHUB_TOKEN }}
-          REPO_ENCODED=$(python3 -c "import urllib.parse; print(urllib.parse.quote('''$REPO'''))")
+          REPO="${{ env.DOCKER_IMAGE }}"
+          USERNAME="${{ secrets.DOCKERHUB_USERNAME }}"
+          TOKEN="${{ secrets.DOCKERHUB_TOKEN }}"
+          REPO_ENCODED=$(python3 -c "import urllib.parse; import os; print(urllib.parse.quote(os.environ['REPO']))")
           URL="https://hub.docker.com/v2/repositories/$REPO_ENCODED/tags/?page_size=100"
           echo "TEST_TAGS=[]" >> $GITHUB_ENV
 
