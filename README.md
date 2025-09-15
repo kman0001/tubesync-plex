@@ -7,7 +7,6 @@ This repository is a **personal fork** of [tgouverneur/tubesync-plex](https://gi
 - Added `-d / --detail` option for detailed metadata updates.
 - Added `subtitles` option to automatically extract and upload embedded subtitles to Plex.
 - Disallow simultaneous use of `-s / --silent` and `-d / --detail` options.
-- Supports Windows, Linux, and Docker environments with automatic ffmpeg/ffprobe path detection.
 - Handles multiple subtitle tracks and automatically maps language codes to Plex-compatible ISO 639-1 codes.
 - Fully handles extraction failures: PGS/VobSub or other non-text subtitle tracks are safely ignored with warnings.
 - Ensures all NFO updates are performed for all supported video files, even if `subtitles=false`.
