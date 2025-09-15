@@ -31,11 +31,14 @@ run_job() {
 WATCH_DIR_LIST=()
 IFS=',' read -ra DIR_ARRAY <<< "$WATCH_DIRS"
 for DIR in "${DIR_ARRAY[@]}"; do
-    DIR=$(echo "$DIR" | xargs)  # 공백 제거
+    # 앞뒤 공백 제거
+    DIR="${DIR#"${DIR%%[![:space:]]*}"}"
+    DIR="${DIR%"${DIR##*[![:space:]]}"}"
+
     if [[ -d "$DIR" ]]; then
         WATCH_DIR_LIST+=("$DIR")
     else
-        echo "[WARNING] Directory does not exist: $DIR"
+        echo "[WARNING] Directory does not exist: [$DIR]"
     fi
 done
 
