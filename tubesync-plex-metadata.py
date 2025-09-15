@@ -8,49 +8,46 @@ import lxml.etree as ET
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import subprocess
 
+# -----------------------------
+# CONFIG LOAD
+# -----------------------------
 CONFIG_FILE = os.environ.get("CONFIG_FILE", "config.json")
 CONFIG_FILE = os.path.abspath(CONFIG_FILE)
 
-# -----------------------------
-# Check if CONFIG_FILE exists, create default if not
-# -----------------------------
-default_config = {
-    "_comment": {
-        "plex_base_url": "Your Plex server base URL, e.g., http://localhost:32400",
-        "plex_token": "Your Plex server token",
-        "plex_library_names": "[\"TV Shows\", \"Movies\"]",
-        "silent": "true or false (minimize logs)",
-        "detail": "true or false (detailed logs)",
-        "subtitles": "true or false (upload subtitles)",
-        "threads": "number of concurrent threads, e.g., 4",
-        "max_concurrent_requests": "max concurrent Plex API requests, e.g., 2",
-        "request_delay": "delay between Plex API requests in seconds, e.g., 0.5"
-    },
-    "plex_base_url": "",
-    "plex_token": "",
-    "plex_library_names": ["TV Shows", "Movies"],
-    "silent": False,
-    "detail": True,
-    "subtitles": True,
-    "threads": 4,
-    "max_concurrent_requests": 2,
-    "request_delay": 0.5
-}
-
 if not os.path.exists(CONFIG_FILE):
+    # Create default template if config.json is missing and exit
+    template = {
+        "_comment": {
+            "plex_base_url": "Your Plex server base URL, e.g., http://localhost:32400",
+            "plex_token": "Your Plex server token",
+            "plex_library_names": "[\"TV Shows\", \"Movies\"]",
+            "silent": "true or false",
+            "detail": "true or false",
+            "subtitles": "true or false",
+            "threads": "Number of concurrent threads, e.g., 8",
+            "max_concurrent_requests": "Maximum concurrent Plex API requests, e.g., 4",
+            "request_delay": "Delay in seconds between Plex API requests, e.g., 0.1"
+        },
+        "plex_base_url": "",
+        "plex_token": "",
+        "plex_library_names": [""],
+        "silent": False,
+        "detail": False,
+        "subtitles": False,
+        "threads": 8,
+        "max_concurrent_requests": 4,
+        "request_delay": 0.1
+    }
     with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-        json.dump(default_config, f, indent=4)
-    print(f"[INFO] {CONFIG_FILE} has been created. Please fill in Plex URL, Token, and library names, then rerun.")
+        json.dump(template, f, indent=4)
+    print(f"[INFO] {CONFIG_FILE} created. Please edit it and rerun.")
     exit(0)
 
-# -----------------------------
-# Load config
-# -----------------------------
 with open(CONFIG_FILE, "r", encoding="utf-8") as f:
     config = json.load(f)
 
 # -----------------------------
-# Connect to Plex
+# CONNECT TO PLEX
 # -----------------------------
 try:
     plex = PlexServer(config["plex_base_url"], config["plex_token"])
@@ -58,13 +55,14 @@ except Exception as e:
     print(f"[ERROR] Failed to connect to Plex: {e}")
     exit(1)
 
+# -----------------------------
+# SETTINGS
+# -----------------------------
 VIDEO_EXTS = (".mkv", ".mp4", ".avi", ".mov", ".wmv", ".flv", ".m4v")
 api_semaphore = threading.Semaphore(config.get("max_concurrent_requests", 2))
-request_delay = config.get("request_delay", 0.5)
+request_delay = config.get("request_delay", 0.1)
 
-# -----------------------------
-# Language mapping
-# -----------------------------
+# Language mapping for subtitles
 LANG_MAP = {
     "eng":"en","jpn":"ja","kor":"ko","fre":"fr","fra":"fr",
     "spa":"es","ger":"de","deu":"de","ita":"it","chi":"zh","und":"und"
@@ -72,7 +70,7 @@ LANG_MAP = {
 def map_lang(code): return LANG_MAP.get(code.lower(),"und")
 
 # -----------------------------
-# Extract subtitles using ffmpeg/ffprobe
+# SUBTITLE EXTRACTION
 # -----------------------------
 def extract_subtitles(video_path):
     base,_ = os.path.splitext(video_path)
@@ -88,6 +86,7 @@ def extract_subtitles(video_path):
             lang = map_lang(s.get("tags", {}).get("language", "und"))
             srt = f"{base}.{lang}.srt"
             if os.path.exists(srt): continue
+            # Extract subtitle track using ffmpeg
             subprocess.run(["ffmpeg","-y","-i",video_path,f"-map","0:s:{idx}",srt],
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             if os.path.exists(srt): srt_files.append((srt, lang))
@@ -95,10 +94,8 @@ def extract_subtitles(video_path):
         print(f"[ERROR] ffprobe/ffmpeg failed: {video_path} - {e}")
     return srt_files
 
-# -----------------------------
-# Upload subtitles to Plex
-# -----------------------------
 def upload_subtitles(ep, srt_files, detail=False):
+    # Upload extracted subtitles to Plex with semaphore control
     for srt, lang in srt_files:
         try:
             with api_semaphore:
@@ -109,9 +106,10 @@ def upload_subtitles(ep, srt_files, detail=False):
             print(f"[ERROR] Upload subtitle failed {srt}: {e}")
 
 # -----------------------------
-# Apply NFO metadata to Plex item
+# NFO METADATA UPDATE
 # -----------------------------
 def apply_nfo(ep, file_path, detail=False, subtitles=False):
+    # Apply metadata from NFO to Plex episode/movie
     nfo_path = Path(file_path).with_suffix(".nfo")
     if not nfo_path.exists() or nfo_path.stat().st_size == 0: 
         return False
@@ -135,13 +133,14 @@ def apply_nfo(ep, file_path, detail=False, subtitles=False):
         return False
 
 # -----------------------------
-# Process single file
+# PROCESS SINGLE FILE
 # -----------------------------
 def process_file(file_path, detail=False, subtitles=False):
     if not file_path.lower().endswith(VIDEO_EXTS): return False
     abs_path = os.path.abspath(file_path)
     found = None
 
+    # Search Plex libraries for corresponding episode/movie
     for lib in config["plex_library_names"]:
         try:
             section = plex.library.section(lib)
@@ -149,7 +148,6 @@ def process_file(file_path, detail=False, subtitles=False):
 
         # TV Shows
         if getattr(section, "TYPE", "").lower() == "show":
-            # Show -> Season -> Episode
             for show in section.all():
                 for season in getattr(show, "seasons", lambda: [])():
                     for ep in getattr(season, "episodes", lambda: [])():
@@ -160,7 +158,7 @@ def process_file(file_path, detail=False, subtitles=False):
                         if found: break
                     if found: break
                 if found: break
-        else:  # Movies / single videos
+        else:  # Movies / Single videos
             for ep in section.all():
                 for part in getattr(ep, "iterParts", lambda: [])():
                     if os.path.abspath(part.file) == abs_path:
@@ -171,16 +169,17 @@ def process_file(file_path, detail=False, subtitles=False):
         if found: break
 
     if not found:
-        if detail: print(f"[WARN] Item not found for {file_path}")
+        if config.get("detail", False):
+            print(f"[WARN] Episode not found for {file_path}")
         return False
-    return apply_nfo(found, abs_path, detail, subtitles)
+    return apply_nfo(found, abs_path, config.get("detail", False), config.get("subtitles", False))
 
 # -----------------------------
-# Main function
+# MAIN
 # -----------------------------
 def main():
     total = 0
-    threads = config.get("threads", 4)
+    threads = config.get("threads", 8)
     detail = config.get("detail", False)
     subtitles = config.get("subtitles", False)
 
@@ -191,7 +190,7 @@ def main():
             print(f"[ERROR] Cannot access library {lib}: {e}")
             continue
 
-        # Determine library paths
+        # Determine paths for library
         paths = []
         if hasattr(section, "locations") and section.locations:
             paths = section.locations
