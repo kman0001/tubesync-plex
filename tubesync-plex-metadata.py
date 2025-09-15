@@ -9,6 +9,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import subprocess
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
+import psutil
 
 # -----------------------------
 # Config file
@@ -57,6 +58,28 @@ with open(CONFIG_FILE, "r", encoding="utf-8") as f:
     config = json.load(f)
 
 # -----------------------------
+# Auto-disable folder watch if running in cron
+# -----------------------------
+def is_running_in_cron():
+    """Detect if script is executed from cron or timer"""
+    try:
+        if os.environ.get("CRON_RUN", "0") == "1":
+            return True
+        parent = psutil.Process(os.getppid())
+        parent_name = parent.name().lower()
+        if any(keyword in parent_name for keyword in ["cron", "crond", "systemd-timer", "anacron"]):
+            return True
+    except Exception:
+        pass
+    return False
+
+watch_folders_enabled = config.get("watch_folders", False)
+if is_running_in_cron():
+    watch_folders_enabled = False
+    if config.get("detail", False):
+        print("[INFO] Watchdog disabled (cron mode detected)")
+
+# -----------------------------
 # Connect to Plex server
 # -----------------------------
 try:
@@ -74,7 +97,6 @@ request_delay = config.get("request_delay", 0.1)
 threads = config.get("threads", 4)
 detail = config.get("detail", False)
 subtitles_enabled = config.get("subtitles", False)
-watch_folders_enabled = config.get("watch_folders", False)
 watch_debounce_delay = config.get("watch_debounce_delay", 2)
 
 LANG_MAP = {
