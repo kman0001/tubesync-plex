@@ -49,7 +49,7 @@ jobs:
           TOKEN="${{ secrets.DOCKERHUB_TOKEN }}"
           TEST_MODE="${{ env.TEST_MODE }}"
 
-          # 안전하게 URL 인코딩 (KeyError 방지)
+          # 안전하게 URL 인코딩
           REPO_ENCODED=$(python3 -c "import urllib.parse, os; print(urllib.parse.quote(os.environ.get('REPO','')))")
 
           URL="https://hub.docker.com/v2/repositories/$REPO_ENCODED/tags/?page_size=100"
@@ -70,14 +70,14 @@ jobs:
                 if [[ "$TEST_MODE" == "true" ]]; then
                   echo "[TEST MODE] Would delete tag: $TAG"
                 else
-                  TAG_ENCODED=$(python3 -c "import urllib.parse; print(urllib.parse.quote(os.environ.get('TAG','')))" TAG="$TAG")
+                  TAG_ENCODED=$(python3 -c "import urllib.parse, os; print(urllib.parse.quote(os.environ.get('TAG','')))") TAG="$TAG"
                   echo "Deleting tag: $TAG"
                   curl -s -X DELETE -u "$USERNAME:$TOKEN" "https://hub.docker.com/v2/repositories/$REPO_ENCODED/tags/$TAG_ENCODED/" || true
 
                   # 매니페스트 삭제
                   DIGESTS=$(curl -s -u "$USERNAME:$TOKEN" "https://hub.docker.com/v2/repositories/$REPO_ENCODED/tags/$TAG_ENCODED/" | jq -r '.images[].digest // empty')
                   for DIGEST in $DIGESTS; do
-                    DIGEST_ENCODED=$(python3 -c "import urllib.parse; print(urllib.parse.quote(os.environ.get('DIGEST','')))" DIGEST="$DIGEST")
+                    DIGEST_ENCODED=$(python3 -c "import urllib.parse, os; print(urllib.parse.quote(os.environ.get('DIGEST','')))") DIGEST="$DIGEST"
                     echo "Deleting manifest: $DIGEST"
                     curl -s -X DELETE -u "$USERNAME:$TOKEN" "https://hub.docker.com/v2/repositories/$REPO_ENCODED/manifests/$DIGEST_ENCODED/" || true
                   done
