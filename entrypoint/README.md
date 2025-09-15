@@ -20,9 +20,6 @@ services:
       - /your/plex/library3:/your/plex/library3
     environment:
       - BASE_DIR=/app
-      - WATCH_DIR1=/your/plex/library1
-      - WATCH_DIR2=/your/plex/library2
-      - WATCH_DIR3=/your/plex/library3
       - CONFIG_FILE=/app/config/config.json
     entrypoint: ["/app/entrypoint/entrypoint_nfo_watch.sh", "--base-dir", "/app", "--watch-dir", "/your/plex/library"]
 ```
@@ -33,20 +30,30 @@ You need a `config.json` file. You can copy and edit the sample configuration:
 
 ```json
 {
-  "_comment": {
-    "plex_base_url": "Your Plex server base URL, e.g., http://localhost:32400",
-    "plex_token": "Your Plex server token",
-    "plex_library_names": "[\"TV Shows\", \"Anime\"]",
-    "silent": "true or false",
-    "detail": "true or false",
-    "subtitles": "true or false"
-  },
-  "plex_base_url": "",
-  "plex_token": "",
-  "plex_library_names": [""],
-  "silent": false,
-  "detail": false,
-  "subtitles": false
+    "_comment": {
+        "plex_base_url": "Plex server URL, e.g., http://localhost:32400",
+        "plex_token": "Plex server token",
+        "plex_library_names": "List of Plex libraries to sync, e.g., [\"TV Shows\", \"Movies\"]",
+        "silent": "Suppress logs if true",
+        "detail": "Show detailed logs if true",
+        "subtitles": "Extract embedded subtitles and upload to Plex if true",
+        "threads": "Number of threads for processing video files",
+        "max_concurrent_requests": "Maximum concurrent Plex API requests",
+        "request_delay": "Delay between Plex API requests in seconds",
+        "watch_folders": "Enable folder watching (watchdog) if true",
+        "watch_debounce_delay": "Debounce delay for folder watching in seconds"
+    },
+    "plex_base_url": "http://localhost:32400",
+    "plex_token": "YOUR_PLEX_TOKEN",
+    "plex_library_names": ["TV Shows", "Movies"],
+    "silent": false,
+    "detail": false,
+    "subtitles": false,
+    "threads": 8,
+    "max_concurrent_requests": 4,
+    "request_delay": 0.2,
+    "watch_folders": false,
+    "watch_debounce_delay": 2
 }
 ```
 
@@ -57,6 +64,4 @@ cp config.sample.json config.json
 ### Notes
 
 * Only the mounted Plex library folder (`/your/plex/library`) needs **write/delete permission** for NFO updates.
-* `volumes`: maps host directories into the container for access to media and configuration files; `WATCH_DIR1`, `WATCH_DIR2`, etc. specify which directories inside the container should be monitored for `.nfo` file changes.
-* `WATCH_DIR1`, `WATCH_DIR2`, etc. can be added as needed, but each corresponding host folder must also be included in the `volumes` section.
 * The container runs in the foreground; it is recommended to use a process manager (like Docker Compose) to keep it running.
