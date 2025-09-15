@@ -81,9 +81,9 @@ Edit `config.json` with your Plex server details:
     "silent": false,
     "detail": true,
     "subtitles": true,
-    "threads": 4,
-    "max_concurrent_requests": 2,
-    "request_delay": 0.5
+    "threads": 8,
+    "max_concurrent_requests": 4,
+    "request_delay": 0.1
 }
 ```
 
