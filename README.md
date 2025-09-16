@@ -104,6 +104,7 @@ Edit `config.json` with your Plex server details:
 * `watch_debounce_delay`: Debounce delay for folder watching in seconds
 
 > **Note:** Set `watch_folders` to `false` when running via cron.
+> config.json file is located at <base_dir>/config/config.json.
 
 ---
 
@@ -181,13 +182,10 @@ services:
     container_name: tubesync-plex
     restart: unless-stopped
     volumes:
-      - /volume1/docker/tubesync/config.json:/app/config/config.json:ro
+      - ./tubesync/config.:/app/config
       - /your/plex/library1:/your/plex/library1
       - /your/plex/library2:/your/plex/library2
       - /your/plex/library3:/your/plex/library3
-    environment:
-      - BASE_DIR=/app
-      - CONFIG_FILE=/app/config/config.json
 ```
 
 > **Tip:** Docker automatically handles folder watching via the `watch_folders` option. You do not need to specify `--disable-watchdog` when running in Docker.
