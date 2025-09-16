@@ -5,16 +5,16 @@
 # ================================
 FROM --platform=$BUILDPLATFORM python:3.11-slim AS builder
 
-# Build dependencies (for psutil wheel build)
+# Install build dependencies for C extensions (psutil)
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         gcc \
         python3-dev \
         libffi-dev \
         make \
-        bash \
     && rm -rf /var/lib/apt/lists/*
 
+# Set working directory
 WORKDIR /app
 
 # Copy Python requirements
@@ -30,22 +30,24 @@ RUN python -m venv venv && \
 # ================================
 FROM --platform=$BUILDPLATFORM python:3.11-slim
 
-# Minimal runtime dependencies
+# Install only runtime dependencies
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends bash && \
-    rm -rf /var/lib/apt/lists/*
+    apt-get install -y --no-install-recommends \
+        bash \
+    && rm -rf /var/lib/apt/lists/*
 
+# Set working directory
 WORKDIR /app
 
-# Copy pre-built virtual environment
+# Copy virtual environment from builder stage
 COPY --from=builder /app/venv ./venv
 
 # Copy application files
 COPY tubesync-plex-metadata.py .
-COPY entrypoint/ ./entrypoint/
+COPY entrypoint.sh .
 
-# Make entrypoint scripts executable
-RUN chmod +x /app/entrypoint/*.sh
+# Make entrypoint executable
+RUN chmod +x /app/entrypoint.sh
 
 # Set entrypoint
-ENTRYPOINT ["/app/entrypoint/entrypoint.sh"]
+ENTRYPOINT ["/app/entrypoint.sh"]
