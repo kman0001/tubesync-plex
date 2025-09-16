@@ -15,14 +15,15 @@ services:
     restart: unless-stopped
     volumes:
       - /your/tubesync-plex/config.json:/app/config/config.json:ro
-      - /your/plex/library1:/your/plex/library1
-      - /your/plex/library2:/your/plex/library2
-      - /your/plex/library3:/your/plex/library3
+      - /your/plex/library1:/plex/library1
+      - /your/plex/library2:/plex/library2
+      - /your/plex/library3:/plex/library3
     environment:
       - BASE_DIR=/app
       - CONFIG_FILE=/app/config/config.json
-    entrypoint: ["/app/entrypoint/entrypoint_nfo_watch.sh", "--base-dir", "/app", "--watch-dir", "/your/plex/library"]
 ```
+
+> Note: The container automatically detects Plex library paths from `config.json` and watches them. There is no need to specify watch directories via environment variables.
 
 ## Configuration
 
@@ -52,7 +53,7 @@ You need a `config.json` file. You can copy and edit the sample configuration:
     "threads": 8,
     "max_concurrent_requests": 4,
     "request_delay": 0.2,
-    "watch_folders": false,
+    "watch_folders": true,
     "watch_debounce_delay": 2
 }
 ```
@@ -63,5 +64,7 @@ cp config.sample.json config.json
 
 ### Notes
 
-* Only the mounted Plex library folder (`/your/plex/library`) needs **write/delete permission** for NFO updates.
+* Only the mounted Plex library folders need **write/delete permission** for NFO updates.
 * The container runs in the foreground; it is recommended to use a process manager (like Docker Compose) to keep it running.
+* Folder watching is controlled by the `watch_folders` option in `config.json`. The container automatically handles all watched libraries.
+* There is no need to specify watch directories via environment variables or command-line options.
