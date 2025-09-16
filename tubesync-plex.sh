@@ -11,7 +11,6 @@ log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"; }
 # ----------------------------
 BASE_DIR=""
 DISABLE_WATCHDOG=false
-
 while [[ $# -gt 0 ]]; do
     case $1 in
         --base-dir) BASE_DIR="$2"; shift 2 ;;
@@ -60,9 +59,25 @@ fi
 # ----------------------------
 # 3. Install / update Python dependencies
 # ----------------------------
-log "Installing/updating Python dependencies..."
 if [ -f "$REQ_FILE" ]; then
-    "$PIP_BIN" install --disable-pip-version-check -r "$REQ_FILE"
+    log "Installing/updating Python dependencies..."
+    declare -A INSTALLED
+    while read -r line; do
+        NAME=$(echo "$line" | cut -d= -f1)
+        VER=$(echo "$line" | cut -d= -f3)
+        INSTALLED["$NAME"]="$VER"
+    done < <("$PIP_BIN" freeze)
+
+    while IFS= read -r req || [[ -n "$req" ]]; do
+        [[ "$req" =~ ^# ]] && continue
+        PKG=$(echo "$req" | cut -d= -f1)
+        REQ_VER=$(echo "$req" | cut -d= -f3)
+        INST_VER="${INSTALLED[$PKG]}"
+        if [ -z "$INST_VER" ] || [ "$INST_VER" != "$REQ_VER" ]; then
+            log "Installing/updating package: $PKG $REQ_VER"
+            "$PIP_BIN" install --disable-pip-version-check -q "$req"
+        fi
+    done < "$REQ_FILE"
 fi
 
 # ----------------------------
