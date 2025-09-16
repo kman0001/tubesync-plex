@@ -1,34 +1,60 @@
 # syntax=docker/dockerfile:1.4
 
-# 베이스 이미지 (buildx 아키텍처 지원)
+# ================================
+# Base image (multi-arch build supported)
+# ================================
 FROM --platform=$BUILDPLATFORM python:3.11-slim AS base
 
-# 필수 패키지 설치
+# ================================
+# Install system dependencies
+# ================================
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-        inotify-tools \
+        build-essential \
         git \
         curl \
         bash \
+        inotify-tools \
+        libffi-dev \
+        libxml2-dev \
+        libxslt1-dev \
+        zlib1g-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# 작업 디렉토리
+# ================================
+# Working directory
+# ================================
 WORKDIR /app
 
-# Python 의존성 복사 및 가상환경 생성
+# ================================
+# Copy requirements first (cache efficiency)
+# ================================
 COPY requirements.txt .
+
+# ================================
+# Create virtual environment and install dependencies
+# ================================
 RUN python -m venv venv && \
     ./venv/bin/pip install --upgrade pip && \
-    ./venv/bin/pip install -r requirements.txt
+    ./venv/bin/pip install --disable-pip-version-check -r requirements.txt
 
-# 앱 파일 복사
+# ================================
+# Copy app files and entrypoint scripts
+# ================================
 COPY tubesync-plex-metadata.py .
+COPY entrypoint/ ./entrypoint/
 
-# 엔트리포인트 스크립트 복사
-COPY entrypoint/ /app/entrypoint/
+# Give execute permission to entrypoint scripts
+RUN chmod +x ./entrypoint/*.sh
 
-# 실행 권한 부여
-RUN chmod +x /app/entrypoint/*.sh
+# ================================
+# Default environment variables
+# ================================
+ENV BASE_DIR=/app
+ENV CONFIG_FILE=/app/config/config.json
+ENV DEBOUNCE_DELAY=2
 
-# 엔트리포인트 지정
+# ================================
+# Entrypoint
+# ================================
 ENTRYPOINT ["/app/entrypoint/entrypoint.sh"]
