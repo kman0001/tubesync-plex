@@ -282,27 +282,29 @@ class VideoEventHandler(FileSystemEventHandler):
         self.video_wait = 2  # 동영상 마지막 이벤트 후 2초 대기
 
     def on_any_event(self, event):
-        if event.is_directory: 
+    if event.is_directory:
+        return
+
+    path = os.path.abspath(event.src_path)
+
+    with self.lock:
+        # 영상 파일 삭제 대응
+        if event.event_type == "deleted" and path.lower().endswith(VIDEO_EXTS):
+            if path in cache:
+                cache.pop(path, None)
+                if detail:
+                    print(f"[CACHE] Removed deleted video from cache: {path}")
+                save_cache()
             return
 
-        path = os.path.abspath(event.src_path)
-
-        with self.lock:
-            # NFO 이벤트
+        # 기존 NFO/영상 생성/수정 처리
+        if path.lower().endswith(VIDEO_EXTS) or path.lower().endswith(".nfo"):
+            # NFO 처리용 타이머
             if path.lower().endswith(".nfo"):
-                self.nfo_queue.add(path)
-                if self.nfo_timer:
-                    self.nfo_timer.cancel()
-                self.nfo_timer = threading.Timer(self.nfo_wait, self.process_nfo_queue)
-                self.nfo_timer.start()
-
-            # 동영상 이벤트
-            elif path.lower().endswith(VIDEO_EXTS):
-                self.video_queue.add(path)
-                if self.video_timer:
-                    self.video_timer.cancel()
-                self.video_timer = threading.Timer(self.video_wait, self.process_video_queue)
-                self.video_timer.start()
+                self.schedule_nfo_processing(path)
+            # 영상 처리용 타이머
+            else:
+                self.schedule_video_processing(path)
 
     def process_nfo_queue(self):
         with self.lock:
