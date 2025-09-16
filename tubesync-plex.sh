@@ -70,7 +70,7 @@ fi
 # ----------------------------
 if [ -f "$PY_FILE" ]; then
     log "Running tubesync-plex..."
-    CMD="$BASE_DIR/venv/bin/python $PY_FILE --config $BASE_DIR/config.json"
+    CMD="$BASE_DIR/venv/bin/python $PY_FILE --config $BASE_DIR/config/config.json"
     if [ "$DISABLE_WATCHDOG" = true ]; then
         CMD="$CMD --disable-watchdog"
     fi
