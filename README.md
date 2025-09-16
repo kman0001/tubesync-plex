@@ -147,6 +147,54 @@ Automate daily sync at 2:00 AM (with folder watching disabled):
 
 ---
 
+## Docker
+
+TubeSync-Plex can also be run in a Docker container. The container automatically runs the metadata sync and optionally watches your Plex library for new `.nfo` files.
+
+### Quick Start (Docker)
+
+```bash
+docker run -d \
+  --name tubesync-plex \
+  -v /your/local/config.json:/app/config/config.json:ro \
+  -v /your/plex/library1:/volume1 \
+  -v /your/plex/library2:/volume2 \
+  -v /your/plex/library3:/volume3 \
+  -e BASE_DIR=/app \
+  -e CONFIG_FILE=/app/config/config.json \
+  kman0001/tubesync-plex:latest
+```
+
+### Notes
+
+* The container automatically runs `/app/entrypoint.sh` (no need to specify `entrypoint` in Docker Compose).
+* The container will read configuration from `config.json`. Folder watching is enabled only if `"watch_folders": true` in the config.
+* Only mounted Plex library folders need **write/delete permission** for NFO updates.
+* To disable folder watching inside the container (e.g., for scheduled tasks), set `"watch_folders": false` in `config.json`.
+
+### Docker Compose Example
+
+```yaml
+version: "3.9"
+services:
+  tubesync-plex:
+    image: kman0001/tubesync-plex:latest
+    container_name: tubesync-plex
+    restart: unless-stopped
+    volumes:
+      - /volume1/docker/tubesync/config.json:/app/config/config.json:ro
+      - /volume1:/volume1
+      - /volume2:/volume2
+      - /volume3:/volume3
+    environment:
+      - BASE_DIR=/app
+      - CONFIG_FILE=/app/config/config.json
+```
+
+> **Tip:** Docker automatically handles folder watching via the `watch_folders` option. You do not need to specify `--disable-watchdog` when running in Docker.
+
+---
+
 ## Additional Tools
 
 ### Batch JSON → NFO Converter
