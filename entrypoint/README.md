@@ -15,15 +15,12 @@ services:
     restart: unless-stopped
     volumes:
       - /your/tubesync-plex/config.json:/app/config/config.json:ro
-      - /your/plex/library1:/plex/library1
-      - /your/plex/library2:/plex/library2
-      - /your/plex/library3:/plex/library3
+      - "/your/plex/TV Shows:/mnt/library/TV Shows"
+      - "/your/plex/Movies:/mnt/library/Movies"
     environment:
       - BASE_DIR=/app
       - CONFIG_FILE=/app/config/config.json
 ```
-
-> Note: The container automatically detects Plex library paths from `config.json` and watches them. There is no need to specify watch directories via environment variables.
 
 ## Configuration
 
@@ -66,5 +63,4 @@ cp config.sample.json config.json
 
 * Only the mounted Plex library folders need **write/delete permission** for NFO updates.
 * The container runs in the foreground; it is recommended to use a process manager (like Docker Compose) to keep it running.
-* Folder watching is controlled by the `watch_folders` option in `config.json`. The container automatically handles all watched libraries.
-* There is no need to specify watch directories via environment variables or command-line options.
+* **Important:** Plex library paths with spaces (e.g., `TV Shows`) must be enclosed in quotes when mounting in Docker or defining environment variables. The script handles spaces correctly if paths are quoted.
