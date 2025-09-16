@@ -279,15 +279,12 @@ class VideoEventHandler(FileSystemEventHandler):
         self.nfo_timer = None
         self.video_timer = None
         self.nfo_wait = 10   # NFO 마지막 이벤트 후 10초 대기
-        self.video_wait = 2  # 영상 마지막 이벤트 후 2초 대기
-        self.logged_nfo = set()
-        self.logged_video = set()
+        self.video_wait = 2  # 동영상 마지막 이벤트 후 2초 대기
 
     def on_any_event(self, event):
+        path = os.path.abspath(event.src_path)
         if event.is_directory:
             return
-
-        path = os.path.abspath(event.src_path)
 
         with self.lock:
             # 영상 파일 삭제 대응
@@ -299,36 +296,32 @@ class VideoEventHandler(FileSystemEventHandler):
                     save_cache()
                 return
 
-            # NFO/영상 생성·수정 처리
+            # NFO 파일 처리
             if path.lower().endswith(".nfo"):
-                self.schedule_nfo_processing(path)
-            elif path.lower().endswith(VIDEO_EXTS):
-                self.schedule_video_processing(path)
+                self.nfo_queue.add(path)
+                if self.nfo_timer:
+                    self.nfo_timer.cancel()
+                self.nfo_timer = threading.Timer(self.nfo_wait, self.process_nfo_queue)
+                self.nfo_timer.start()
+                if detail:
+                    print(f"[DEBUG] Scheduled NFO processing for {path}")
+                return
 
-    def schedule_nfo_processing(self, path):
-        self.nfo_queue.add(path)
-        if not self.nfo_timer:
-            self.nfo_timer = threading.Timer(self.nfo_wait, self.process_nfo_queue)
-            self.nfo_timer.start()
-        if detail and path not in self.logged_nfo:
-            print(f"[DEBUG] Scheduled NFO processing for {path}")
-            self.logged_nfo.add(path)
-
-    def schedule_video_processing(self, path):
-        self.video_queue.add(path)
-        if not self.video_timer:
-            self.video_timer = threading.Timer(self.video_wait, self.process_video_queue)
-            self.video_timer.start()
-        if detail and path not in self.logged_video:
-            print(f"[DEBUG] Scheduled video processing for {path}")
-            self.logged_video.add(path)
+            # 영상 파일 처리
+            if path.lower().endswith(VIDEO_EXTS):
+                self.video_queue.add(path)
+                if self.video_timer:
+                    self.video_timer.cancel()
+                self.video_timer = threading.Timer(self.video_wait, self.process_video_queue)
+                self.video_timer.start()
+                if detail:
+                    print(f"[DEBUG] Scheduled video processing for {path}")
 
     def process_nfo_queue(self):
         with self.lock:
             nfo_files = list(self.nfo_queue)
             self.nfo_queue.clear()
             self.nfo_timer = None
-            self.logged_nfo.clear()
 
         for nfo_path in nfo_files:
             # nfo -> video 매핑
@@ -348,13 +341,14 @@ class VideoEventHandler(FileSystemEventHandler):
                     cache[video_path] = plex_item.key
             process_file(video_path)
         save_cache()
+        if detail:
+            print(f"[DEBUG] Processed NFO queue: {nfo_files}")
 
     def process_video_queue(self):
         with self.lock:
             video_files = list(self.video_queue)
             self.video_queue.clear()
             self.video_timer = None
-            self.logged_video.clear()
 
         for video_path in video_files:
             if video_path not in cache or cache.get(video_path) is None:
@@ -363,6 +357,8 @@ class VideoEventHandler(FileSystemEventHandler):
                     cache[video_path] = plex_item.key
             process_file(video_path)
         save_cache()
+        if detail:
+            print(f"[DEBUG] Processed video queue: {video_files}")
 
 # -----------------------------
 # Main
