@@ -331,21 +331,28 @@ class VideoEventHandler(FileSystemEventHandler):
             self.logged_nfo.clear()
 
         for nfo_path in nfo_files:
-            # nfo -> video 매핑
-            video_path = str(Path(nfo_path).with_suffix(".mkv"))
-            if not os.path.exists(video_path):
-                for ext in VIDEO_EXTS:
-                    candidate = str(Path(nfo_path).with_suffix(ext))
-                    if os.path.exists(candidate):
-                        video_path = candidate
-                        break
-                else:
-                    continue
+            # NFO -> 영상 매핑
+            video_path = None
+            for ext in VIDEO_EXTS:
+                candidate = str(Path(nfo_path).with_suffix(ext))
+                if os.path.exists(candidate):
+                    video_path = candidate
+                    break
+            if not video_path:
+                if detail:
+                    print(f"[WARN] No matching video for NFO: {nfo_path}")
+                continue
+
+            if detail:
+                print(f"[DEBUG] Processing NFO for video: {video_path}")
 
             if video_path not in cache or cache.get(video_path) is None:
                 plex_item = find_plex_item(video_path)
                 if plex_item:
                     cache[video_path] = plex_item.key
+                elif detail:
+                    print(f"[WARN] Plex item not found for: {video_path}")
+
             process_file(video_path)
         save_cache()
 
@@ -357,10 +364,16 @@ class VideoEventHandler(FileSystemEventHandler):
             self.logged_video.clear()
 
         for video_path in video_files:
+            if detail:
+                print(f"[DEBUG] Processing video: {video_path}")
+
             if video_path not in cache or cache.get(video_path) is None:
                 plex_item = find_plex_item(video_path)
                 if plex_item:
                     cache[video_path] = plex_item.key
+                elif detail:
+                    print(f"[WARN] Plex item not found for: {video_path}")
+
             process_file(video_path)
         save_cache()
 
