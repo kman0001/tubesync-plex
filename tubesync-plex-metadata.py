@@ -276,6 +276,7 @@ class VideoEventHandler(FileSystemEventHandler):
         self.last_run = 0
 
     def on_any_event(self, event):
+        print(f"[DEBUG] Event: type={event.event_type}, path={event.src_path}")
         now = time.time()
         if now - self.last_run < watch_debounce_delay:
             return
