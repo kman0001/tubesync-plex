@@ -27,7 +27,6 @@ DISABLE_WATCHDOG = args.disable_watchdog
 CONFIG_FILE = args.config or os.environ.get("CONFIG_FILE", "config.json")
 CONFIG_FILE = os.path.abspath(CONFIG_FILE)
 
-# Default config template
 default_config = {
     "_comment": {
         "plex_base_url": "Plex server URL, e.g., http://localhost:32400",
@@ -55,7 +54,6 @@ default_config = {
     "watch_debounce_delay": 2
 }
 
-# If config.json does not exist, create it and exit
 if not os.path.exists(CONFIG_FILE):
     os.makedirs(os.path.dirname(CONFIG_FILE), exist_ok=True)
     with open(CONFIG_FILE, "w", encoding="utf-8") as f:
@@ -63,11 +61,9 @@ if not os.path.exists(CONFIG_FILE):
     print(f"[INFO] {CONFIG_FILE} created. Please edit it and rerun.")
     exit(0)
 
-# Load config
 with open(CONFIG_FILE, "r", encoding="utf-8") as f:
     config = json.load(f)
 
-# Disable watchdog if command-line option is set
 if DISABLE_WATCHDOG:
     config["watch_folders"] = False
 
@@ -91,6 +87,10 @@ detail = config.get("detail", False)
 subtitles_enabled = config.get("subtitles", False)
 watch_folders_enabled = config.get("watch_folders", False)
 watch_debounce_delay = config.get("watch_debounce_delay", 2)
+
+# Set to track already processed Plex items
+processed_eps = set()
+processed_lock = threading.Lock()
 
 LANG_MAP = {
     "eng":"en","jpn":"ja","kor":"ko","fre":"fr","fra":"fr",
@@ -195,6 +195,15 @@ def process_file(file_path):
     if not found:
         if detail: print(f"[WARN] Episode not found for: {file_path}")
         return False
+
+    # --- Prevent duplicate processing ---
+    with processed_lock:
+        if found.ratingKey in processed_eps:
+            if detail:
+                print(f"[INFO] Already processed: {file_path}")
+            return False
+        processed_eps.add(found.ratingKey)
+
     return apply_nfo(found, abs_path)
 
 # -----------------------------
