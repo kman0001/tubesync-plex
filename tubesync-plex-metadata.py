@@ -273,52 +273,75 @@ def process_file(file_path):
 # -----------------------------
 class VideoEventHandler(FileSystemEventHandler):
     def __init__(self):
-        self.last_run = 0
+        self.nfo_queue = set()
+        self.video_queue = set()
+        self.lock = threading.Lock()
+        self.nfo_timer = None
+        self.video_timer = None
+        self.nfo_wait = 10   # NFO 마지막 이벤트 후 10초 대기
+        self.video_wait = 2  # 동영상 마지막 이벤트 후 2초 대기
 
     def on_any_event(self, event):
-        now = time.time()
-        if now - self.last_run < watch_debounce_delay:
-            return
-        self.last_run = now
-
-        if event.is_directory:
+        if event.is_directory: 
             return
 
         path = os.path.abspath(event.src_path)
-        ext = Path(path).suffix.lower()
-        if ext not in VIDEO_EXTS + (".nfo",):
-            return
 
-        # NFO 이벤트인 경우 대응
-        if ext == ".nfo":
-            # 영상 파일 경로 추정
-            video_path = str(Path(path).with_suffix(".mkv"))
+        with self.lock:
+            # NFO 이벤트
+            if path.lower().endswith(".nfo"):
+                self.nfo_queue.add(path)
+                if self.nfo_timer:
+                    self.nfo_timer.cancel()
+                self.nfo_timer = threading.Timer(self.nfo_wait, self.process_nfo_queue)
+                self.nfo_timer.start()
+
+            # 동영상 이벤트
+            elif path.lower().endswith(VIDEO_EXTS):
+                self.video_queue.add(path)
+                if self.video_timer:
+                    self.video_timer.cancel()
+                self.video_timer = threading.Timer(self.video_wait, self.process_video_queue)
+                self.video_timer.start()
+
+    def process_nfo_queue(self):
+        with self.lock:
+            nfo_files = list(self.nfo_queue)
+            self.nfo_queue.clear()
+            self.nfo_timer = None
+
+        for nfo_path in nfo_files:
+            # nfo -> video 매핑
+            video_path = str(Path(nfo_path).with_suffix(".mkv"))
             if not os.path.exists(video_path):
-                # 다른 확장자 시도
-                for vext in VIDEO_EXTS:
-                    video_path = str(Path(path).with_suffix(vext))
-                    if os.path.exists(video_path):
+                for ext in VIDEO_EXTS:
+                    candidate = str(Path(nfo_path).with_suffix(ext))
+                    if os.path.exists(candidate):
+                        video_path = candidate
                         break
-            if not os.path.exists(video_path):
-                return
+                else:
+                    continue
 
-            # PlexItem 확보
-            plex_item = None
-            key = cache.get(video_path)
-            if key:
-                try:
-                    plex_item = plex.fetchItem(key)
-                except:
-                    plex_item = None
-            if not plex_item:
+            if video_path not in cache or cache.get(video_path) is None:
                 plex_item = find_plex_item(video_path)
                 if plex_item:
                     cache[video_path] = plex_item.key
+            process_file(video_path)
+        save_cache()
 
-            # NFO 적용
-            if plex_item:
-                apply_nfo(plex_item, video_path)
-                save_cache()
+    def process_video_queue(self):
+        with self.lock:
+            video_files = list(self.video_queue)
+            self.video_queue.clear()
+            self.video_timer = None
+
+        for video_path in video_files:
+            if video_path not in cache or cache.get(video_path) is None:
+                plex_item = find_plex_item(video_path)
+                if plex_item:
+                    cache[video_path] = plex_item.key
+            process_file(video_path)
+        save_cache()
 
 # -----------------------------
 # Main
