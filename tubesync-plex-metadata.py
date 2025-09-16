@@ -188,39 +188,39 @@ def apply_nfo(ep, file_path):
 # Process single file
 # -----------------------------
 def process_file(file_path):
-    if not file_path.lower().endswith(VIDEO_EXTS):
-        return False
-
+    if not file_path.lower().endswith(VIDEO_EXTS): return False
     abs_path = os.path.abspath(file_path)
     found = None
 
-    for lib_name in config["plex_library_names"]:
+    for lib in config["plex_library_names"]:
         try:
-            section = plex.library.section(lib_name)
-        except Exception:
-            continue
+            section = plex.library.section(lib)
+        except: continue
 
-        # 모든 항목 순회
-        for item in section.all():
-            # iterParts가 있는 객체만 처리
-            parts = getattr(item, "iterParts", lambda: [])()
-            for part in parts:
-                part_path = getattr(part, "file", None)
-                if part_path and os.path.abspath(part_path) == abs_path:
-                    found = item
-                    break
-            if found:
-                break
+        if getattr(section, "TYPE","").lower() == "show":
+            for show in section.all():
+                for season in getattr(show,"seasons",lambda:[])():
+                    for ep in getattr(season,"episodes",lambda:[])():
+                        for part in getattr(ep,"iterParts",lambda:[])():
+                            if os.path.abspath(part.file) == abs_path:
+                                found = ep
+                                break
+                        if found: break
+                    if found: break
+                if found: break
+        else:
+            for ep in section.all():
+                for part in getattr(ep,"iterParts",lambda:[])():
+                    if os.path.abspath(part.file) == abs_path:
+                        found = ep
+                        break
+                if found: break
 
-        if found:
-            break
+        if found: break
 
     if not found:
-        if detail:
-            print(f"[WARN] Episode/Movie not found for: {file_path}")
+        if detail: print(f"[WARN] Episode not found for: {file_path}")
         return False
-
-    # ep 객체가 유효하면 NFO 적용
     return apply_nfo(found, abs_path)
 
 # -----------------------------
