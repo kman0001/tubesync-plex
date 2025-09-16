@@ -1,11 +1,13 @@
 # syntax=docker/dockerfile:1.4
 
 # ================================
-# Stage 1: Builder
+# Stage 1: Builder (for C extensions)
 # ================================
 FROM --platform=$BUILDPLATFORM python:3.11-slim AS builder
 
-# Install build dependencies for C extensions (psutil)
+WORKDIR /app
+
+# Install build dependencies (required for psutil)
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         gcc \
@@ -14,21 +16,20 @@ RUN apt-get update && \
         make \
     && rm -rf /var/lib/apt/lists/*
 
-# Set working directory
-WORKDIR /app
-
-# Copy Python requirements
+# Copy requirements
 COPY requirements.txt .
 
-# Create virtual environment and install dependencies
+# Create virtual environment and install Python dependencies
 RUN python -m venv venv && \
     ./venv/bin/pip install --upgrade pip && \
     ./venv/bin/pip install --disable-pip-version-check -r requirements.txt
 
 # ================================
-# Stage 2: Final image
+# Stage 2: Final image (runtime)
 # ================================
 FROM --platform=$BUILDPLATFORM python:3.11-slim
+
+WORKDIR /app
 
 # Install only runtime dependencies
 RUN apt-get update && \
@@ -36,10 +37,7 @@ RUN apt-get update && \
         bash \
     && rm -rf /var/lib/apt/lists/*
 
-# Set working directory
-WORKDIR /app
-
-# Copy virtual environment from builder stage
+# Copy venv from builder
 COPY --from=builder /app/venv ./venv
 
 # Copy application files
