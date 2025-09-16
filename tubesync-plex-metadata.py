@@ -280,54 +280,33 @@ class VideoEventHandler(FileSystemEventHandler):
         if now - self.last_run < watch_debounce_delay:
             return
         self.last_run = now
-
         if event.is_directory:
             return
 
         path = event.src_path
-        lower = path.lower()
+        if path.lower().endswith(VIDEO_EXTS):
+            target = path
+        elif path.lower().endswith(".nfo"):
+            target = str(Path(path).with_suffix(".mkv"))  # 기본 mkv 우선
+            if not os.path.exists(target):
+                # 다른 확장자 후보도 검사
+                for ext in VIDEO_EXTS:
+                    cand = str(Path(path).with_suffix(ext))
+                    if os.path.exists(cand):
+                        target = cand
+                        break
+        else:
+            return
 
-        # 비디오 파일 변경 감지
-        if lower.endswith(VIDEO_EXTS):
-            abs_path = os.path.abspath(path)
-            if abs_path not in cache or cache.get(abs_path) is None:
-                plex_item = find_plex_item(abs_path)
-                if plex_item:
-                    cache[abs_path] = plex_item.key
-            process_file(abs_path)
-            save_cache()
+        abs_path = os.path.abspath(target)
+        if abs_path not in cache or cache.get(abs_path) is None:
+            plex_item = find_plex_item(abs_path)
+            if plex_item:
+                cache[abs_path] = plex_item.key
 
-        # NFO 파일 변경 감지
-        elif lower.endswith(".nfo"):
-            # Synology @eaDir 같은 특수폴더는 무시
-            if "/@eaDir/" in path:
-                return
-
-            # NAS 환경에서 여러번 수정 이벤트가 발생하므로 약간 대기
-            time.sleep(1)
-
-            folder = Path(path).parent
-            base = Path(path).stem
-            matched = False
-            target_video = None
-
-            for ext in VIDEO_EXTS:
-                candidate = folder / f"{base}{ext}"
-                if candidate.exists():
-                    target_video = str(candidate)
-                    matched = True
-                    break
-
-            if matched:
-                abs_video = os.path.abspath(target_video)
-                if abs_video not in cache or cache.get(abs_video) is None:
-                    plex_item = find_plex_item(abs_video)
-                    if plex_item:
-                        cache[abs_video] = plex_item.key
-                process_file(abs_video)
-                save_cache()
-            else:
-                print(f"[DEBUG] No video match found for NFO: {path}")
+        print(f"[DEBUG] Watchdog processing {target}")
+        process_file(target)
+        save_cache()
 
 # -----------------------------
 # Main
