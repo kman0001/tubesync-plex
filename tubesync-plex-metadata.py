@@ -274,39 +274,60 @@ def process_file(file_path):
 class VideoEventHandler(FileSystemEventHandler):
     def __init__(self):
         self.last_run = 0
+        self.changed_files = set()
+
+    def handle_event(self, event_path):
+        file_path = Path(event_path)
+
+        # NFO 감지 → 같은 이름 영상으로 매핑
+        if file_path.suffix.lower() == ".nfo":
+            for ext in VIDEO_EXTS:
+                video_path = file_path.with_suffix(ext)
+                if video_path.exists():
+                    if detail:
+                        print(f"[DEBUG] NFO event mapped to video {video_path}")
+                    self.changed_files.add(str(video_path))
+                    break
+            return
+
+        # 영상 파일이면 그대로 처리
+        if file_path.suffix.lower() in VIDEO_EXTS:
+            if detail:
+                print(f"[DEBUG] Video event: {file_path}")
+            self.changed_files.add(str(file_path))
 
     def on_any_event(self, event):
         now = time.time()
         if now - self.last_run < watch_debounce_delay:
             return
         self.last_run = now
+
         if event.is_directory:
             return
 
-        path = event.src_path
-        if path.lower().endswith(VIDEO_EXTS):
-            target = path
-        elif path.lower().endswith(".nfo"):
-            target = str(Path(path).with_suffix(".mkv"))  # 기본 mkv 우선
-            if not os.path.exists(target):
-                # 다른 확장자 후보도 검사
-                for ext in VIDEO_EXTS:
-                    cand = str(Path(path).with_suffix(ext))
-                    if os.path.exists(cand):
-                        target = cand
-                        break
-        else:
-            return
+        # created / modified / moved 모두 처리
+        if event.event_type in ["created", "modified", "moved"]:
+            self.handle_event(event.src_path)
+            if hasattr(event, "dest_path"):  # moved 이벤트일 경우
+                self.handle_event(event.dest_path)
 
-        abs_path = os.path.abspath(target)
-        if abs_path not in cache or cache.get(abs_path) is None:
-            plex_item = find_plex_item(abs_path)
-            if plex_item:
-                cache[abs_path] = plex_item.key
+        # 변경된 파일 처리
+        for file_path in list(self.changed_files):
+            abs_path = os.path.abspath(file_path)
 
-        print(f"[DEBUG] Watchdog processing {target}")
-        process_file(target)
-        save_cache()
+            # 캐시에 메타ID 없으면 Plex에서 검색 후 저장
+            if abs_path not in cache or cache.get(abs_path) is None:
+                plex_item = find_plex_item(abs_path)
+                if plex_item:
+                    cache[abs_path] = plex_item.key
+
+            # NFO 적용
+            process_file(file_path)
+
+        # 캐시 저장 후 변경 파일 초기화
+        if self.changed_files:
+            save_cache()
+            self.changed_files.clear()
 
 # -----------------------------
 # Main
