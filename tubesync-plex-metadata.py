@@ -133,7 +133,7 @@ def upload_subtitles(ep, srt_files):
             print(f"[ERROR] Subtitle upload failed: {srt} - {e}")
 
 # -----------------------------
-# Apply NFO metadata
+# Apply NFO metadata (updated for PlexAPI)
 # -----------------------------
 def apply_nfo(ep, file_path):
     nfo_path = Path(file_path).with_suffix(".nfo")
@@ -145,15 +145,25 @@ def apply_nfo(ep, file_path):
         title = root.findtext("title", "")
         plot = root.findtext("plot", "")
         aired = root.findtext("aired", "")
-        if detail: print(f"[-] Applying NFO: {file_path} -> {title}")
-        ep.editTitle(title, locked=True)
-        ep.editSortTitle(aired, locked=True)
-        ep.editSummary(plot, locked=True)
+
+        if detail:
+            print(f"[-] Applying NFO: {file_path} -> {title}")
+
+        # 최신 PlexAPI 권장 방식
+        ep.edit(
+            title=title,
+            sortTitle=aired,
+            summary=plot,
+            lockedFields=['title','sortTitle','summary']
+        )
+
         if subtitles_enabled:
             srt_files = extract_subtitles(file_path)
             if srt_files: upload_subtitles(ep, srt_files)
+
         os.remove(nfo_path)
         return True
+
     except Exception as e:
         print(f"[ERROR] Failed to apply NFO: {nfo_path} - {e}")
         return False
