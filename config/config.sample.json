@@ -2,7 +2,7 @@
     "_comment": {
         "plex_base_url": "Plex server URL, e.g., http://localhost:32400",
         "plex_token": "Plex server token",
-        "plex_library_names": "List of Plex libraries to sync, e.g., [\"TV Shows\", \"Movies\"]",
+        "plex_library_ids": "List of Plex library IDs to sync, e.g., [10, 21, 35]",
         "silent": "Suppress logs if true",
         "detail": "Show detailed logs if true",
         "subtitles": "Extract embedded subtitles and upload to Plex if true",
@@ -14,7 +14,7 @@
     },
     "plex_base_url": "http://localhost:32400",
     "plex_token": "YOUR_PLEX_TOKEN",
-    "plex_library_names": ["TV Shows", "Movies"],
+    "plex_library_ids": [10, 21, 35],
     "silent": false,
     "detail": false,
     "subtitles": false,
