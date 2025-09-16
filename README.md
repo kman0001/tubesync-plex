@@ -11,8 +11,8 @@ This repository is a **personal fork** of [tgouverneur/tubesync-plex](https://gi
 * Added `subtitles` option to extract and upload embedded subtitles to Plex. Default: `false`.
 * Supports multiple subtitle tracks and maps language codes to Plex-compatible ISO 639-1 codes.
 * Fully handles extraction failures: PGS/VobSub or other non-text subtitle tracks are ignored safely with warnings.
-* Added folder watching via `watchdog`, which can be enabled/disabled via `config.json`.
-* Folder watching is automatically disabled when running via cron or using `--disable-watchdog`.
+* Added folder watching via `watchdog`, which can be enabled/disabled via `config.json` or `--disable-watchdog`.
+* Folder watching is automatically disabled when running via cron.
 * Batch JSON to NFO converter included for `info.json` → `.nfo`.
 * Configurable threading and rate-limiting for Plex API requests to optimize performance.
 
@@ -103,7 +103,7 @@ Edit `config.json` with your Plex server details:
 * `watch_folders`: Enable folder watching (default `false`)
 * `watch_debounce_delay`: Debounce delay for folder watching in seconds
 
-> **Important:** Set `watch_folders` to `false` when running via cron to avoid race conditions or duplicate processing.
+> **Note:** Set `watch_folders` to `false` when running via cron.
 
 ---
 
@@ -115,6 +115,17 @@ Run manually:
 bash /tubesync-plex.sh --base-dir /tubesync-plex
 ```
 
+Or with command-line options:
+
+```bash
+bash /tubesync-plex.sh --base-dir /tubesync-plex --disable-watchdog
+```
+
+Python script supports:
+
+* `--config <path>`: Use a custom `config.json` file.
+* `--disable-watchdog`: Disable folder watching (useful for cron jobs).
+
 The script will:
 
 1. Update the repository (git fetch + reset to `main`).
@@ -122,29 +133,17 @@ The script will:
 3. Install/update required Python packages.
 4. Run metadata sync with `tubesync-plex-metadata.py`.
 5. Optionally extract and upload embedded subtitles if `subtitles=true`.
-6. Watch folders for new `.nfo` files if `watch_folders=true`.
-
-### Disable Watchdog (Optional CLI)
-
-For cron jobs or manual runs where folder watching is not needed:
-
-```bash
-bash /tubesync-plex.sh --base-dir /tubesync-plex --disable-watchdog
-```
-
-> This will override the `watch_folders` setting in `config.json`.
+6. Watch folders for new `.nfo` files if `watch_folders=true` and not disabled by `--disable-watchdog`.
 
 ---
 
 ## Cron Job Example
 
-Automate daily sync at 2:00 AM **with folder watching disabled**:
+Automate daily sync at 2:00 AM (with folder watching disabled):
 
 ```cron
 0 2 * * * /bin/bash /tubesync-plex/tubesync-plex.sh --base-dir /tubesync-plex --disable-watchdog >> /tubesync-plex/tubesync.log 2>&1
 ```
-
-> ⚠️ **Reminder:** Always disable folder watching when using cron to avoid duplicate processing or race conditions with the watchdog observer.
 
 ---
 
@@ -160,9 +159,9 @@ See [`json_to_nfo`](https://github.com/kman0001/tubesync-plex/tree/main/json_to_
 ## Notes
 
 * The script **never overwrites existing local files**, except processed `.nfo` files.
+* `watch_folders` should be disabled for cron jobs to avoid race conditions.
 * Subtitles are uploaded only if extractable, with ISO 639-1 mapping.
 * Compatible with Windows, Linux, and Docker.
-* Folder watching is safe for manual runs, but **must be disabled for cron jobs**.
 
 ---
 
