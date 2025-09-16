@@ -1,44 +1,59 @@
 # syntax=docker/dockerfile:1.4
 
-FROM python:3.11-slim
+# ================================
+# Stage 1: Builder
+# ================================
+FROM --platform=$BUILDPLATFORM python:3.11-slim AS builder
 
-# ================================
-# Set working directory
-# ================================
-WORKDIR /app
-
-# ================================
-# Install minimal OS packages
-# Bash is required for entrypoint scripts
-# ================================
+# Install build dependencies (required for psutil and other C extensions)
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
+        gcc \
+        python3-dev \
+        libffi-dev \
+        make \
+        git \
+        curl \
         bash \
     && rm -rf /var/lib/apt/lists/*
 
-# ================================
-# Install Python dependencies
-# ================================
+# Set working directory
+WORKDIR /app
+
+# Copy Python requirements
 COPY requirements.txt .
+
+# Create virtual environment and install dependencies
 RUN python -m venv venv && \
     ./venv/bin/pip install --upgrade pip && \
     ./venv/bin/pip install --disable-pip-version-check -r requirements.txt
 
 # ================================
-# Copy application files and entrypoint scripts
+# Stage 2: Final image
 # ================================
-COPY tubesync-plex-metadata.py .
+FROM --platform=$BUILDPLATFORM python:3.11-slim
+
+# Install only runtime dependencies
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        inotify-tools \
+        git \
+        curl \
+        bash \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set working directory
+WORKDIR /app
+
+# Copy the virtual environment from the builder stage
+COPY --from=builder /app/venv ./venv
+
+# Copy application files
+COPY tubesync-plex-metadata.py . 
 COPY entrypoint/ ./entrypoint/
-RUN chmod +x ./entrypoint/*.sh
 
-# ================================
-# Set default environment variables
-# ================================
-ENV BASE_DIR=/app
-ENV CONFIG_FILE=/app/config/config.json
-ENV DEBOUNCE_DELAY=2
+# Make entrypoint scripts executable
+RUN chmod +x /app/entrypoint/*.sh
 
-# ================================
-# Execute entrypoint script on container start
-# ================================
+# Set entrypoint
 ENTRYPOINT ["/app/entrypoint/entrypoint.sh"]
