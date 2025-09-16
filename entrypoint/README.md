@@ -1,6 +1,6 @@
 # TubeSync-Plex NFO Watch Docker
 
-This Docker container watches your Plex library for `.nfo` files and automatically applies metadata.
+This Docker container watches your Plex library for `.nfo` files and automatically applies metadata using `tubesync-plex-metadata.py`.
 
 ## Quick Start
 
@@ -14,13 +14,20 @@ services:
     container_name: tubesync-plex
     restart: unless-stopped
     volumes:
-      - /your/tubesync-plex/config.json:/app/config/config.json:ro
-      - "/your/plex/TV Shows:/mnt/library/TV Shows"
-      - "/your/plex/Movies:/mnt/library/Movies"
+      - /volume1/docker/tubesync/tubesync-plex/config.json:/app/config/config.json:ro
+      #- /volume2/video/tubesync:/volume2/video/tubesync
+      - /volume1:/volume1
+      - /volume2:/volume2
+      - /volume4:/volume4
     environment:
+      - PUID=0
+      - PGID=0
+      - TZ=Asia/Seoul
       - BASE_DIR=/app
       - CONFIG_FILE=/app/config/config.json
 ```
+
+> ⚠️ Note: You do **not** need to specify `entrypoint:` in Docker Compose. The Dockerfile already sets the ENTRYPOINT to `/app/entrypoint.sh`.
 
 ## Configuration
 
@@ -63,4 +70,4 @@ cp config.sample.json config.json
 
 * Only the mounted Plex library folders need **write/delete permission** for NFO updates.
 * The container runs in the foreground; it is recommended to use a process manager (like Docker Compose) to keep it running.
-* **Important:** Plex library paths with spaces (e.g., `TV Shows`) must be enclosed in quotes when mounting in Docker or defining environment variables. The script handles spaces correctly if paths are quoted.
+* Folder watching is controlled entirely by `config.json` (`watch_folders: true/false`). No additional environment variable is required.
