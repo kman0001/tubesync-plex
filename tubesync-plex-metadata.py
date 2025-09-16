@@ -95,12 +95,6 @@ LANG_MAP = {
 def map_lang(code): return LANG_MAP.get(code.lower(),"und")
 
 # -----------------------------
-# Track processed Plex objects
-# -----------------------------
-processed_eps = set()
-processed_lock = threading.Lock()
-
-# -----------------------------
 # Subtitle extraction
 # -----------------------------
 def extract_subtitles(video_path):
@@ -125,7 +119,7 @@ def extract_subtitles(video_path):
     return srt_files
 
 # -----------------------------
-# Upload subtitles
+# Upload subtitles (optimized)
 # -----------------------------
 def upload_subtitles(ep, srt_files):
     try:
@@ -150,11 +144,12 @@ def upload_subtitles(ep, srt_files):
                     print(f"[SUBTITLE] Uploaded: {srt}")
             except Exception as e:
                 print(f"[ERROR] Subtitle upload failed: {srt} - {e}")
+
     except Exception as e:
         print(f"[ERROR] Subtitle handling failed: {e}")
 
 # -----------------------------
-# Apply NFO
+# Apply NFO (optimized)
 # -----------------------------
 def apply_nfo(ep, file_path):
     nfo_path = Path(file_path).with_suffix(".nfo")
@@ -202,34 +197,30 @@ def process_file(file_path):
             section = plex.library.section(lib)
         except: continue
 
-        for item in section.all():
-            parts = getattr(item, "iterParts", lambda: [])()
-            for part in parts:
-                if os.path.abspath(part.file) == abs_path:
-                    found = item
-                    break
-            if found: break
+        if getattr(section, "TYPE","").lower() == "show":
+            for show in section.all():
+                for season in getattr(show,"seasons",lambda:[])():
+                    for ep in getattr(season,"episodes",lambda:[])():
+                        for part in getattr(ep,"iterParts",lambda:[])():
+                            if os.path.abspath(part.file) == abs_path:
+                                found = ep
+                                break
+                        if found: break
+                    if found: break
+                if found: break
+        else:
+            for ep in section.all():
+                for part in getattr(ep,"iterParts",lambda:[])():
+                    if os.path.abspath(part.file) == abs_path:
+                        found = ep
+                        break
+                if found: break
+
         if found: break
 
     if not found:
-        nfo_path = Path(file_path).with_suffix(".nfo")
-        if not nfo_path.exists():
-            # NFO 없는 경우 그냥 스킵
-            if detail:
-                print(f"[INFO] No NFO found for: {file_path}, skipped")
-            return False
-        # 실제로 객체를 못 찾은 경우만 경고
-        print(f"[WARN] Episode/Movie not found for: {file_path}")
+        if detail: print(f"[WARN] Episode not found for: {file_path}")
         return False
-
-    # 중복 적용 방지
-    with processed_lock:
-        if found.ratingKey in processed_eps:
-            if detail:
-                print(f"[INFO] Already processed: {file_path}")
-            return False
-        processed_eps.add(found.ratingKey)
-
     return apply_nfo(found, abs_path)
 
 # -----------------------------
@@ -258,12 +249,12 @@ def main():
         print(f"[INFO] Total items updated: {total}")
 
 # -----------------------------
-# Watchdog (기존 정상 코드 유지)
+# Watchdog (optimized)
 # -----------------------------
 class NFOHandler(FileSystemEventHandler):
     def __init__(self, debounce=2):
         self.debounce = debounce
-        self.timer = None
+        self.timers = {}
 
     def _handle_event(self, file_path):
         if not file_path.endswith(".nfo"): return
@@ -274,16 +265,17 @@ class NFOHandler(FileSystemEventHandler):
         def process():
             if detail:
                 print(f"[WATCHDOG] Detected change: {file_path}")
+            # 대응되는 단일 비디오 파일만 처리
             for ext in VIDEO_EXTS:
                 candidate = video_path + ext
                 if os.path.exists(candidate):
                     process_file(candidate)
                     break
 
-        if self.timer and self.timer.is_alive():
-            self.timer.cancel()
-        self.timer = threading.Timer(self.debounce, process)
-        self.timer.start()
+        if file_path in self.timers and self.timers[file_path].is_alive():
+            self.timers[file_path].cancel()
+        self.timers[file_path] = threading.Timer(self.debounce, process)
+        self.timers[file_path].start()
 
     def on_created(self, event):
         if not event.is_directory:
