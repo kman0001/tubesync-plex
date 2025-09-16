@@ -5,19 +5,16 @@
 # ================================
 FROM --platform=$BUILDPLATFORM python:3.11-slim AS builder
 
-# Install build dependencies (required for psutil and other C extensions)
+# Build dependencies (for psutil wheel build)
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         gcc \
         python3-dev \
         libffi-dev \
         make \
-        git \
-        curl \
         bash \
     && rm -rf /var/lib/apt/lists/*
 
-# Set working directory
 WORKDIR /app
 
 # Copy Python requirements
@@ -33,23 +30,18 @@ RUN python -m venv venv && \
 # ================================
 FROM --platform=$BUILDPLATFORM python:3.11-slim
 
-# Install only runtime dependencies
+# Minimal runtime dependencies
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-        inotify-tools \
-        git \
-        curl \
-        bash \
-    && rm -rf /var/lib/apt/lists/*
+    apt-get install -y --no-install-recommends bash && \
+    rm -rf /var/lib/apt/lists/*
 
-# Set working directory
 WORKDIR /app
 
-# Copy the virtual environment from the builder stage
+# Copy pre-built virtual environment
 COPY --from=builder /app/venv ./venv
 
 # Copy application files
-COPY tubesync-plex-metadata.py . 
+COPY tubesync-plex-metadata.py .
 COPY entrypoint/ ./entrypoint/
 
 # Make entrypoint scripts executable
