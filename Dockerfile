@@ -14,7 +14,6 @@ RUN apt-get update && \
         git \
         curl \
         bash \
-        inotify-tools \
         libffi-dev \
         libxml2-dev \
         libxslt1-dev \
