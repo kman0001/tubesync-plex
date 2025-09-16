@@ -1,4 +1,6 @@
+#!/usr/bin/env python3
 import os
+import sys
 import json
 import time
 import threading
@@ -18,21 +20,27 @@ parser = argparse.ArgumentParser(description="TubeSync Plex Metadata Sync")
 parser.add_argument("--disable-watchdog", action="store_true", help="Disable folder watching")
 parser.add_argument("--config", type=str, default=None, help="Path to config.json")
 args = parser.parse_args()
-
 DISABLE_WATCHDOG = args.disable_watchdog
 
 # -----------------------------
-# Config file
+# Base directories
 # -----------------------------
-CONFIG_FILE = args.config or os.environ.get("CONFIG_FILE", "config.json")
-CONFIG_FILE = os.path.abspath(CONFIG_FILE)
+BASE_DIR = os.environ.get("BASE_DIR", "/app")
+CONFIG_DIR = os.path.join(BASE_DIR, "config")
+os.makedirs(CONFIG_DIR, exist_ok=True)
+CONFIG_FILE = args.config or os.path.join(CONFIG_DIR, "config.json")
 
-# Default config template
+# config.json이 있는 디렉토리를 기준으로 캐시 생성
+CACHE_FILE = os.path.join(os.path.dirname(CONFIG_FILE), "tubesync_cache.json")
+
+# -----------------------------
+# Default config
+# -----------------------------
 default_config = {
     "_comment": {
         "plex_base_url": "Plex server URL, e.g., http://localhost:32400",
         "plex_token": "Plex server token",
-        "plex_library_names": ["TV Shows","Movies"],
+        "plex_library_ids": "List of Plex library IDs to sync, e.g., [10,21,35]",
         "silent": "true/false",
         "detail": "true/false",
         "subtitles": "true/false",
@@ -44,7 +52,7 @@ default_config = {
     },
     "plex_base_url": "",
     "plex_token": "",
-    "plex_library_names": ["TV Shows","Movies"],
+    "plex_library_ids": [],
     "silent": False,
     "detail": False,
     "subtitles": False,
@@ -55,33 +63,31 @@ default_config = {
     "watch_debounce_delay": 2
 }
 
-# If config.json does not exist, create it and exit
+# Create config.json if missing
 if not os.path.exists(CONFIG_FILE):
-    os.makedirs(os.path.dirname(CONFIG_FILE), exist_ok=True)
     with open(CONFIG_FILE, "w", encoding="utf-8") as f:
         json.dump(default_config, f, indent=4, ensure_ascii=False)
     print(f"[INFO] {CONFIG_FILE} created. Please edit it and rerun.")
-    exit(0)
+    sys.exit(0)
 
 # Load config
 with open(CONFIG_FILE, "r", encoding="utf-8") as f:
     config = json.load(f)
 
-# Disable watchdog if command-line option is set
 if DISABLE_WATCHDOG:
     config["watch_folders"] = False
 
 # -----------------------------
-# Connect to Plex server
+# Plex connection
 # -----------------------------
 try:
     plex = PlexServer(config["plex_base_url"], config["plex_token"])
 except Exception as e:
     print(f"[ERROR] Failed to connect to Plex: {e}")
-    exit(1)
+    sys.exit(1)
 
 # -----------------------------
-# Global variables
+# Globals
 # -----------------------------
 VIDEO_EXTS = (".mkv", ".mp4", ".avi", ".mov", ".wmv", ".flv", ".m4v")
 api_semaphore = threading.Semaphore(config.get("max_concurrent_requests", 2))
@@ -91,16 +97,48 @@ detail = config.get("detail", False)
 subtitles_enabled = config.get("subtitles", False)
 watch_folders_enabled = config.get("watch_folders", False)
 watch_debounce_delay = config.get("watch_debounce_delay", 2)
+processed_files = set()
 
-LANG_MAP = {
-    "eng":"en","jpn":"ja","kor":"ko","fre":"fr","fra":"fr",
-    "spa":"es","ger":"de","deu":"de","ita":"it","chi":"zh","und":"und"
-}
+# -----------------------------
+# Cache handling
+# -----------------------------
+if os.path.exists(CACHE_FILE):
+    with open(CACHE_FILE, "r", encoding="utf-8") as f:
+        cache = json.load(f)
+else:
+    cache = {}
+    # 최초 생성 시 저장
+    try:
+        os.makedirs(os.path.dirname(CACHE_FILE), exist_ok=True)
+        with open(CACHE_FILE, "w", encoding="utf-8") as f:
+            json.dump(cache, f, indent=2, ensure_ascii=False)
+        if detail:
+            print(f"[CACHE] Created empty cache at {CACHE_FILE}")
+    except Exception as e:
+        print(f"[ERROR] Failed to create cache: {e}")
+
+def save_cache(cache_dict):
+    try:
+        os.makedirs(os.path.dirname(CACHE_FILE), exist_ok=True)
+        with open(CACHE_FILE, "w", encoding="utf-8") as f:
+            json.dump(cache_dict, f, indent=2, ensure_ascii=False)
+        if detail:
+            print(f"[CACHE] Saved cache to {CACHE_FILE}, total items: {len(cache_dict)}")
+    except Exception as e:
+        print(f"[ERROR] Failed to save cache: {e}")
+
+def update_cache(file_path, plex_item):
+    if plex_item is None: return
+    cache[file_path] = plex_item.key
+    save_cache(cache)
+
+# -----------------------------
+# Subtitles
+# -----------------------------
+LANG_MAP = {"eng":"en","jpn":"ja","kor":"ko","fre":"fr","fra":"fr","spa":"es",
+            "ger":"de","deu":"de","ita":"it","chi":"zh","und":"und"}
 def map_lang(code): return LANG_MAP.get(code.lower(),"und")
 
-# -----------------------------
-# Subtitle extraction and upload
-# -----------------------------
 def extract_subtitles(video_path):
     base,_ = os.path.splitext(video_path)
     srt_files=[]
@@ -135,9 +173,9 @@ def upload_subtitles(ep, srt_files):
 # -----------------------------
 # Apply NFO metadata
 # -----------------------------
-def apply_nfo(ep, file_path):
+def apply_nfo(ep, file_path, subtitles_enabled=False, detail=False, cache=None):
     nfo_path = Path(file_path).with_suffix(".nfo")
-    if not nfo_path.exists() or nfo_path.stat().st_size == 0: 
+    if not nfo_path.exists() or nfo_path.stat().st_size == 0:
         return False
     try:
         tree = ET.parse(str(nfo_path), parser=ET.XMLParser(recover=True))
@@ -145,57 +183,94 @@ def apply_nfo(ep, file_path):
         title = root.findtext("title", "")
         plot = root.findtext("plot", "")
         aired = root.findtext("aired", "")
-        if detail: print(f"[-] Applying NFO: {file_path} -> {title}")
+
+        if detail:
+            print(f"[-] Applying NFO: {file_path} -> {title}")
+
         ep.editTitle(title, locked=True)
         ep.editSortTitle(aired, locked=True)
         ep.editSummary(plot, locked=True)
+
         if subtitles_enabled:
             srt_files = extract_subtitles(file_path)
-            if srt_files: upload_subtitles(ep, srt_files)
-        os.remove(nfo_path)
+            if srt_files:
+                upload_subtitles(ep, srt_files)
+
+        if cache is not None:
+            cache[str(file_path)] = ep.key
+
+        try:
+            nfo_path.unlink()
+            if detail:
+                print(f"[-] Deleted NFO: {nfo_path}")
+        except Exception as e:
+            print(f"[WARN] Failed to delete NFO file: {nfo_path} - {e}")
+
         return True
+
+    except ET.XMLSyntaxError as e:
+        print(f"[!] XMLSyntaxError: Malformed XML in {nfo_path}, skipping. Details: {e}")
+        return False
     except Exception as e:
-        print(f"[ERROR] Failed to apply NFO: {nfo_path} - {e}")
+        print(f"[!] Unexpected error processing {nfo_path}, skipping. Details: {e}")
         return False
 
 # -----------------------------
 # Process single file
 # -----------------------------
 def process_file(file_path):
-    if not file_path.lower().endswith(VIDEO_EXTS): return False
     abs_path = os.path.abspath(file_path)
-    found = None
-
-    for lib in config["plex_library_names"]:
-        try:
-            section = plex.library.section(lib)
-        except: continue
-
-        if getattr(section, "TYPE", "").lower() == "show":
-            for show in section.all():
-                for season in getattr(show, "seasons", lambda: [])():
-                    for ep in getattr(season, "episodes", lambda: [])():
-                        for part in getattr(ep, "iterParts", lambda: [])():
-                            if os.path.abspath(part.file) == abs_path:
-                                found = ep
-                                break
-                        if found: break
-                    if found: break
-                if found: break
-        else:
-            for ep in section.all():
-                for part in getattr(ep, "iterParts", lambda: [])():
-                    if os.path.abspath(part.file) == abs_path:
-                        found = ep
-                        break
-                if found: break
-
-        if found: break
-
-    if not found:
-        if detail: print(f"[WARN] Episode not found for: {file_path}")
+    if abs_path in processed_files: 
         return False
-    return apply_nfo(found, abs_path)
+    if not file_path.lower().endswith(VIDEO_EXTS): 
+        return False
+
+    plex_item = None
+    key = cache.get(abs_path)
+    if key:
+        try:
+            plex_item = plex.fetchItem(key)
+        except:
+            plex_item = None
+
+    if not plex_item:
+        for lib_id in config["plex_library_ids"]:
+            try:
+                section = plex.library.sectionByID(lib_id)
+            except:
+                continue
+            section_type = getattr(section, "TYPE", "").lower()
+            if section_type == "show":
+                results = section.search(libtype="episode")
+            elif section_type in ("movie","video"):
+                results = section.search(libtype="movie")
+            else:
+                continue
+            for item in results:
+                for part in item.iterParts():
+                    if os.path.abspath(part.file) == abs_path:
+                        plex_item = item
+                        break
+                if plex_item: break
+            if plex_item: break
+
+    if not plex_item:
+        if detail: 
+            print(f"[WARN] Item not found for: {file_path}")
+        return False
+
+    success = apply_nfo(
+        plex_item,
+        abs_path,
+        subtitles_enabled=subtitles_enabled,
+        detail=detail,
+        cache=cache
+    )
+    if success:
+        processed_files.add(abs_path)
+        save_cache(cache)
+
+    return success
 
 # -----------------------------
 # Main processing
@@ -203,10 +278,11 @@ def process_file(file_path):
 def main():
     total = 0
     all_files = []
-    for lib in config["plex_library_names"]:
+    for lib_id in config["plex_library_ids"]:
         try:
-            section = plex.library.section(lib)
-        except: continue
+            section = plex.library.sectionByID(lib_id)
+        except:
+            continue
         paths = getattr(section, "locations", [])
         for p in paths:
             for root, dirs, files in os.walk(p):
@@ -230,32 +306,40 @@ class NFOHandler(FileSystemEventHandler):
         self.debounce = debounce
         self.timer = None
 
-    def on_created(self, event):
-        if event.is_directory or not event.src_path.endswith(".nfo"): return
+    def _trigger(self):
         if self.timer and self.timer.is_alive():
             self.timer.cancel()
         self.timer = threading.Timer(self.debounce, main)
         self.timer.start()
 
+    def on_created(self, event):
+        if not event.is_directory and event.src_path.lower().endswith(".nfo"):
+            if detail:
+                print(f"[WATCHDOG] Detected new NFO: {event.src_path}")
+            self._trigger()
+
     def on_modified(self, event):
-        self.on_created(event)
+        if not event.is_directory and event.src_path.lower().endswith(".nfo"):
+            if detail:
+                print(f"[WATCHDOG] Detected modified NFO: {event.src_path}")
+            self._trigger()
 
 # -----------------------------
 # Execute
 # -----------------------------
 if __name__ == "__main__":
     main()
-
     if watch_folders_enabled:
         observer = Observer()
-        for lib in config["plex_library_names"]:
+        for lib_id in config["plex_library_ids"]:
             try:
-                section = plex.library.section(lib)
-            except: continue
-            paths = getattr(section, "locations", [])
-            for path in paths:
+                section = plex.library.sectionByID(lib_id)
+            except:
+                continue
+            for path in getattr(section, "locations", []):
                 observer.schedule(NFOHandler(debounce=watch_debounce_delay), path, recursive=True)
-        print(f"[INFO] Started watching NFO files in: {config['plex_library_names']}")
+                if detail:
+                    print(f"[WATCHDOG] Watching folder: {path}")
         observer.start()
         try:
             while True:
