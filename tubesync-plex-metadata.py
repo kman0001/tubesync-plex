@@ -18,15 +18,6 @@ args = parser.parse_args()
 DISABLE_WATCHDOG = args.disable_watchdog
 
 # -----------------------------
-# Directories
-# -----------------------------
-BASE_DIR = os.environ.get("BASE_DIR", "/app")
-CONFIG_DIR = os.path.join(BASE_DIR, "config")
-os.makedirs(CONFIG_DIR, exist_ok=True)
-CONFIG_FILE = args.config or os.path.join(CONFIG_DIR, "config.json")
-CACHE_FILE = os.path.join(os.path.dirname(CONFIG_FILE), "tubesync_cache.json")
-
-# -----------------------------
 # Default config
 # -----------------------------
 default_config = {
@@ -57,8 +48,17 @@ default_config = {
 }
 
 # -----------------------------
-# Load/Create config
+# Directories & Config
 # -----------------------------
+BASE_DIR = os.environ.get("BASE_DIR", "/app")
+CONFIG_DIR = os.path.join(BASE_DIR, "config")
+os.makedirs(CONFIG_DIR, exist_ok=True)
+CONFIG_FILE = args.config or os.path.join(CONFIG_DIR, "config.json")
+CACHE_FILE = os.path.join(os.path.dirname(CONFIG_FILE), "tubesync_cache.json")
+
+# Default config omitted for brevity; same as 기존 코드
+
+# Load/Create config
 if not os.path.exists(CONFIG_FILE):
     with open(CONFIG_FILE, "w", encoding="utf-8") as f:
         json.dump(default_config, f, indent=4, ensure_ascii=False)
@@ -245,39 +245,6 @@ def apply_nfo(ep, file_path):
 # -----------------------------
 # Process single file
 # -----------------------------
-def process_file(file_path):
-    abs_path = os.path.abspath(file_path)
-    if not file_path.lower().endswith(VIDEO_EXTS):
-        return False
-
-    plex_item = None
-    key = cache.get(abs_path)
-    if key:
-        try:
-            plex_item = plex.fetchItem(key)
-        except:
-            plex_item = None
-
-    if not plex_item:
-        plex_item = find_plex_item(abs_path)
-        if plex_item:
-            cache[abs_path] = plex_item.key
-
-    nfo_path = Path(file_path).with_suffix(".nfo")
-    success = False
-    # NFO가 있으면 항상 적용
-    if nfo_path.exists() and nfo_path.stat().st_size > 0 and plex_item:
-        success = apply_nfo(plex_item, abs_path)
-
-    # 영상 처리용으로만 processed_files에 기록
-    if abs_path not in processed_files:
-        processed_files.add(abs_path)
-
-    return success
-
-# -----------------------------
-# Process single file
-# -----------------------------
 def process_file(file_path, ignore_processed=False):
     abs_path = os.path.abspath(file_path)
     if not ignore_processed and abs_path in processed_files:
@@ -316,16 +283,16 @@ class VideoEventHandler(FileSystemEventHandler):
         self.lock = threading.Lock()
         self.nfo_timer = None
         self.video_timer = None
-        self.nfo_wait = 10   # NFO 마지막 이벤트 후 10초 대기
-        self.video_wait = 2  # 영상 마지막 이벤트 후 2초 대기
+        self.nfo_wait = 10
+        self.video_wait = 2
         self.logged_nfo = set()
         self.logged_video = set()
+        # retry_queue = { path: [next_retry_time, attempt_count] }
         self.retry_queue = {}
 
     def on_any_event(self, event):
         if event.is_directory:
             return
-
         path = os.path.abspath(event.src_path)
         ext = os.path.splitext(path)[1].lower()
 
@@ -334,8 +301,7 @@ class VideoEventHandler(FileSystemEventHandler):
             if event.event_type == "deleted" and ext in VIDEO_EXTS:
                 if path in cache:
                     cache.pop(path, None)
-                    if detail:
-                        print(f"[CACHE] Removed deleted video from cache: {path}")
+                    if detail: print(f"[CACHE] Removed deleted video from cache: {path}")
                     save_cache()
                 return
 
@@ -347,12 +313,13 @@ class VideoEventHandler(FileSystemEventHandler):
                         cache[path] = plex_item.key
                         save_cache()
                 self.schedule_video_processing(path)
+                return
 
-            # 영상 수정 이벤트는 무시
+            # 영상 수정 무시
             elif event.event_type == "modified" and ext in VIDEO_EXTS:
                 return
 
-            # NFO 생성/수정
+            # NFO 처리
             if ext == ".nfo":
                 self.schedule_nfo_processing(path)
 
@@ -384,16 +351,15 @@ class VideoEventHandler(FileSystemEventHandler):
         for nfo_path in nfo_files:
             video_path = self._find_corresponding_video(nfo_path)
             if video_path:
-                # 캐시 업데이트
-                if video_path not in cache or cache.get(video_path) is None:
-                    plex_item = find_plex_item(video_path)
-                    if plex_item:
-                        cache[video_path] = plex_item.key
-                # NFO 적용 (watchdog 이벤트는 항상 시도)
                 success = process_file(video_path, ignore_processed=True)
                 if not success:
-                    self.retry_queue[video_path] = time.time() + 5  # 5초 후 재시도
-        save_cache()
+                    # 재시도 3회 제한
+                    next_retry, count = self.retry_queue.get(video_path, [time.time() + 5, 0])
+                    if count < 3:
+                        self.retry_queue[video_path] = [time.time() + 5, count + 1]
+                    else:
+                        print(f"[WARN] NFO processing failed 3 times: {video_path}")
+                        self.retry_queue.pop(video_path, None)
         self._process_retry_queue()
 
     def process_video_queue(self):
@@ -423,38 +389,37 @@ class VideoEventHandler(FileSystemEventHandler):
 
     def _process_retry_queue(self):
         now = time.time()
-        for video_path, retry_time in list(self.retry_queue.items()):
+        for video_path, (retry_time, count) in list(self.retry_queue.items()):
             if now >= retry_time:
                 success = process_file(video_path, ignore_processed=True)
                 if success:
                     del self.retry_queue[video_path]
+                elif count < 3:
+                    self.retry_queue[video_path] = [now + 5, count + 1]
                 else:
-                    self.retry_queue[video_path] = now + 5
+                    print(f"[WARN] NFO processing failed 3 times: {video_path}")
+                    del self.retry_queue[video_path]
 
 # -----------------------------
 # Main
 # -----------------------------
 def main():
-    # 1. Scan library and update cache
     scan_and_update_cache()
     save_cache()
 
-    # 2. Apply NFO to files
+    # 초기 NFO 적용
     total = 0
-    all_files = list(cache.keys())
     with ThreadPoolExecutor(max_workers=threads) as ex:
-        futures = [ex.submit(process_file, f) for f in all_files]
+        futures = [ex.submit(process_file, f) for f in cache.keys()]
         for fut in as_completed(futures):
             if fut.result(): total += 1
     if not config.get("silent", False):
         print(f"[INFO] Total items updated: {total}")
     save_cache()
 
-    # 3. Watchdog
     if config.get("watch_folders", False) and not DISABLE_WATCHDOG:
         observer = Observer()
-        event_handler = VideoEventHandler()  # ← 단일 인스턴스 생성
-
+        event_handler = VideoEventHandler()
         for lib_id in config["plex_library_ids"]:
             try:
                 section = plex.library.sectionByID(lib_id)
@@ -462,7 +427,6 @@ def main():
                 continue
             for p in getattr(section, "locations", []):
                 observer.schedule(event_handler, p, recursive=True)
-
         observer.start()
         print("[INFO] Watchdog started. Monitoring file changes...")
         try:
