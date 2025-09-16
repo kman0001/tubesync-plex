@@ -1,4 +1,0 @@
-#!/bin/sh
-# 서비스 종료 시 동작
-log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"; }
-log "Stopping NFO watch..."
