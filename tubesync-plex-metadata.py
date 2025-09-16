@@ -27,6 +27,7 @@ DISABLE_WATCHDOG = args.disable_watchdog
 CONFIG_FILE = args.config or os.environ.get("CONFIG_FILE", "config.json")
 CONFIG_FILE = os.path.abspath(CONFIG_FILE)
 
+# Default config template
 default_config = {
     "_comment": {
         "plex_base_url": "Plex server URL, e.g., http://localhost:32400",
@@ -54,6 +55,7 @@ default_config = {
     "watch_debounce_delay": 2
 }
 
+# If config.json does not exist, create it and exit
 if not os.path.exists(CONFIG_FILE):
     os.makedirs(os.path.dirname(CONFIG_FILE), exist_ok=True)
     with open(CONFIG_FILE, "w", encoding="utf-8") as f:
@@ -61,14 +63,16 @@ if not os.path.exists(CONFIG_FILE):
     print(f"[INFO] {CONFIG_FILE} created. Please edit it and rerun.")
     exit(0)
 
+# Load config
 with open(CONFIG_FILE, "r", encoding="utf-8") as f:
     config = json.load(f)
 
+# Disable watchdog if command-line option is set
 if DISABLE_WATCHDOG:
     config["watch_folders"] = False
 
 # -----------------------------
-# Connect to Plex
+# Connect to Plex server
 # -----------------------------
 try:
     plex = PlexServer(config["plex_base_url"], config["plex_token"])
@@ -77,7 +81,7 @@ except Exception as e:
     exit(1)
 
 # -----------------------------
-# Globals
+# Global variables
 # -----------------------------
 VIDEO_EXTS = (".mkv", ".mp4", ".avi", ".mov", ".wmv", ".flv", ".m4v")
 api_semaphore = threading.Semaphore(config.get("max_concurrent_requests", 2))
@@ -95,7 +99,7 @@ LANG_MAP = {
 def map_lang(code): return LANG_MAP.get(code.lower(),"und")
 
 # -----------------------------
-# Subtitle extraction
+# Subtitle extraction and upload
 # -----------------------------
 def extract_subtitles(video_path):
     base,_ = os.path.splitext(video_path)
@@ -111,45 +115,25 @@ def extract_subtitles(video_path):
             lang = map_lang(s.get("tags", {}).get("language", "und"))
             srt = f"{base}.{lang}.srt"
             if os.path.exists(srt): continue
-            subprocess.run(["ffmpeg","-y","-i",video_path,"-map",f"0:s:{idx}",srt],
+            subprocess.run(["ffmpeg","-y","-i",video_path,f"-map","0:s:{idx}",srt],
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             if os.path.exists(srt): srt_files.append((srt, lang))
     except Exception as e:
         print(f"[ERROR] ffprobe/ffmpeg failed: {video_path} - {e}")
     return srt_files
 
-# -----------------------------
-# Upload subtitles (optimized)
-# -----------------------------
 def upload_subtitles(ep, srt_files):
-    try:
-        existing = []
+    for srt, lang in srt_files:
         try:
-            for stream in ep.subtitleStreams():
-                lang = map_lang(getattr(stream, "language", "und"))
-                existing.append(lang)
-        except Exception:
-            existing = []
-
-        for srt, lang in srt_files:
-            if lang in existing:
-                if detail:
-                    print(f"[SUBTITLE] Skipped (already exists): {srt}")
-                continue
-            try:
-                with api_semaphore:
-                    ep.uploadSubtitles(srt, language=lang)
-                    time.sleep(request_delay)
-                if detail:
-                    print(f"[SUBTITLE] Uploaded: {srt}")
-            except Exception as e:
-                print(f"[ERROR] Subtitle upload failed: {srt} - {e}")
-
-    except Exception as e:
-        print(f"[ERROR] Subtitle handling failed: {e}")
+            with api_semaphore:
+                ep.uploadSubtitles(srt, language=lang)
+                time.sleep(request_delay)
+            if detail: print(f"[SUBTITLE] Uploaded: {srt}")
+        except Exception as e:
+            print(f"[ERROR] Subtitle upload failed: {srt} - {e}")
 
 # -----------------------------
-# Apply NFO (optimized)
+# Apply NFO metadata
 # -----------------------------
 def apply_nfo(ep, file_path):
     nfo_path = Path(file_path).with_suffix(".nfo")
@@ -161,25 +145,15 @@ def apply_nfo(ep, file_path):
         title = root.findtext("title", "")
         plot = root.findtext("plot", "")
         aired = root.findtext("aired", "")
-
-        if detail:
-            print(f"[-] Applying NFO: {file_path} -> {title}")
-
-        ep.edit(
-            title=title,
-            sortTitle=aired,
-            summary=plot,
-            lockedFields=['title','sortTitle','summary']
-        )
-
+        if detail: print(f"[-] Applying NFO: {file_path} -> {title}")
+        ep.editTitle(title, locked=True)
+        ep.editSortTitle(aired, locked=True)
+        ep.editSummary(plot, locked=True)
         if subtitles_enabled:
             srt_files = extract_subtitles(file_path)
-            if srt_files:
-                upload_subtitles(ep, srt_files)
-
+            if srt_files: upload_subtitles(ep, srt_files)
         os.remove(nfo_path)
         return True
-
     except Exception as e:
         print(f"[ERROR] Failed to apply NFO: {nfo_path} - {e}")
         return False
@@ -197,11 +171,11 @@ def process_file(file_path):
             section = plex.library.section(lib)
         except: continue
 
-        if getattr(section, "TYPE","").lower() == "show":
+        if getattr(section, "TYPE", "").lower() == "show":
             for show in section.all():
-                for season in getattr(show,"seasons",lambda:[])():
-                    for ep in getattr(season,"episodes",lambda:[])():
-                        for part in getattr(ep,"iterParts",lambda:[])():
+                for season in getattr(show, "seasons", lambda: [])():
+                    for ep in getattr(season, "episodes", lambda: [])():
+                        for part in getattr(ep, "iterParts", lambda: [])():
                             if os.path.abspath(part.file) == abs_path:
                                 found = ep
                                 break
@@ -210,7 +184,7 @@ def process_file(file_path):
                 if found: break
         else:
             for ep in section.all():
-                for part in getattr(ep,"iterParts",lambda:[])():
+                for part in getattr(ep, "iterParts", lambda: [])():
                     if os.path.abspath(part.file) == abs_path:
                         found = ep
                         break
@@ -233,57 +207,38 @@ def main():
         try:
             section = plex.library.section(lib)
         except: continue
-        paths = getattr(section,"locations",[])
+        paths = getattr(section, "locations", [])
         for p in paths:
             for root, dirs, files in os.walk(p):
                 for f in files:
-                    all_files.append(os.path.join(root,f))
+                    all_files.append(os.path.join(root, f))
     if detail: print(f"[INFO] Total files to process: {len(all_files)}")
 
     with ThreadPoolExecutor(max_workers=threads) as ex:
-        futures = [ex.submit(process_file,f) for f in all_files]
+        futures = [ex.submit(process_file, f) for f in all_files]
         for fut in as_completed(futures):
             if fut.result(): total += 1
 
-    if not config.get("silent",False):
+    if not config.get("silent", False):
         print(f"[INFO] Total items updated: {total}")
 
 # -----------------------------
-# Watchdog (optimized)
+# Watchdog for NFO files
 # -----------------------------
 class NFOHandler(FileSystemEventHandler):
     def __init__(self, debounce=2):
         self.debounce = debounce
-        self.timers = {}
-
-    def _handle_event(self, file_path):
-        if not file_path.endswith(".nfo"): return
-        video_path = os.path.splitext(file_path)[0]
-        if not any(os.path.exists(video_path + ext) for ext in VIDEO_EXTS):
-            return
-
-        def process():
-            if detail:
-                print(f"[WATCHDOG] Detected change: {file_path}")
-            # 대응되는 단일 비디오 파일만 처리
-            for ext in VIDEO_EXTS:
-                candidate = video_path + ext
-                if os.path.exists(candidate):
-                    process_file(candidate)
-                    break
-
-        if file_path in self.timers and self.timers[file_path].is_alive():
-            self.timers[file_path].cancel()
-        self.timers[file_path] = threading.Timer(self.debounce, process)
-        self.timers[file_path].start()
+        self.timer = None
 
     def on_created(self, event):
-        if not event.is_directory:
-            self._handle_event(event.src_path)
+        if event.is_directory or not event.src_path.endswith(".nfo"): return
+        if self.timer and self.timer.is_alive():
+            self.timer.cancel()
+        self.timer = threading.Timer(self.debounce, main)
+        self.timer.start()
 
     def on_modified(self, event):
-        if not event.is_directory:
-            self._handle_event(event.src_path)
+        self.on_created(event)
 
 # -----------------------------
 # Execute
@@ -297,7 +252,7 @@ if __name__ == "__main__":
             try:
                 section = plex.library.section(lib)
             except: continue
-            paths = getattr(section,"locations",[])
+            paths = getattr(section, "locations", [])
             for path in paths:
                 observer.schedule(NFOHandler(debounce=watch_debounce_delay), path, recursive=True)
         print(f"[INFO] Started watching NFO files in: {config['plex_library_names']}")
