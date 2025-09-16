@@ -137,6 +137,7 @@ def find_plex_item(abs_path):
     return None
 
 def scan_and_update_cache():
+    """Scan library, add missing meta IDs, remove deleted files."""
     global cache
     existing_files = set(cache.keys())
     all_files = []
@@ -158,12 +159,13 @@ def scan_and_update_cache():
         if not f.lower().endswith(VIDEO_EXTS):
             continue
         current_files.add(abs_path)
+        # 캐시에 메타ID가 없으면 Plex에서 찾기
         if abs_path not in cache or cache.get(abs_path) is None:
             plex_item = find_plex_item(abs_path)
             if plex_item:
                 cache[abs_path] = plex_item.key
 
-    # Remove deleted files from cache
+    # 삭제된 파일은 캐시에서 제거
     removed = existing_files - current_files
     for f in removed:
         cache.pop(f,None)
@@ -177,7 +179,9 @@ def map_lang(code): return LANG_MAP.get(code.lower(),"und")
 def extract_subtitles(video_path):
     base,_ = os.path.splitext(video_path)
     srt_files=[]
-    ffprobe_cmd = ["ffprobe","-v","error","-select_streams","s","-show_entries","stream=index:stream_tags=language,codec_name","-of","json",video_path]
+    ffprobe_cmd = ["ffprobe","-v","error","-select_streams","s",
+                   "-show_entries","stream=index:stream_tags=language,codec_name",
+                   "-of","json",video_path]
     try:
         result = subprocess.run(ffprobe_cmd,capture_output=True,text=True)
         streams = json.loads(result.stdout).get("streams",[])
@@ -186,7 +190,8 @@ def extract_subtitles(video_path):
             lang = map_lang(s.get("tags",{}).get("language","und"))
             srt = f"{base}.{lang}.srt"
             if os.path.exists(srt): continue
-            subprocess.run(["ffmpeg","-y","-i",video_path,f"-map","0:s:{idx}",srt],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+            subprocess.run(["ffmpeg","-y","-i",video_path,f"-map","0:s:{idx}",srt],
+                           stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
             if os.path.exists(srt): srt_files.append((srt,lang))
     except Exception as e:
         print(f"[ERROR] ffprobe/ffmpeg failed: {video_path} - {e}")
@@ -253,13 +258,12 @@ def process_file(file_path):
 
     if not plex_item:
         plex_item = find_plex_item(abs_path)
-        if plex_item: cache[abs_path]=plex_item.key
+        if plex_item: cache[abs_path] = plex_item.key
 
     nfo_path = Path(file_path).with_suffix(".nfo")
+    success = False
     if nfo_path.exists() and nfo_path.stat().st_size>0 and plex_item:
         success = apply_nfo(plex_item,abs_path)
-    else:
-        success = False
 
     processed_files.add(abs_path)
     return success
@@ -276,6 +280,11 @@ class VideoEventHandler(FileSystemEventHandler):
         self.last_run = now
         if event.is_directory: return
         if event.src_path.lower().endswith(VIDEO_EXTS) or event.src_path.lower().endswith(".nfo"):
+            # 캐시 업데이트 + NFO 적용
+            abs_path = os.path.abspath(event.src_path)
+            if abs_path not in cache or cache.get(abs_path) is None:
+                plex_item = find_plex_item(abs_path)
+                if plex_item: cache[abs_path] = plex_item.key
             process_file(event.src_path)
             save_cache()
 
