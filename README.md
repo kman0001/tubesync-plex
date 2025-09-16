@@ -103,8 +103,24 @@ Edit `config.json` with your Plex server details:
 * `watch_folders`: Enable folder watching (default `false`)
 * `watch_debounce_delay`: Debounce delay for folder watching in seconds
 
-> **Note:** Set `watch_folders` to `false` when running via cron.
-> config.json file is located at <base_dir>/config/config.json.
+> **Note:**  
+> Set `watch_folders` to `false` when running via cron.  
+> `config.json` file is located at `<base_dir>/config/config.json`.
+
+---
+
+### 🔧 How to Find Plex Token & Library ID
+
+* **Find Your Plex Token**
+  1. Open Plex Web App in your browser  
+  2. Open Developer Tools (F12) → **Network** tab  
+  3. Click any request and look for the `X-Plex-Token` value  
+  4. Copy and paste it into `plex_token` in your `config.json`
+
+* **Find Your Plex Library ID**
+  1. Open `http://<plex_server>:32400/library/sections?X-Plex-Token=<plex_token>` in a browser  
+  2. Look for `<Directory key="X" title="LibraryName">` entries  
+  3. The value of `key="X"` is the library ID (e.g., `"1"`, `"2"`)
 
 ---
 
