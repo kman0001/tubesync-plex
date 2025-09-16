@@ -10,8 +10,8 @@ CONFIG_FILE="${CONFIG_FILE:-$BASE_DIR/config/config.json}"
 # ================================
 # Python 의존성 설치 확인
 # ================================
-"$BASE_DIR/venv/bin/pip" install --upgrade pip
-"$BASE_DIR/venv/bin/pip" install -r "$BASE_DIR/requirements.txt"
+#"$BASE_DIR/venv/bin/pip" install --upgrade pip
+#"$BASE_DIR/venv/bin/pip" install -r "$BASE_DIR/requirements.txt"
 
 # ================================
 # TubeSync Plex Metadata 실행
