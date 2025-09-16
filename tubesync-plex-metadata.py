@@ -9,7 +9,15 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import subprocess
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
-import psutil
+import argparse
+
+# -----------------------------
+# Command-line arguments
+# -----------------------------
+parser = argparse.ArgumentParser(description="TubeSync Plex Metadata Sync")
+parser.add_argument("--disable-watchdog", action="store_true",
+                    help="Disable folder watching regardless of config.json")
+args = parser.parse_args()
 
 # -----------------------------
 # Config file
@@ -17,7 +25,6 @@ import psutil
 CONFIG_FILE = os.environ.get("CONFIG_FILE", "config.json")
 CONFIG_FILE = os.path.abspath(CONFIG_FILE)
 
-# Default config template
 default_config = {
     "_comment": {
         "plex_base_url": "Plex server URL, e.g., http://localhost:32400",
@@ -45,7 +52,7 @@ default_config = {
     "watch_debounce_delay": 2
 }
 
-# If config.json does not exist, create it and exit
+# Create default config if missing
 if not os.path.exists(CONFIG_FILE):
     os.makedirs(os.path.dirname(CONFIG_FILE), exist_ok=True)
     with open(CONFIG_FILE, "w", encoding="utf-8") as f:
@@ -58,29 +65,7 @@ with open(CONFIG_FILE, "r", encoding="utf-8") as f:
     config = json.load(f)
 
 # -----------------------------
-# Auto-disable folder watch if running in cron
-# -----------------------------
-def is_running_in_cron():
-    """Detect if script is executed from cron or timer"""
-    try:
-        if os.environ.get("CRON_RUN", "0") == "1":
-            return True
-        parent = psutil.Process(os.getppid())
-        parent_name = parent.name().lower()
-        if any(keyword in parent_name for keyword in ["cron", "crond", "systemd-timer", "anacron"]):
-            return True
-    except Exception:
-        pass
-    return False
-
-watch_folders_enabled = config.get("watch_folders", False)
-if is_running_in_cron():
-    watch_folders_enabled = False
-    if config.get("detail", False):
-        print("[INFO] Watchdog disabled (cron mode detected)")
-
-# -----------------------------
-# Connect to Plex server
+# Plex connection
 # -----------------------------
 try:
     plex = PlexServer(config["plex_base_url"], config["plex_token"])
@@ -97,16 +82,20 @@ request_delay = config.get("request_delay", 0.1)
 threads = config.get("threads", 4)
 detail = config.get("detail", False)
 subtitles_enabled = config.get("subtitles", False)
+watch_folders_enabled = config.get("watch_folders", False)
+
+# Override watch_folders if CLI disables it
+if args.disable_watchdog:
+    watch_folders_enabled = False
+
 watch_debounce_delay = config.get("watch_debounce_delay", 2)
 
-LANG_MAP = {
-    "eng":"en","jpn":"ja","kor":"ko","fre":"fr","fra":"fr",
-    "spa":"es","ger":"de","deu":"de","ita":"it","chi":"zh","und":"und"
-}
+LANG_MAP = {"eng":"en","jpn":"ja","kor":"ko","fre":"fr","fra":"fr",
+            "spa":"es","ger":"de","deu":"de","ita":"it","chi":"zh","und":"und"}
 def map_lang(code): return LANG_MAP.get(code.lower(),"und")
 
 # -----------------------------
-# Subtitle extraction and upload
+# Subtitle extraction/upload
 # -----------------------------
 def extract_subtitles(video_path):
     base,_ = os.path.splitext(video_path)
@@ -172,12 +161,9 @@ def process_file(file_path):
     if not file_path.lower().endswith(VIDEO_EXTS): return False
     abs_path = os.path.abspath(file_path)
     found = None
-
     for lib in config["plex_library_names"]:
-        try:
-            section = plex.library.section(lib)
+        try: section = plex.library.section(lib)
         except: continue
-
         if getattr(section, "TYPE", "").lower() == "show":
             for show in section.all():
                 for season in getattr(show, "seasons", lambda: [])():
@@ -196,9 +182,7 @@ def process_file(file_path):
                         found = ep
                         break
                 if found: break
-
         if found: break
-
     if not found:
         if detail: print(f"[WARN] Episode not found for: {file_path}")
         return False
@@ -211,21 +195,17 @@ def main():
     total = 0
     all_files = []
     for lib in config["plex_library_names"]:
-        try:
-            section = plex.library.section(lib)
+        try: section = plex.library.section(lib)
         except: continue
         paths = getattr(section, "locations", [])
         for p in paths:
             for root, dirs, files in os.walk(p):
-                for f in files:
-                    all_files.append(os.path.join(root, f))
+                for f in files: all_files.append(os.path.join(root, f))
     if detail: print(f"[INFO] Total files to process: {len(all_files)}")
-
     with ThreadPoolExecutor(max_workers=threads) as ex:
         futures = [ex.submit(process_file, f) for f in all_files]
         for fut in as_completed(futures):
             if fut.result(): total += 1
-
     if not config.get("silent", False):
         print(f"[INFO] Total items updated: {total}")
 
@@ -236,28 +216,23 @@ class NFOHandler(FileSystemEventHandler):
     def __init__(self, debounce=2):
         self.debounce = debounce
         self.timer = None
-
     def on_created(self, event):
         if event.is_directory or not event.src_path.endswith(".nfo"): return
         if self.timer and self.timer.is_alive():
             self.timer.cancel()
         self.timer = threading.Timer(self.debounce, main)
         self.timer.start()
-
-    def on_modified(self, event):
-        self.on_created(event)
+    def on_modified(self, event): self.on_created(event)
 
 # -----------------------------
 # Execute
 # -----------------------------
 if __name__ == "__main__":
     main()
-
     if watch_folders_enabled:
         observer = Observer()
         for lib in config["plex_library_names"]:
-            try:
-                section = plex.library.section(lib)
+            try: section = plex.library.section(lib)
             except: continue
             paths = getattr(section, "locations", [])
             for path in paths:
@@ -265,8 +240,7 @@ if __name__ == "__main__":
         print(f"[INFO] Started watching NFO files in: {config['plex_library_names']}")
         observer.start()
         try:
-            while True:
-                time.sleep(1)
+            while True: time.sleep(1)
         except KeyboardInterrupt:
             observer.stop()
         observer.join()
