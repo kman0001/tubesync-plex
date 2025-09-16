@@ -330,7 +330,7 @@ class VideoEventHandler(FileSystemEventHandler):
         ext = os.path.splitext(path)[1].lower()
 
         with self.lock:
-            # 영상 삭제: 캐시에서 제거
+            # 영상 삭제
             if event.event_type == "deleted" and ext in VIDEO_EXTS:
                 if path in cache:
                     cache.pop(path, None)
@@ -339,11 +339,20 @@ class VideoEventHandler(FileSystemEventHandler):
                     save_cache()
                 return
 
-            # 영상 추가: 처리 예약
-            if event.event_type == "created" and ext in VIDEO_EXTS:
+            # 영상 생성
+            elif event.event_type == "created" and ext in VIDEO_EXTS:
+                if path not in cache:
+                    plex_item = find_plex_item(path)
+                    if plex_item:
+                        cache[path] = plex_item.key
+                        save_cache()
                 self.schedule_video_processing(path)
 
-            # NFO 처리: 생성/수정 이벤트 모두 처리
+            # 영상 수정 이벤트는 무시
+            elif event.event_type == "modified" and ext in VIDEO_EXTS:
+                return
+
+            # NFO 생성/수정
             if ext == ".nfo":
                 self.schedule_nfo_processing(path)
 
@@ -375,13 +384,13 @@ class VideoEventHandler(FileSystemEventHandler):
         for nfo_path in nfo_files:
             video_path = self._find_corresponding_video(nfo_path)
             if video_path:
-                # 캐시 업데이트 (추가된 영상만)
+                # 캐시 업데이트
                 if video_path not in cache or cache.get(video_path) is None:
                     plex_item = find_plex_item(video_path)
                     if plex_item:
                         cache[video_path] = plex_item.key
-                # NFO 적용
-                success = process_file(video_path)
+                # NFO 적용 (watchdog 이벤트는 항상 시도)
+                success = process_file(video_path, ignore_processed=True)
                 if not success:
                     self.retry_queue[video_path] = time.time() + 5  # 5초 후 재시도
         save_cache()
@@ -399,7 +408,7 @@ class VideoEventHandler(FileSystemEventHandler):
                 plex_item = find_plex_item(video_path)
                 if plex_item:
                     cache[video_path] = plex_item.key
-            process_file(video_path)
+            process_file(video_path, ignore_processed=True)
         save_cache()
 
     def _find_corresponding_video(self, nfo_path):
@@ -416,7 +425,7 @@ class VideoEventHandler(FileSystemEventHandler):
         now = time.time()
         for video_path, retry_time in list(self.retry_queue.items()):
             if now >= retry_time:
-                success = process_file(video_path)
+                success = process_file(video_path, ignore_processed=True)
                 if success:
                     del self.retry_queue[video_path]
                 else:
