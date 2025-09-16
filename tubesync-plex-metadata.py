@@ -27,6 +27,7 @@ DISABLE_WATCHDOG = args.disable_watchdog
 CONFIG_FILE = args.config or os.environ.get("CONFIG_FILE", "config.json")
 CONFIG_FILE = os.path.abspath(CONFIG_FILE)
 
+# Default config template
 default_config = {
     "_comment": {
         "plex_base_url": "Plex server URL, e.g., http://localhost:32400",
@@ -54,6 +55,7 @@ default_config = {
     "watch_debounce_delay": 2
 }
 
+# If config.json does not exist, create it and exit
 if not os.path.exists(CONFIG_FILE):
     os.makedirs(os.path.dirname(CONFIG_FILE), exist_ok=True)
     with open(CONFIG_FILE, "w", encoding="utf-8") as f:
@@ -61,9 +63,11 @@ if not os.path.exists(CONFIG_FILE):
     print(f"[INFO] {CONFIG_FILE} created. Please edit it and rerun.")
     exit(0)
 
+# Load config
 with open(CONFIG_FILE, "r", encoding="utf-8") as f:
     config = json.load(f)
 
+# Disable watchdog if command-line option is set
 if DISABLE_WATCHDOG:
     config["watch_folders"] = False
 
@@ -87,10 +91,6 @@ detail = config.get("detail", False)
 subtitles_enabled = config.get("subtitles", False)
 watch_folders_enabled = config.get("watch_folders", False)
 watch_debounce_delay = config.get("watch_debounce_delay", 2)
-
-# Set to track already processed Plex items
-processed_eps = set()
-processed_lock = threading.Lock()
 
 LANG_MAP = {
     "eng":"en","jpn":"ja","kor":"ko","fre":"fr","fra":"fr",
@@ -133,11 +133,11 @@ def upload_subtitles(ep, srt_files):
             print(f"[ERROR] Subtitle upload failed: {srt} - {e}")
 
 # -----------------------------
-# Apply NFO metadata (safe)
+# Apply NFO metadata
 # -----------------------------
 def apply_nfo(ep, file_path):
     nfo_path = Path(file_path).with_suffix(".nfo")
-    if not nfo_path.exists() or nfo_path.stat().st_size == 0:
+    if not nfo_path.exists() or nfo_path.stat().st_size == 0: 
         return False
     try:
         tree = ET.parse(str(nfo_path), parser=ET.XMLParser(recover=True))
@@ -145,35 +145,18 @@ def apply_nfo(ep, file_path):
         title = root.findtext("title", "")
         plot = root.findtext("plot", "")
         aired = root.findtext("aired", "")
-
-        if detail:
-            print(f"[-] Applying NFO: {file_path} -> {title}")
-
-        # 안전하게 ep.edit 사용
-        ep.edit(
-            title=title,
-            sortTitle=aired,
-            summary=plot,
-            lockedFields=['title','sortTitle','summary']
-        )
-
+        if detail: print(f"[-] Applying NFO: {file_path} -> {title}")
+        ep.editTitle(title, locked=True)
+        ep.editSortTitle(aired, locked=True)
+        ep.editSummary(plot, locked=True)
         if subtitles_enabled:
             srt_files = extract_subtitles(file_path)
-            if srt_files:
-                upload_subtitles(ep, srt_files)
-
+            if srt_files: upload_subtitles(ep, srt_files)
         os.remove(nfo_path)
-
-        # NFO 적용이 성공한 경우에만 processed_eps에 등록
-        with processed_lock:
-            processed_eps.add(ep.ratingKey)
-
         return True
-
     except Exception as e:
         print(f"[ERROR] Failed to apply NFO: {nfo_path} - {e}")
         return False
-
 
 # -----------------------------
 # Process single file
@@ -212,15 +195,6 @@ def process_file(file_path):
     if not found:
         if detail: print(f"[WARN] Episode not found for: {file_path}")
         return False
-
-    # --- Prevent duplicate processing ---
-    with processed_lock:
-        if found.ratingKey in processed_eps:
-            if detail:
-                print(f"[INFO] Already processed: {file_path}")
-            return False
-        processed_eps.add(found.ratingKey)
-
     return apply_nfo(found, abs_path)
 
 # -----------------------------
