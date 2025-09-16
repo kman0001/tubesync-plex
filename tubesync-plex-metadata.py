@@ -275,34 +275,40 @@ class VideoEventHandler(FileSystemEventHandler):
     def __init__(self):
         self.nfo_queue = set()
         self.video_queue = set()
-        self.retry_queue = set()
         self.lock = threading.Lock()
         self.nfo_timer = None
         self.video_timer = None
-        self.retry_timer = None
-        self.nfo_wait = 10
-        self.video_wait = 2
-        self.retry_wait = 2
+        self.nfo_wait = 10   # NFO 마지막 이벤트 후 10초 대기
+        self.video_wait = 2  # 영상 마지막 이벤트 후 2초 대기
         self.logged_nfo = set()
         self.logged_video = set()
+        self.retry_queue = {}
 
     def on_any_event(self, event):
         if event.is_directory:
             return
+
         path = os.path.abspath(event.src_path)
+        ext = os.path.splitext(path)[1].lower()
+
         with self.lock:
-            if event.event_type == "deleted" and path.lower().endswith(VIDEO_EXTS):
+            # 영상 삭제 대응
+            if event.event_type == "deleted" and ext in VIDEO_EXTS:
                 if path in cache:
                     cache.pop(path, None)
-                    if detail: print(f"[CACHE] Removed deleted video from cache: {path}")
+                    if detail:
+                        print(f"[CACHE] Removed deleted video from cache: {path}")
                     save_cache()
                 return
-            if path.lower().endswith(".nfo"):
-                self.schedule_nfo(path)
-            elif path.lower().endswith(VIDEO_EXTS):
-                self.schedule_video(path)
 
-    def schedule_nfo(self, path):
+            # NFO 생성/수정
+            if ext == ".nfo":
+                self.schedule_nfo_processing(path)
+            # 영상 생성/수정
+            elif ext in VIDEO_EXTS:
+                self.schedule_video_processing(path)
+
+    def schedule_nfo_processing(self, path):
         self.nfo_queue.add(path)
         if not self.nfo_timer:
             self.nfo_timer = threading.Timer(self.nfo_wait, self.process_nfo_queue)
@@ -311,7 +317,7 @@ class VideoEventHandler(FileSystemEventHandler):
             print(f"[DEBUG] Scheduled NFO processing for {path}")
             self.logged_nfo.add(path)
 
-    def schedule_video(self, path):
+    def schedule_video_processing(self, path):
         self.video_queue.add(path)
         if not self.video_timer:
             self.video_timer = threading.Timer(self.video_wait, self.process_video_queue)
@@ -322,64 +328,65 @@ class VideoEventHandler(FileSystemEventHandler):
 
     def process_nfo_queue(self):
         with self.lock:
-            files = list(self.nfo_queue)
+            nfo_files = list(self.nfo_queue)
             self.nfo_queue.clear()
             self.nfo_timer = None
             self.logged_nfo.clear()
-        for nfo in files:
-            video_path = str(Path(nfo).with_suffix(".mkv"))
-            if not os.path.exists(video_path):
-                for ext in VIDEO_EXTS:
-                    candidate = str(Path(nfo).with_suffix(ext))
-                    if os.path.exists(candidate):
-                        video_path = candidate
-                        break
-                else:
-                    continue
-            if video_path not in cache or cache.get(video_path) is None:
-                plex_item = find_plex_item(video_path)
-                if not plex_item:
-                    # 검색 실패 시 재시도 큐에 등록
-                    self.retry_queue.add(video_path)
-                    if not self.retry_timer:
-                        self.retry_timer = threading.Timer(self.retry_wait, self.process_retry_queue)
-                        self.retry_timer.start()
-                    continue
-                cache[video_path] = plex_item.key
-            process_file(video_path)
+
+        for nfo_path in nfo_files:
+            video_path = self._find_corresponding_video(nfo_path)
+            if video_path:
+                # 캐시 업데이트
+                if video_path not in cache or cache.get(video_path) is None:
+                    plex_item = find_plex_item(video_path)
+                    if plex_item:
+                        cache[video_path] = plex_item.key
+                # NFO 적용
+                success = process_file(video_path)
+                if not success:
+                    # 실패 시 재시도 queue에 추가
+                    self.retry_queue[video_path] = time.time() + 5  # 5초 후 재시도
         save_cache()
+
+        # 실패한 파일 재시도
+        self._process_retry_queue()
 
     def process_video_queue(self):
         with self.lock:
-            files = list(self.video_queue)
+            video_files = list(self.video_queue)
             self.video_queue.clear()
             self.video_timer = None
             self.logged_video.clear()
-        for video_path in files:
-            if video_path not in cache or cache.get(video_path) is None:
-                plex_item = find_plex_item(video_path)
-                if not plex_item:
-                    self.retry_queue.add(video_path)
-                    if not self.retry_timer:
-                        self.retry_timer = threading.Timer(self.retry_wait, self.process_retry_queue)
-                        self.retry_timer.start()
-                    continue
-                cache[video_path] = plex_item.key
-            process_file(video_path)
-        save_cache()
 
-    def process_retry_queue(self):
-        with self.lock:
-            retry_files = list(self.retry_queue)
-            self.retry_queue.clear()
-            self.retry_timer = None
-        for video_path in retry_files:
+        for video_path in video_files:
             if video_path not in cache or cache.get(video_path) is None:
                 plex_item = find_plex_item(video_path)
                 if plex_item:
                     cache[video_path] = plex_item.key
             process_file(video_path)
         save_cache()
+
+    def _find_corresponding_video(self, nfo_path):
+        # 기본 mkv
+        video_path = str(Path(nfo_path).with_suffix(".mkv"))
+        if os.path.exists(video_path):
+            return video_path
+        for ext in VIDEO_EXTS:
+            candidate = str(Path(nfo_path).with_suffix(ext))
+            if os.path.exists(candidate):
+                return candidate
+        return None
+
+    def _process_retry_queue(self):
+        now = time.time()
+        for video_path, retry_time in list(self.retry_queue.items()):
+            if now >= retry_time:
+                success = process_file(video_path)
+                if success:
+                    del self.retry_queue[video_path]
+                else:
+                    # 재시도 시간 갱신 (5초 뒤)
+                    self.retry_queue[video_path] = now + 5
 
 # -----------------------------
 # Main
