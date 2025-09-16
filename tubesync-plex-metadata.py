@@ -133,11 +133,11 @@ def upload_subtitles(ep, srt_files):
             print(f"[ERROR] Subtitle upload failed: {srt} - {e}")
 
 # -----------------------------
-# Apply NFO metadata
+# Apply NFO metadata (safe)
 # -----------------------------
 def apply_nfo(ep, file_path):
     nfo_path = Path(file_path).with_suffix(".nfo")
-    if not nfo_path.exists() or nfo_path.stat().st_size == 0: 
+    if not nfo_path.exists() or nfo_path.stat().st_size == 0:
         return False
     try:
         tree = ET.parse(str(nfo_path), parser=ET.XMLParser(recover=True))
@@ -145,18 +145,35 @@ def apply_nfo(ep, file_path):
         title = root.findtext("title", "")
         plot = root.findtext("plot", "")
         aired = root.findtext("aired", "")
-        if detail: print(f"[-] Applying NFO: {file_path} -> {title}")
-        ep.editTitle(title, locked=True)
-        ep.editSortTitle(aired, locked=True)
-        ep.editSummary(plot, locked=True)
+
+        if detail:
+            print(f"[-] Applying NFO: {file_path} -> {title}")
+
+        # 안전하게 ep.edit 사용
+        ep.edit(
+            title=title,
+            sortTitle=aired,
+            summary=plot,
+            lockedFields=['title','sortTitle','summary']
+        )
+
         if subtitles_enabled:
             srt_files = extract_subtitles(file_path)
-            if srt_files: upload_subtitles(ep, srt_files)
+            if srt_files:
+                upload_subtitles(ep, srt_files)
+
         os.remove(nfo_path)
+
+        # NFO 적용이 성공한 경우에만 processed_eps에 등록
+        with processed_lock:
+            processed_eps.add(ep.ratingKey)
+
         return True
+
     except Exception as e:
         print(f"[ERROR] Failed to apply NFO: {nfo_path} - {e}")
         return False
+
 
 # -----------------------------
 # Process single file
