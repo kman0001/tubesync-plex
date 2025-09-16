@@ -274,19 +274,41 @@ def process_file(file_path):
 class VideoEventHandler(FileSystemEventHandler):
     def __init__(self):
         self.last_run = 0
+
     def on_any_event(self, event):
         now = time.time()
-        if now - self.last_run < watch_debounce_delay: return
+        if now - self.last_run < watch_debounce_delay:
+            return
         self.last_run = now
-        if event.is_directory: return
-        if event.src_path.lower().endswith(VIDEO_EXTS) or event.src_path.lower().endswith(".nfo"):
-            # 캐시 업데이트 + NFO 적용
-            abs_path = os.path.abspath(event.src_path)
-            if abs_path not in cache or cache.get(abs_path) is None:
-                plex_item = find_plex_item(abs_path)
-                if plex_item: cache[abs_path] = plex_item.key
-            process_file(event.src_path)
-            save_cache()
+        if event.is_directory:
+            return
+
+        path = os.path.abspath(event.src_path)
+        target_video = None
+
+        if path.lower().endswith(VIDEO_EXTS):
+            # 영상 파일 이벤트
+            target_video = path
+        elif path.lower().endswith(".nfo"):
+            # NFO → 대응하는 영상 찾기
+            for ext in VIDEO_EXTS:
+                candidate = str(Path(path).with_suffix(ext))
+                if os.path.exists(candidate):
+                    target_video = candidate
+                    break
+
+        if not target_video:
+            return
+
+        # 캐시에 메타ID가 없으면 Plex에서 찾아 저장
+        if target_video not in cache or cache.get(target_video) is None:
+            plex_item = find_plex_item(target_video)
+            if plex_item:
+                cache[target_video] = plex_item.key
+
+        # NFO 적용 포함 파일 처리
+        process_file(target_video)
+        save_cache()
 
 # -----------------------------
 # Main
