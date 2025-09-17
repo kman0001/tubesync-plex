@@ -22,17 +22,17 @@ DISABLE_WATCHDOG = args.disable_watchdog
 # -----------------------------
 default_config = {
     "_comment": {
-        "plex_base_url": "Plex server URL, e.g., http://localhost:32400",
-        "plex_token": "Plex server token",
-        "plex_library_ids": "List of Plex library IDs to sync, e.g., [10,21,35]",
-        "silent": "true/false",
-        "detail": "true/false",
-        "subtitles": "true/false",
-        "threads": "number of threads, e.g., 8",
-        "max_concurrent_requests": "concurrent Plex API requests, e.g., 4",
-        "request_delay": "delay between API requests (seconds), e.g., 0.1",
-        "watch_folders": "enable folder watching, true/false",
-        "watch_debounce_delay": "debounce time for folder watching (seconds), e.g., 2"
+        "plex_base_url": "Base URL of your Plex server (e.g., http://localhost:32400). For remote access, use http(s)://<IP>:32400.",
+        "plex_token": "Your Plex authentication token. Can be obtained from the Plex web interface or API inspector.",
+        "plex_library_ids": "List of Plex library IDs to sync (e.g., [10,21,35]). Library IDs can be found via the Plex API or logs.",
+        "silent": "Reduce log output. true = only key results are printed, false = progress and details are shown.",
+        "detail": "Verbose mode. true = show detailed logs for cache updates, NFO application, subtitle extraction/upload, etc.",
+        "subtitles": "Enable subtitle extraction/upload. true = extract embedded subtitles from videos into .srt files and upload to Plex.",
+        "threads": "Number of worker threads for initial scanning. Higher values are faster but increase CPU usage.",
+        "max_concurrent_requests": "Maximum number of concurrent API requests to Plex. Too high values may cause rate limiting or errors.",
+        "request_delay": "Delay between Plex API requests in seconds (e.g., 0.1 = 100ms). Helps avoid overwhelming the Plex server.",
+        "watch_folders": "Enable real-time folder monitoring. true = watchdog observes file create/delete/modify events automatically.",
+        "watch_debounce_delay": "Debounce time (in seconds) before processing a file system event. Useful if NFO and video files are created almost simultaneously."
     },
     "plex_base_url": "",
     "plex_token": "",
@@ -56,9 +56,7 @@ os.makedirs(CONFIG_DIR, exist_ok=True)
 CONFIG_FILE = args.config or os.path.join(CONFIG_DIR, "config.json")
 CACHE_FILE = os.path.join(os.path.dirname(CONFIG_FILE), "tubesync_cache.json")
 
-# Default config omitted for brevity; same as 기존 코드
-
-# Load/Create config
+# Load or create config
 if not os.path.exists(CONFIG_FILE):
     with open(CONFIG_FILE, "w", encoding="utf-8") as f:
         json.dump(default_config, f, indent=4, ensure_ascii=False)
@@ -137,7 +135,7 @@ def find_plex_item(abs_path):
     return None
 
 def scan_and_update_cache():
-    """Scan library, add missing meta IDs, remove deleted files."""
+    """Scan Plex libraries, add missing meta IDs, remove deleted files."""
     global cache
     existing_files = set(cache.keys())
     all_files = []
@@ -159,13 +157,13 @@ def scan_and_update_cache():
         if not f.lower().endswith(VIDEO_EXTS):
             continue
         current_files.add(abs_path)
-        # 캐시에 메타ID가 없으면 Plex에서 찾기
+        # If missing in cache, try to find Plex item
         if abs_path not in cache or cache.get(abs_path) is None:
             plex_item = find_plex_item(abs_path)
             if plex_item:
                 cache[abs_path] = plex_item.key
 
-    # 삭제된 파일은 캐시에서 제거
+    # Remove deleted files from cache
     removed = existing_files - current_files
     for f in removed:
         cache.pop(f,None)
@@ -297,7 +295,7 @@ class VideoEventHandler(FileSystemEventHandler):
         ext = os.path.splitext(path)[1].lower()
 
         with self.lock:
-            # 영상 삭제
+            # Video deleted
             if event.event_type == "deleted" and ext in VIDEO_EXTS:
                 if path in cache:
                     cache.pop(path, None)
@@ -305,7 +303,7 @@ class VideoEventHandler(FileSystemEventHandler):
                     save_cache()
                 return
 
-            # 영상 생성
+            # Video created
             elif event.event_type == "created" and ext in VIDEO_EXTS:
                 if path not in cache:
                     plex_item = find_plex_item(path)
@@ -315,11 +313,11 @@ class VideoEventHandler(FileSystemEventHandler):
                 self.schedule_video_processing(path)
                 return
 
-            # 영상 수정 무시
+            # Ignore video modifications
             elif event.event_type == "modified" and ext in VIDEO_EXTS:
                 return
 
-            # NFO 처리
+            # NFO processing
             if ext == ".nfo":
                 self.schedule_nfo_processing(path)
 
@@ -353,7 +351,7 @@ class VideoEventHandler(FileSystemEventHandler):
             if video_path:
                 success = process_file(video_path, ignore_processed=True)
                 if not success:
-                    # 재시도 3회 제한
+                    # Retry up to 3 times
                     next_retry, count = self.retry_queue.get(video_path, [time.time() + 5, 0])
                     if count < 3:
                         self.retry_queue[video_path] = [time.time() + 5, count + 1]
@@ -407,7 +405,7 @@ def main():
     scan_and_update_cache()
     save_cache()
 
-    # 초기 NFO 적용
+    # Apply NFO on startup
     total = 0
     with ThreadPoolExecutor(max_workers=threads) as ex:
         futures = [ex.submit(process_file, f) for f in cache.keys()]
