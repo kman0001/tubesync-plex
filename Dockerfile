@@ -9,7 +9,7 @@ FROM --platform=$BUILDPLATFORM python:3.11-slim AS builder
 WORKDIR /app
 COPY requirements.txt .
 
-# Install build dependencies (required for lxml, psutil, watchdog)
+# Install minimal build dependencies for C extensions
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential \
         python3-dev \
@@ -18,7 +18,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libffi-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Upgrade pip + install Python dependencies without cache and disable version check
+# Upgrade pip and install Python packages without cache and version check
 RUN pip install --upgrade pip && \
     pip install --no-cache-dir --disable-pip-version-check -r requirements.txt
 
@@ -37,22 +37,24 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libstdc++6 \
     && rm -rf /var/lib/apt/lists/*
 
-# Download and install static ffmpeg according to the target platform
+# Download and install static ffmpeg according to target platform
 ARG TARGETPLATFORM
 RUN TMPDIR=$(mktemp -d) && \
-    if [ "$TARGETPLATFORM" = "linux/amd64" ]; then \
+    PLATFORM=${TARGETPLATFORM#linux/} && \
+    if [ "$PLATFORM" = "amd64" ]; then \
         FFMPEG_URL="https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz"; \
-    elif [ "$TARGETPLATFORM" = "linux/arm64" ]; then \
+    elif [ "$PLATFORM" = "arm64" ]; then \
         FFMPEG_URL="https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-arm64-static.tar.xz"; \
     else \
         echo "Unsupported platform: $TARGETPLATFORM" && exit 1; \
     fi && \
-    curl -L $FFMPEG_URL | tar -xJ -C $TMPDIR && \
+    curl -fSL $FFMPEG_URL -o /tmp/ffmpeg.tar.xz && \
+    tar -xJ -C $TMPDIR -f /tmp/ffmpeg.tar.xz && \
     cp $TMPDIR/ffmpeg*/ffmpeg /usr/local/bin/ && \
     chmod +x /usr/local/bin/ffmpeg && \
-    rm -rf $TMPDIR
+    rm -rf /tmp/ffmpeg.tar.xz $TMPDIR
 
-# Copy Python packages installed in the builder stage
+# Copy Python packages from builder
 COPY --from=builder /usr/local /usr/local
 
 # Copy application source code and entrypoint script
