@@ -61,8 +61,8 @@ The following system packages must be installed for the script to work:
 * A valid `plex_token` for accessing your Plex server
 
 > **Note:**  
-> The script will **check for required system packages** before running.
-> If any system packages are missing, it will **display a warning message** and exit.
+> The script will **check for required system packages** before running.  
+> If any system packages are missing, it will **display a warning message** and exit.  
 > FFmpeg will be installed automatically into the virtual environment (no root permissions required).
 
 ---
