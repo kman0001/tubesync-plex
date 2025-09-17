@@ -9,7 +9,7 @@ log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"; }
 # ----------------------------
 # 0. Check required system packages (no installation, just warning)
 # ----------------------------
-REQUIRED_PACKAGES=(git curl tar xz python3 python3-pip)
+REQUIRED_PACKAGES=(git curl tar xz python3 pip3)
 MISSING_PACKAGES=()
 
 for PKG in "${REQUIRED_PACKAGES[@]}"; do
