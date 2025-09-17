@@ -30,6 +30,8 @@ mkdir -p "$BASE_DIR"
 PIP_BIN="$BASE_DIR/venv/bin/pip"
 PY_FILE="$BASE_DIR/tubesync-plex-metadata.py"
 REQ_FILE="$BASE_DIR/requirements.txt"
+FFMPEG_BIN="$BASE_DIR/venv/bin/ffmpeg"
+FFMPEG_CHECKSUM_FILE="$BASE_DIR/venv/bin/.ffmpeg_checksum"
 
 # ----------------------------
 # 1. Git fetch + reset
@@ -66,7 +68,40 @@ if [ -f "$REQ_FILE" ]; then
 fi
 
 # ----------------------------
-# 4. Run Python script
+# 4. Setup static FFmpeg in venv (with architecture detection & checksum)
+# ----------------------------
+ARCH=$(uname -m)
+if [ "$ARCH" = "x86_64" ]; then
+    FFMPEG_URL="https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz"
+elif [ "$ARCH" = "aarch64" ]; then
+    FFMPEG_URL="https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-arm64-static.tar.xz"
+else
+    log "Unsupported architecture: $ARCH"
+    exit 1
+fi
+
+# Calculate remote file checksum (sha256)
+REMOTE_SHA=$(curl -sL "$FFMPEG_URL.sha256" | awk '{print $1}')
+LOCAL_SHA=""
+if [ -f "$FFMPEG_CHECKSUM_FILE" ]; then
+    LOCAL_SHA=$(cat "$FFMPEG_CHECKSUM_FILE")
+fi
+
+if [ ! -x "$FFMPEG_BIN" ] || [ "$REMOTE_SHA" != "$LOCAL_SHA" ]; then
+    log "Downloading/updating static FFmpeg..."
+    mkdir -p "$BASE_DIR/venv/bin"
+    curl -L "$FFMPEG_URL" | tar -xJ --strip-components=1 -C "$BASE_DIR/venv/bin" ffmpeg
+    chmod +x "$FFMPEG_BIN"
+    echo "$REMOTE_SHA" > "$FFMPEG_CHECKSUM_FILE"
+else
+    log "Static FFmpeg is up-to-date."
+fi
+
+# Add venv bin to PATH so Python subprocess uses this FFmpeg
+export PATH="$BASE_DIR/venv/bin:$PATH"
+
+# ----------------------------
+# 5. Run Python script
 # ----------------------------
 if [ -f "$PY_FILE" ]; then
     log "Running tubesync-plex..."
