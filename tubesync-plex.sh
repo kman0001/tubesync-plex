@@ -19,7 +19,7 @@ for PKG in "${REQUIRED_PACKAGES[@]}"; do
 done
 
 if [ ${#MISSING_PACKAGES[@]} -gt 0 ]; then
-    log "ERROR: Missing required packages: ${MISSING_PACKAGES[*]}"
+    log "ERROR: Missing required system packages: ${MISSING_PACKAGES[*]}"
     log "Please install them using your system's package manager before running this script."
     exit 1
 else
