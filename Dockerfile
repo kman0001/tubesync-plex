@@ -1,4 +1,5 @@
 # syntax=docker/dockerfile:1.4
+# python:3.11-alpine base
 
 # ================================
 # Stage 1: Builder (install deps)
