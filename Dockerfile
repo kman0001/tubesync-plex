@@ -1,25 +1,24 @@
 # syntax=docker/dockerfile:1.4
-# python:3.11-alpine base
+# python:3.11-slim base
 
 # ================================
-# Stage 1: Builder (install deps)
+# Stage 1: Builder
 # ================================
-FROM --platform=$BUILDPLATFORM python:3.11-alpine AS builder
-
-# 빌드용 deps 설치 (lxml, psutil, watchdog 빌드용)
-RUN apk add --no-cache \
-    gcc \
-    musl-dev \
-    python3-dev \
-    libxml2-dev \
-    libxslt-dev \
-    libffi-dev \
-    make
+FROM --platform=$BUILDPLATFORM python:3.11-slim AS builder
 
 WORKDIR /app
 COPY requirements.txt .
 
-# pip 최신화 + 캐시 없이 설치 + 버전 체크 비활성화
+# Install build dependencies (required for lxml, psutil, watchdog)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential \
+        python3-dev \
+        libxml2-dev \
+        libxslt1-dev \
+        libffi-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Upgrade pip + install Python dependencies without cache and disable version check
 RUN pip install --upgrade pip && \
     pip install --no-cache-dir --disable-pip-version-check -r requirements.txt
 
@@ -27,19 +26,18 @@ RUN pip install --upgrade pip && \
 # ================================
 # Stage 2: Runtime
 # ================================
-FROM python:3.11-alpine
+FROM python:3.11-slim
 WORKDIR /app
 
-# 런타임 의존성 설치 (최소)
-RUN apk add --no-cache \
-    bash \
-    curl \
-    xz \
-    libxml2 \
-    libxslt \
-    libstdc++
+# Install minimal runtime dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        bash \
+        libxml2 \
+        libxslt1.1 \
+        libstdc++6 \
+    && rm -rf /var/lib/apt/lists/*
 
-# ffmpeg 다운로드 및 설치 (플랫폼별)
+# Download and install static ffmpeg according to the target platform
 ARG TARGETPLATFORM
 RUN TMPDIR=$(mktemp -d) && \
     if [ "$TARGETPLATFORM" = "linux/amd64" ]; then \
@@ -54,10 +52,10 @@ RUN TMPDIR=$(mktemp -d) && \
     chmod +x /usr/local/bin/ffmpeg && \
     rm -rf $TMPDIR
 
-# builder stage에서 설치한 Python 패키지만 runtime으로 복사
+# Copy Python packages installed in the builder stage
 COPY --from=builder /usr/local /usr/local
 
-# 앱 소스 및 엔트리포인트 복사
+# Copy application source code and entrypoint script
 COPY tubesync-plex-metadata.py .
 COPY entrypoint.sh .
 RUN chmod +x /app/entrypoint.sh
