@@ -43,27 +43,64 @@ It supports multiple libraries, multithreading, and safe deletion of processed `
 ## Requirements
 
 ### System Packages
-The following system packages must be installed for the script to work:
+
+The following system packages must be installed:
 
 * `git` - for cloning/updating the repository
 * `curl` - for downloading FFmpeg
 * `tar` and `xz-utils` - for extracting FFmpeg archive
 * `python3` (version 3.10 or higher)
 * `python3-pip` - Python package manager
-* `python3-venv` - for creating virtual environments  
+* `python3-venv` - for creating virtual environments
   *(If not available, the script can fallback to `virtualenv` installed via `pip install --user virtualenv`)*
 
+### Installing System Packages
+
+#### Ubuntu/Debian
+
+```bash
+sudo apt-get update
+sudo apt-get install -y git curl tar xz-utils python3 python3-pip python3-venv
+```
+
+#### Fedora
+
+```bash
+sudo dnf install -y git curl tar xz python3 python3-pip python3-virtualenv
+```
+
+#### CentOS/RHEL
+
+```bash
+sudo yum install -y git curl tar xz python3 python3-pip python3-virtualenv
+```
+
+#### Alpine
+
+```bash
+sudo apk add git curl tar xz python3 py3-pip py3-virtualenv
+```
+
+#### Arch Linux / Manjaro
+
+```bash
+sudo pacman -Sy git curl tar xz python python-pip python-virtualenv
+```
+
 ### Python Packages
+
 * Packages listed in `requirements.txt` will be installed automatically in the virtual environment.
 
 ### Plex Requirements
+
 * A running Plex server
 * A valid `plex_token` for accessing your Plex server
 
-> **Note:**  
-> The script will **check for required system packages** before running.  
-> If any system packages are missing, it will **display a warning message** and exit.  
-> FFmpeg will be installed automatically into the virtual environment (no root permissions required).
+### Notes
+> The script will check for required system packages before running.  
+> If any system packages are missing, it will display a warning message and exit.  
+> FFmpeg will be installed automatically into the virtual environment (no root permissions required).  
+> On systems where `python3-venv` is not available, install `virtualenv` with `pip install --user virtualenv`.
 
 ---
 
