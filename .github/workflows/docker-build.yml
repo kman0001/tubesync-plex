@@ -1,12 +1,12 @@
 name: Build and Push Multi-Arch Docker Image
 
 on:
-  push:
-    branches:
-      - main
-    paths-ignore:
-      - '.github/workflows/**'   # workflow만 변경되면 실행 안 함
-  workflow_dispatch:
+  workflow_dispatch:   # ✅ 수동 실행만 허용
+  # push:
+  #   branches:
+  #     - main
+  #   paths-ignore:
+  #     - '.github/workflows/**'
 
 env:
   DOCKER_IMAGE: kman0001/tubesync-plex
