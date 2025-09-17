@@ -123,11 +123,29 @@ else
 fi
 
 # ----------------------------
-# 2. Python venv
+# 2. Python venv (with fallback to virtualenv)
 # ----------------------------
 if [ ! -d "$BASE_DIR/venv" ]; then
     log "Creating virtual environment..."
-    python3 -m venv "$BASE_DIR/venv"
+    if python3 -m venv "$BASE_DIR/venv" 2>/dev/null; then
+        log "Python venv created successfully."
+    else
+        log "Python venv module not available, trying virtualenv..."
+        if ! command -v virtualenv &>/dev/null; then
+            log "virtualenv not found, installing..."
+            if [ "$PKG_MANAGER" = "apt-get" ]; then
+                sudo apt-get install -y python3-pip
+                pip3 install --user virtualenv
+            elif [ "$PKG_MANAGER" = "apk" ]; then
+                sudo apk add py3-pip
+                pip3 install --user virtualenv
+            else
+                pip3 install --user virtualenv
+            fi
+        fi
+        virtualenv "$BASE_DIR/venv"
+        log "Virtual environment created via virtualenv."
+    fi
 else
     log "Virtual environment already exists."
 fi
