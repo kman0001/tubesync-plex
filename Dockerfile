@@ -5,13 +5,14 @@
 # ================================
 FROM --platform=$BUILDPLATFORM python:3.11-alpine AS builder
 
-# 빌드용 도구 설치 (lxml, psutil, watchdog 빌드용)
+# 빌드용 deps 설치 (lxml, psutil, watchdog 빌드용)
 RUN apk add --no-cache \
     gcc \
     musl-dev \
     python3-dev \
     libxml2-dev \
     libxslt-dev \
+    libffi-dev \
     make
 
 WORKDIR /app
@@ -28,7 +29,7 @@ RUN pip install --upgrade pip && \
 FROM python:3.11-alpine
 WORKDIR /app
 
-# 런타임 의존성 설치 (가볍게)
+# 런타임 의존성 설치 (최소)
 RUN apk add --no-cache \
     bash \
     curl \
@@ -52,7 +53,7 @@ RUN TMPDIR=$(mktemp -d) && \
     chmod +x /usr/local/bin/ffmpeg && \
     rm -rf $TMPDIR
 
-# builder stage에서 설치한 패키지만 runtime으로 복사
+# builder stage에서 설치한 Python 패키지만 runtime으로 복사
 COPY --from=builder /usr/local /usr/local
 
 # 앱 소스 및 엔트리포인트 복사
