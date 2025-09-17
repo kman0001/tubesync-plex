@@ -1,42 +1,42 @@
 # syntax=docker/dockerfile:1.4
 
 # ================================
-# Stage 1: Builder (for venv & Python deps)
+# Stage 1: Builder (install deps)
 # ================================
-FROM --platform=$BUILDPLATFORM python:3.11-slim AS builder
+FROM --platform=$BUILDPLATFORM python:3.11-alpine AS builder
 
-# Install build dependencies
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-        gcc \
-        python3-dev \
-        libffi-dev \
-        make \
-    && rm -rf /var/lib/apt/lists/*
+# 빌드 도구 설치 (lxml, psutil, watchdog 빌드용)
+RUN apk add --no-cache \
+    gcc \
+    musl-dev \
+    python3-dev \
+    libxml2-dev \
+    libxslt-dev
 
 WORKDIR /app
-
-# Copy requirements
 COPY requirements.txt .
 
-# Create virtual environment and install Python deps
-RUN python -m venv venv && \
-    ./venv/bin/pip install --upgrade pip && \
-    ./venv/bin/pip install --disable-pip-version-check -r requirements.txt
+# ✅ pip 최신화 + 알림 비활성화 + 캐시 없이 설치
+RUN pip install --upgrade pip && \
+    pip install --no-cache-dir --disable-pip-version-check -r requirements.txt
+
 
 # ================================
 # Stage 2: Runtime
 # ================================
-FROM python:3.11-slim
-
+FROM python:3.11-alpine
 WORKDIR /app
 
-# Install runtime dependencies
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends bash curl xz-utils && \
-    rm -rf /var/lib/apt/lists/*
+# 런타임 의존성만 설치
+RUN apk add --no-cache \
+    bash \
+    curl \
+    xz \
+    libxml2 \
+    libxslt \
+    libstdc++
 
-# Detect platform and download static ffmpeg
+# ffmpeg 다운로드 및 설치 (플랫폼별)
 ARG TARGETPLATFORM
 RUN TMPDIR=$(mktemp -d) && \
     if [ "$TARGETPLATFORM" = "linux/amd64" ]; then \
@@ -51,13 +51,11 @@ RUN TMPDIR=$(mktemp -d) && \
     chmod +x /usr/local/bin/ffmpeg && \
     rm -rf $TMPDIR
 
-# Copy venv from builder
-COPY --from=builder /app/venv ./venv
+# ✅ builder에서 설치한 패키지만 복사
+COPY --from=builder /usr/local /usr/local
 
-# Copy app code and entrypoint
 COPY tubesync-plex-metadata.py .
 COPY entrypoint.sh .
-
 RUN chmod +x /app/entrypoint.sh
 
 ENTRYPOINT ["/app/entrypoint.sh"]
