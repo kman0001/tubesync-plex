@@ -50,7 +50,7 @@ The following system packages must be installed:
 * `curl` - for downloading FFmpeg
 * `tar` and `xz-utils` - for extracting FFmpeg archive
 * `python3` (version 3.10 or higher)
-* `python3-pip` - Python package manager
+* `pip3` (Python package manager; provided by `python3-pip` package on Debian/Ubuntu)
 * `python3-venv` - for creating virtual environments
   *(If not available, the script can fallback to `virtualenv` installed via `pip install --user virtualenv`)*
 
