@@ -29,9 +29,10 @@ RUN pip install --upgrade pip && \
 FROM python:3.11-slim
 WORKDIR /app
 
-# Install minimal runtime dependencies
+# Install minimal runtime dependencies (including curl for ffmpeg download)
 RUN apt-get update && apt-get install -y --no-install-recommends \
         bash \
+        curl \
         libxml2 \
         libxslt1.1 \
         libstdc++6 \
@@ -64,4 +65,3 @@ COPY entrypoint.sh .
 RUN chmod +x /app/entrypoint.sh
 
 ENTRYPOINT ["/app/entrypoint.sh"]
-
