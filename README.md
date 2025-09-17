@@ -42,11 +42,31 @@ It supports multiple libraries, multithreading, and safe deletion of processed `
 
 ## Requirements
 
-* Python 3.10+
-* pip (Python package manager)
-* python3-venv for virtual environment creation
-* ffmpeg / ffprobe installed and in PATH (or via `FFMPEG_PATH` / `FFPROBE_PATH`)
-* Plex server with valid `plex_token`
+### System Packages
+The following system packages must be installed for the script to work:
+
+* `git` - for cloning/updating the repository
+* `curl` - for downloading FFmpeg
+* `tar` and `xz-utils` - for extracting FFmpeg archive
+* `python3` (version 3.10 or higher)
+* `python3-pip` - Python package manager
+* `python3-venv` - for creating virtual environments  
+  *(If not available, the script can fallback to `virtualenv` installed via `pip install --user virtualenv`)*
+
+### Python Packages
+* Packages listed in `requirements.txt` will be installed automatically in the virtual environment.
+
+### Plex Requirements
+* A running Plex server
+* A valid `plex_token` for accessing your Plex server
+
+---
+
+### Notes
+
+* The script will **check for required system packages** before running.
+* If any system packages are missing, it will **display a warning message** and exit.
+* FFmpeg will be installed automatically into the virtual environment (no root permissions required).
 
 ---
 
