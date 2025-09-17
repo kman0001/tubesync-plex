@@ -35,6 +35,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libxml2 \
         libxslt1.1 \
         libstdc++6 \
+        xz-utils \
     && rm -rf /var/lib/apt/lists/*
 
 # Download and install static ffmpeg according to target platform
@@ -63,3 +64,4 @@ COPY entrypoint.sh .
 RUN chmod +x /app/entrypoint.sh
 
 ENTRYPOINT ["/app/entrypoint.sh"]
+
