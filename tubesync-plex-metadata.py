@@ -90,7 +90,7 @@ logging.basicConfig(level=log_level, format='[%(levelname)s] %(message)s')
 # HTTP Debug session
 # ==============================
 class HTTPDebugSession(requests.Session):
-    """Requests session that logs all HTTP requests/responses if debug enabled"""
+    """Requests session that logs HTTP requests/responses only if enabled"""
     def __init__(self, enable_debug=False):
         super().__init__()
         self.enable_debug = enable_debug
@@ -99,6 +99,7 @@ class HTTPDebugSession(requests.Session):
         self.mount("https://", HTTPAdapter(max_retries=retries))
 
     def send(self, request, **kwargs):
+        # Only log if debug is enabled
         if self.enable_debug:
             print("[HTTP DEBUG] ────── REQUEST ──────")
             print(f"Method: {request.method}\nURL: {request.url}\nHeaders:\n  " +
@@ -115,13 +116,15 @@ class HTTPDebugSession(requests.Session):
         return response
 
 # ==============================
-# PlexServer with HTTP debug
+# PlexServer wrapper
 # ==============================
 class PlexServerWithHTTPDebug(PlexServer):
-    """PlexServer wrapper that enables HTTP debug logging"""
+    """PlexServer wrapper with optional HTTP debug logging"""
+    def __init__(self, baseurl, token, debug_http=False):
+        super().__init__(baseurl, token)
+        self._debug_session = HTTPDebugSession(enable_debug=debug_http)
+
     def _request(self, path, method="GET", headers=None, params=None, data=None, timeout=None):
-        if not hasattr(self, "_debug_session"):
-            self._debug_session = HTTPDebugSession(enable_debug=args.debug_http)
         url = self._buildURL(path)
         req_headers = headers or {}
         if self._token:
@@ -134,7 +137,11 @@ class PlexServerWithHTTPDebug(PlexServer):
 # Plex connection
 # ==============================
 try:
-    plex = PlexServerWithHTTPDebug(config["plex_base_url"], config["plex_token"])
+    plex = PlexServerWithHTTPDebug(
+        config["plex_base_url"], 
+        config["plex_token"], 
+        debug_http=args.debug_http
+    )
 except Exception as e:
     logging.error(f"Failed to connect to Plex: {e}")
     sys.exit(1)
