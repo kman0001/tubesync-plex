@@ -114,7 +114,7 @@ export PATH="$BASE_DIR/venv/bin:$PATH"
 # ----------------------------
 if [ -f "$PY_FILE" ]; then
     log "Running tubesync-plex..."
-    CMD="$BASE_DIR/venv/bin/python $PY_FILE --base-dir $BASE_DIR ${PY_ARGS[*]}"
+    CMD="$BASE_DIR/venv/bin/python $PY_FILE --config $BASE_DIR/config/config.json --base-dir $BASE_DIR ${PY_ARGS[*]}"
     exec $CMD
 else
     log "ERROR: tubesync-plex-metadata.py not found."
