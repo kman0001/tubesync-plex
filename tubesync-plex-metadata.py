@@ -20,22 +20,20 @@ parser.add_argument("--disable-watchdog", action="store_true", help="Disable fol
 parser.add_argument("--detail", action="store_true", help="Enable detailed logging")
 parser.add_argument("--debug-http", action="store_true", help="Enable HTTP debug logging")
 parser.add_argument("--debug", action="store_true", help="Enable debug mode (implies detail logging)")
-parser.add_argument("--base-dir", default=os.environ.get("BASE_DIR", "/app"), help="Base directory for installation")
+parser.add_argument("--base-dir", help="Base directory for venv and FFmpeg")
 args = parser.parse_args()
 
 # ==============================
-# Variables
+# Global flags
 # ==============================
+BASE_DIR = Path(args.base_dir) if args.base_dir else Path(os.environ.get("BASE_DIR", "/app"))
 DISABLE_WATCHDOG = args.disable_watchdog
 DETAIL = args.detail or args.debug
 DEBUG_HTTP = args.debug_http
-BASE_DIR = Path(args.base_dir)
-VENVS_BIN = BASE_DIR / "venv/bin"
 
-# FFmpeg paths
-FFMPEG_BIN = VENVS_BIN / "ffmpeg"
-FFPROBE_BIN = VENVS_BIN / "ffprobe"
-FFMPEG_SHA_FILE = BASE_DIR / ".ffmpeg_sha"
+VENVDIR = BASE_DIR / "venv"
+FFMPEG_BIN = VENVDIR / "bin/ffmpeg"
+FFMPEG_SHA_FILE = VENVDIR / ".ffmpeg_md5"
 
 # ==============================
 # Default config
@@ -97,10 +95,12 @@ delete_nfo_after_apply = config.get("delete_nfo_after_apply", True)
 subtitles_enabled = config.get("subtitles", False)
 
 # ==============================
-# Logging
+# Logging setup
 # ==============================
-log_level = logging.DEBUG if DETAIL else logging.INFO
-logging.basicConfig(level=log_level, format='[%(levelname)s] %(message)s')
+logging.basicConfig(
+    level=logging.DEBUG if DETAIL else logging.INFO,
+    format='[%(levelname)s] %(message)s'
+)
 
 logging.info(f"BASE_DIR = {BASE_DIR}")
 logging.info(f"DISABLE_WATCHDOG = {DISABLE_WATCHDOG}")
@@ -198,24 +198,25 @@ def update_cache(path, ratingKey=None, nfo_hash=None):
         cache_modified = True
 
 # ==============================
-# FFmpeg setup (MD5 기반)
+# FFmpeg setup (MD5-based)
 # ==============================
 def setup_ffmpeg():
     arch = platform.machine()
-    if arch=="x86_64":
+    if arch == "x86_64":
         url = "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz"
-    elif arch=="aarch64":
+    elif arch == "aarch64":
         url = "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-arm64-static.tar.xz"
     else:
         logging.error(f"Unsupported arch: {arch}")
         sys.exit(1)
-
     md5_url = url + ".md5"
+
     tmp_dir = Path("/tmp/ffmpeg_dl")
     tmp_dir.mkdir(parents=True, exist_ok=True)
     tar_path = tmp_dir / "ffmpeg.tar.xz"
 
-    # MD5 fetch
+    FFMPEG_BIN.parent.mkdir(parents=True, exist_ok=True)
+
     try:
         r = requests.get(md5_url, timeout=10)
         r.raise_for_status()
@@ -225,19 +226,16 @@ def setup_ffmpeg():
         logging.warning(f"Failed to fetch remote MD5: {e}")
         remote_md5 = None
 
-    # Local MD5
     local_md5 = FFMPEG_SHA_FILE.read_text().strip() if FFMPEG_SHA_FILE.exists() else None
     if FFMPEG_BIN.exists() and remote_md5 and local_md5 == remote_md5:
         logging.info("FFmpeg up-to-date (MD5 match)")
         return
 
-    # Remove old binaries if mismatch
     if FFMPEG_BIN.exists():
         logging.warning("Local FFmpeg MD5 mismatch, redownloading...")
         FFMPEG_BIN.unlink(missing_ok=True)
-        FFPROBE_BIN.unlink(missing_ok=True)
+        (FFMPEG_BIN.parent / "ffprobe").unlink(missing_ok=True)
 
-    # Download
     logging.info("Downloading FFmpeg...")
     try:
         r = requests.get(url, stream=True)
@@ -249,7 +247,6 @@ def setup_ffmpeg():
         logging.error(f"Failed to download FFmpeg: {e}")
         sys.exit(1)
 
-    # MD5 check
     if remote_md5:
         h = hashlib.md5()
         with open(tar_path, "rb") as f:
@@ -259,7 +256,6 @@ def setup_ffmpeg():
             logging.error("Downloaded FFmpeg MD5 mismatch, aborting")
             sys.exit(1)
 
-    # Extract
     try:
         extract_dir = tmp_dir / "extract"
         shutil.rmtree(extract_dir, ignore_errors=True)
@@ -267,19 +263,19 @@ def setup_ffmpeg():
         subprocess.run(["tar", "-xJf", str(tar_path), "-C", str(extract_dir)], check=True)
         ffmpeg_path = next(extract_dir.glob("**/ffmpeg"))
         ffprobe_path = next(extract_dir.glob("**/ffprobe"))
-        VENVS_BIN.mkdir(parents=True, exist_ok=True)
         shutil.move(str(ffmpeg_path), FFMPEG_BIN)
-        shutil.move(str(ffprobe_path), FFPROBE_BIN)
+        shutil.move(str(ffprobe_path), FFMPEG_BIN.parent / "ffprobe")
         os.chmod(FFMPEG_BIN, 0o755)
-        os.chmod(FFPROBE_BIN, 0o755)
-        if remote_md5: FFMPEG_SHA_FILE.write_text(remote_md5)
+        os.chmod(FFMPEG_BIN.parent / "ffprobe", 0o755)
+        if remote_md5:
+            FFMPEG_SHA_FILE.write_text(remote_md5)
     except Exception as e:
         logging.error(f"FFmpeg extraction/move failed: {e}")
         sys.exit(1)
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
-    os.environ["PATH"] = f"{VENVS_BIN}:{os.environ.get('PATH','')}"
+    os.environ["PATH"] = f"{FFMPEG_BIN.parent}:{os.environ.get('PATH','')}"
     logging.info("FFmpeg installed/updated successfully")
 
 # ==============================
@@ -437,7 +433,11 @@ def scan_and_update_cache():
 # Main
 # ==============================
 def main():
-    logging.info("START")
+    logging.info(f"BASE_DIR = {BASE_DIR}")
+    logging.info(f"DISABLE_WATCHDOG = {DISABLE_WATCHDOG}")
+    logging.info(f"DETAIL = {DETAIL}")
+    logging.info(f"DEBUG_HTTP = {DEBUG_HTTP}")
+
     setup_ffmpeg()
 
     video_files = scan_and_update_cache()
