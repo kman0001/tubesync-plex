@@ -280,22 +280,45 @@ def setup_ffmpeg():
     os.environ["PATH"] = f"{FFMPEG_BIN.parent}:{os.environ.get('PATH','')}"
     if DETAIL: logging.info("FFmpeg installed/updated successfully")
 
-# ==============================
-# Plex helpers (with debug)
-# ==============================
-def find_plex_item(abs_path, plex_server):
+# -----------------------------
+# Plex helpers
+# -----------------------------
+def find_plex_item(abs_path):
+    abs_path = str(Path(abs_path).resolve())
     logging.debug(f"[FIND_PLEX_ITEM] Searching Plex item for: {abs_path}")
+
     for lib_id in config["plex_library_ids"]:
         try:
-            section = plex_server.library.sectionByID(lib_id)
+            section = plex.library.sectionByID(lib_id)
         except Exception as e:
             logging.warning(f"[FIND_PLEX_ITEM] Failed to access library ID {lib_id}: {e}")
             continue
-        for item in section.all():
-            for part in getattr(item, "iterParts", lambda: [])():
-                if os.path.abspath(part.file) == abs_path:
-                    logging.debug(f"[FIND_PLEX_ITEM] Found item: {item.title} (ratingKey={item.ratingKey})")
-                    return item
+
+        # 라이브러리 타입에 관계없이 검색
+        try:
+            if getattr(section, "TYPE", "").lower() == "show":
+                results = section.search(libtype="episode")
+            else:
+                # movie / video / 기타
+                results = section.search(libtype="movie")
+        except Exception as e:
+            logging.warning(f"[FIND_PLEX_ITEM] Failed to search items in library ID {lib_id}: {e}")
+            continue
+
+        for item in results:
+            # parts 속성과 iterParts() 모두 체크
+            parts = getattr(item, "parts", None)
+            if parts is None:
+                parts = getattr(item, "iterParts", lambda: [])()
+            for part in parts:
+                try:
+                    part_path = str(Path(part.file).resolve())
+                    if part_path == abs_path:
+                        logging.debug(f"[FIND_PLEX_ITEM] Found item: {item.title} (ratingKey={item.ratingKey})")
+                        return item
+                except Exception as e:
+                    logging.warning(f"[FIND_PLEX_ITEM] Failed to resolve part path: {e}")
+
     logging.warning(f"[FIND_PLEX_ITEM] No Plex item found for: {abs_path}")
     return None
 
@@ -448,40 +471,51 @@ def watch_worker(stop_event):
             continue
 
 # ==============================
-# Directory scan + cache update (with debug)
+# Scan Plex libraries + update cache
 # ==============================
 def scan_and_update_cache(base_dirs):
     """
+    Scan Plex libraries, add missing meta IDs, remove deleted files.
     base_dirs: list of directories to scan
     """
-    logging.info(f"[SCAN] Starting scan for {len(base_dirs)} directories")
-    total_files = 0
-    processed_count = 0
-    skipped_count = 0
+    global cache
+    existing_files = set(cache.keys())
+    all_files = []
 
+    # 모든 파일 수집
     for base_dir in base_dirs:
-        logging.debug(f"[SCAN] Walking directory: {base_dir}")
         for root, dirs, files in os.walk(base_dir):
-            for fname in files:
-                total_files += 1
-                fpath = os.path.join(root, fname)
-                try:
-                    if process_file(fpath):
-                        processed_count += 1
-                        logging.debug(f"[SCAN] Processed: {fpath}")
-                    else:
-                        skipped_count += 1
-                        logging.debug(f"[SCAN] Skipped: {fpath}")
-                except Exception as e:
-                    logging.error(f"[SCAN] Exception processing {fpath}: {e}")
+            for f in files:
+                all_files.append(os.path.join(root, f))
 
-    logging.info(f"[SCAN] Completed scan")
-    logging.info(f"[SCAN] Total files: {total_files}, Processed: {processed_count}, Skipped/Failed: {skipped_count}")
+    current_files = set()
+    total_files = 0
 
-    # 캐시 저장
+    for f in all_files:
+        abs_path = os.path.abspath(f)
+        if not f.lower().endswith(VIDEO_EXTS):
+            continue
+        total_files += 1
+        current_files.add(abs_path)
+
+        # 캐시에 없으면 Plex 아이템 찾아서 등록
+        if abs_path not in cache or cache.get(abs_path) is None:
+            plex_item = find_plex_item(abs_path)
+            if plex_item:
+                cache[abs_path] = plex_item.ratingKey
+                processed_files.add(abs_path)  # <<< 캐시 등록 시 processed_files에도 추가
+
+    # 삭제된 파일 캐시에서 제거
+    removed = existing_files - current_files
+    for f in removed:
+        cache.pop(f, None)
+        if f in processed_files:
+            processed_files.remove(f)
+
+    logging.info(f"[SCAN] Completed scan. Total video files found: {total_files}")
     try:
         save_cache()
-        logging.info(f"[SCAN] Cache updated successfully")
+        logging.info("[SCAN] Cache updated successfully")
     except Exception as e:
         logging.error(f"[SCAN] Failed to save cache: {e}")
 
