@@ -42,11 +42,11 @@ default_config = {
         "watch_folders": "True = enable real-time folder monitoring",
         "watch_debounce_delay": "Debounce time (sec) before processing events"
     },
-    "plex_base_url": "http://172.17.0.1:32400",
-    "plex_token": "TomfudPwL2pzJguMc39E",
-    "plex_library_ids": [69, 70, 83],
+    "plex_base_url": "",
+    "plex_token": "",
+    "plex_library_ids": [],
     "silent": False,
-    "detail": True,
+    "detail": False,
     "subtitles": False,
     "always_apply_nfo": True,
     "threads": 8,
@@ -143,6 +143,8 @@ subtitles_enabled = config.get("subtitles", False)
 processed_files = set()
 watch_debounce_delay = config.get("watch_debounce_delay", 2)
 cache_modified = False
+pending_events = {}
+pending_lock = threading.Lock()
 
 # ==============================
 # Load or init cache
@@ -155,8 +157,8 @@ else:
 
 def save_cache():
     global cache_modified
-    if cache_modified:
-        with cache_lock:
+    with cache_lock:
+        if cache_modified:
             CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
             with CACHE_FILE.open("w", encoding="utf-8") as f:
                 json.dump(cache, f, indent=2, ensure_ascii=False)
@@ -279,7 +281,8 @@ def extract_subtitles(video_path):
     srt_files = []
     try:
         result = subprocess.run(
-            ["ffprobe","-v","error","-select_streams","s","-show_entries","stream=index:stream_tags=language,codec_name",
+            [str(FFMPEG_BIN.parent/"ffprobe"), "-v","error","-select_streams","s",
+             "-show_entries","stream=index:stream_tags=language,codec_name",
              "-of","json", video_path],
             capture_output=True, text=True, check=True
         )
@@ -287,9 +290,9 @@ def extract_subtitles(video_path):
         for s in streams:
             idx = s.get("index")
             lang = map_lang(s.get("tags",{}).get("language","und"))
-            srt = f"{base}.{lang}.{Path(video_path).suffix[1:]}"
+            srt = f"{base}.{lang}{Path(video_path).suffix}"
             if os.path.exists(srt): continue
-            subprocess.run(["ffmpeg","-y","-i",video_path,f"-map","0:s:{idx}",srt],
+            subprocess.run([str(FFMPEG_BIN), "-y","-i",video_path,"-map",f"0:s:{idx}",srt],
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
             srt_files.append((srt, lang))
     except Exception as e:
@@ -335,7 +338,34 @@ def process_file(file_path, ignore_processed=False):
     return success
 
 # ==============================
-# Main
+# Watchdog handler
+# ==============================
+class WatchHandler(FileSystemEventHandler):
+    def __init__(self):
+        self.debounce = {}
+        self.lock = threading.Lock()
+
+    def on_any_event(self, event):
+        if event.is_directory: return
+        path = str(Path(event.src_path).resolve())
+        with self.lock:
+            pending_events[path] = time.time()
+
+def watch_worker():
+    while True:
+        now = time.time()
+        to_process = []
+        with pending_lock:
+            for path, ts in list(pending_events.items()):
+                if now - ts >= watch_debounce_delay:
+                    to_process.append(path)
+                    del pending_events[path]
+        for path in to_process:
+            process_file(path)
+        time.sleep(0.5)
+
+# ==============================
+# Scan libraries initially
 # ==============================
 def scan_and_update_cache():
     global cache
@@ -359,10 +389,14 @@ def scan_and_update_cache():
             if plex_item: apply_nfo(plex_item, f)
     save_cache()
 
+# ==============================
+# Main
+# ==============================
 def main():
     setup_ffmpeg()
     scan_and_update_cache()
 
+    # Multithreaded processing
     if threads>1:
         with ThreadPoolExecutor(max_workers=threads) as executor:
             futures = {executor.submit(process_file, f): f for f in cache.keys()}
@@ -371,15 +405,21 @@ def main():
         for f in cache.keys(): process_file(f)
 
     save_cache()
+
+    # Watchdog monitoring
     if config.get("watch_folders", False) and not DISABLE_WATCHDOG:
-        event_handler = FileSystemEventHandler()
         observer = Observer()
+        handler = WatchHandler()
         for lib_id in config["plex_library_ids"]:
             try: section = plex.library.sectionByID(lib_id)
             except: continue
             for path in getattr(section,"locations",[]):
-                observer.schedule(event_handler, path, recursive=True)
+                observer.schedule(handler, path, recursive=True)
         observer.start()
+
+        # Start worker thread for debounced processing
+        threading.Thread(target=watch_worker, daemon=True).start()
+
         try:
             while True: time.sleep(1)
         except KeyboardInterrupt:
