@@ -20,20 +20,23 @@ parser.add_argument("--disable-watchdog", action="store_true", help="Disable fol
 parser.add_argument("--detail", action="store_true", help="Enable detailed logging")
 parser.add_argument("--debug-http", action="store_true", help="Enable HTTP debug logging")
 parser.add_argument("--debug", action="store_true", help="Enable debug mode (implies detail logging)")
-parser.add_argument("--base-dir", help="Base directory for venv and FFmpeg")
+parser.add_argument("--base-dir", help="Base directory override", default=os.environ.get("BASE_DIR", "/app"))
 args = parser.parse_args()
 
 # ==============================
 # Global flags
 # ==============================
-BASE_DIR = Path(args.base_dir) if args.base_dir else Path(os.environ.get("BASE_DIR", "/app"))
+BASE_DIR = Path(args.base_dir)
 DISABLE_WATCHDOG = args.disable_watchdog
 DETAIL = args.detail or args.debug
 DEBUG_HTTP = args.debug_http
 
+CONFIG_FILE = Path(args.config)
+CACHE_FILE = CONFIG_FILE.parent / "tubesync_cache.json"
+
 VENVDIR = BASE_DIR / "venv"
-FFMPEG_BIN = VENVDIR / "bin/ffmpeg"
-FFMPEG_SHA_FILE = VENVDIR / ".ffmpeg_md5"
+FFMPEG_BIN = BASE_DIR / "venv/bin/ffmpeg"
+FFMPEG_SHA_FILE = BASE_DIR / ".ffmpeg_md5"
 
 # ==============================
 # Default config
@@ -69,12 +72,6 @@ default_config = {
     "delete_nfo_after_apply": True
 }
 
-BASE_DIR = Path(os.environ.get("BASE_DIR", "/app"))
-CONFIG_FILE = Path(args.config)
-CACHE_FILE = CONFIG_FILE.parent / "tubesync_cache.json"
-FFMPEG_BIN = BASE_DIR / "ffmpeg"
-FFMPEG_SHA_FILE = BASE_DIR / ".ffmpeg_sha"
-
 # ==============================
 # Load config
 # ==============================
@@ -97,10 +94,8 @@ subtitles_enabled = config.get("subtitles", False)
 # ==============================
 # Logging setup
 # ==============================
-logging.basicConfig(
-    level=logging.DEBUG if DETAIL else logging.INFO,
-    format='[%(levelname)s] %(message)s'
-)
+log_level = logging.DEBUG if DETAIL else logging.INFO
+logging.basicConfig(level=log_level, format='[%(levelname)s] %(message)s')
 
 logging.info(f"BASE_DIR = {BASE_DIR}")
 logging.info(f"DISABLE_WATCHDOG = {DISABLE_WATCHDOG}")
@@ -198,7 +193,7 @@ def update_cache(path, ratingKey=None, nfo_hash=None):
         cache_modified = True
 
 # ==============================
-# FFmpeg setup (MD5-based)
+# FFmpeg setup (MD5 based)
 # ==============================
 def setup_ffmpeg():
     arch = platform.machine()
@@ -209,19 +204,17 @@ def setup_ffmpeg():
     else:
         logging.error(f"Unsupported arch: {arch}")
         sys.exit(1)
-    md5_url = url + ".md5"
 
+    md5_url = url + ".md5"
     tmp_dir = Path("/tmp/ffmpeg_dl")
     tmp_dir.mkdir(parents=True, exist_ok=True)
     tar_path = tmp_dir / "ffmpeg.tar.xz"
-
-    FFMPEG_BIN.parent.mkdir(parents=True, exist_ok=True)
 
     try:
         r = requests.get(md5_url, timeout=10)
         r.raise_for_status()
         remote_md5 = r.text.strip().split()[0]
-        logging.debug(f"Remote MD5: {remote_md5}")
+        logging.info(f"[DEBUG] Remote MD5: {remote_md5}")
     except Exception as e:
         logging.warning(f"Failed to fetch remote MD5: {e}")
         remote_md5 = None
@@ -276,7 +269,7 @@ def setup_ffmpeg():
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
     os.environ["PATH"] = f"{FFMPEG_BIN.parent}:{os.environ.get('PATH','')}"
-    logging.info("FFmpeg installed/updated successfully")
+    if DETAIL: logging.info("FFmpeg installed/updated successfully")
 
 # ==============================
 # Plex helpers
@@ -430,7 +423,7 @@ def scan_and_update_cache():
     return video_files
 
 # ==============================
-# Main
+# Main function
 # ==============================
 def main():
     logging.info(f"BASE_DIR = {BASE_DIR}")
@@ -440,6 +433,7 @@ def main():
 
     setup_ffmpeg()
 
+    # scan_and_update_cache(), process_file(), save_cache() 등 기존 함수 그대로 사용
     video_files = scan_and_update_cache()
     logging.info(f"[INFO] Total video files found: {len(video_files)}")
 
@@ -455,7 +449,7 @@ def main():
         stop_event = threading.Event()
         observer = Observer()
         for lib_id in config["plex_library_ids"]:
-            try: section=plex.library.sectionByID(lib_id)
+            try: section = plex.library.sectionByID(lib_id)
             except: continue
             for loc in getattr(section,"locations",[]):
                 observer.schedule(WatchHandler(), loc, recursive=True)
