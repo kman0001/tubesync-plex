@@ -20,8 +20,9 @@ parser.add_argument("--config", required=True, help="Path to config file")
 parser.add_argument("--disable-watchdog", action="store_true", help="Disable folder watchdog")
 parser.add_argument("--detail", action="store_true", help="Enable detailed logging")
 parser.add_argument("--debug-http", action="store_true", help="Enable HTTP debug logging")
+parser.add_argument("--debug", action="store_true", help="Enable debug logging")
 args = parser.parse_args()
-DISABLE_WATCHDOG = args.disable_watchdog
+DEBUG = args.debug
 
 # ==============================
 # Default config
@@ -84,7 +85,7 @@ delete_nfo_after_apply = config.get("delete_nfo_after_apply", True)
 # ==============================
 silent = config.get("silent", False)
 detail = config.get("detail", False) and not silent
-log_level = logging.INFO if not silent else logging.WARNING
+log_level = logging.DEBUG if DEBUG else (logging.INFO if not config.get("silent", False) else logging.WARNING)
 logging.basicConfig(level=log_level, format='[%(levelname)s] %(message)s')
 
 # ==============================
@@ -100,10 +101,10 @@ class HTTPDebugSession(requests.Session):
 
     def send(self, request, **kwargs):
         if self.enable_debug:
-            print("[HTTP DEBUG] REQUEST:", request.method, request.url)
+            logging.debug(f"[HTTP DEBUG] REQUEST: {request.method} {request.url}")
         response = super().send(request, **kwargs)
         if self.enable_debug:
-            print("[HTTP DEBUG] RESPONSE:", response.status_code, response.reason)
+            logging.debug(f"[HTTP DEBUG] RESPONSE: {response.status_code} {response.reason}")
         return response
 
 # ==============================
@@ -349,24 +350,31 @@ def upload_subtitles(ep,srt_files):
 def process_single_file(file_path):
     abs_path = Path(file_path).resolve()
     str_path = str(abs_path)
-    if str_path in processed_files: return False
-    if abs_path.suffix.lower() not in VIDEO_EXTS: return False
+    if DEBUG: logging.debug(f"[DEBUG] Start processing: {str_path}")
 
-    plex_item=None
-    ratingKey=cache.get(str_path,{}).get("ratingKey")
-    if ratingKey:
-        try: plex_item=plex.fetchItem(ratingKey)
-        except: plex_item=None
-    if not plex_item: plex_item=find_plex_item(str_path)
-    if plex_item: update_cache(str_path, plex_item.ratingKey)
-    processed_files.add(str_path)
+    if str_path in processed_files:
+        if DEBUG: logging.debug(f"[DEBUG] Already processed: {str_path}")
+        return False
 
+    plex_item = find_plex_item(str_path)
     if plex_item:
-        apply_nfo(plex_item,str_path)
-        if subtitles_enabled:
-            srt_files=extract_subtitles(str_path)
-            if srt_files: upload_subtitles(plex_item,srt_files)
-    return True
+        update_cache(str_path, plex_item.ratingKey)
+
+    processed_files.add(str_path)
+    success = False
+
+    # NFO 적용
+    nfo_path = abs_path.with_suffix(".nfo")
+    if nfo_path.exists() and nfo_path.stat().st_size > 0 and plex_item:
+        success = apply_nfo(plex_item, str_path)
+
+    # 자막 추출
+    if subtitles_enabled and plex_item:
+        srt_files = extract_subtitles(str_path)
+        if srt_files: upload_subtitles(plex_item, srt_files)
+
+    if DEBUG: logging.debug(f"[DEBUG] Finished processing: {str_path}, success={success}")
+    return success
 
 # ==============================
 # Watchdog
@@ -416,21 +424,23 @@ def scan_and_update_cache():
 # Main
 # ==============================
 def main():
+    logging.info("START")
     setup_ffmpeg()
-    video_files = scan_and_update_cache()
-    logging.info(f"[INFO] Total video files found: {len(video_files)}")
+    video_files = scan_and_update_cache()  # 항상 리스트 반환
 
-    if threads>1:
+    if DEBUG: logging.debug(f"[DEBUG] Total video files: {len(video_files)}")
+
+    if threads > 1:
         with ThreadPoolExecutor(max_workers=threads) as executor:
-            futures={executor.submit(process_single_file,f):f for f in video_files}
-            for future in as_completed(futures):
-                f=futures[future]
-                try: future.result()
-                except Exception as e:
-                    logging.error(f"[ERROR] Failed processing {f}: {e}")
+            futures = {executor.submit(process_single_file, f): f for f in video_files}
+            for fut in as_completed(futures):
+                _ = fut.result()
     else:
         for f in video_files:
             process_single_file(f)
+
+    save_cache()
+    logging.info("END")
 
     stop_event=threading.Event()
     if config.get("watch_folders",True):
