@@ -13,10 +13,10 @@ class HTTPDebugSession(requests.Session):
 
     def send(self, request, **kwargs):
         if self.enable_debug:
-            print(f"[HTTP DEBUG] Request {request.method} {request.url}")
+            print(f"[HTTP DEBUG] {request.method} {request.url}")
         response = super().send(request, **kwargs)
         if self.enable_debug:
-            print(f"[HTTP DEBUG] Response {response.status_code}")
+            print(f"[HTTP DEBUG] {response.status_code} {response.reason}")
         return response
 
 class PlexServerWithHTTPDebug(PlexServer):
