@@ -27,17 +27,19 @@ else
 fi
 
 # ----------------------------
-# Parse arguments
+# 1. Parse arguments
 # ----------------------------
 BASE_DIR=""
 DISABLE_WATCHDOG=false
 DEBUG_HTTP=false
+BRANCH="main"
 
 while [[ $# -gt 0 ]]; do
     case $1 in
         --base-dir) BASE_DIR="$2"; shift 2 ;;
         --disable-watchdog) DISABLE_WATCHDOG=true; shift ;;
         --debug-http) DEBUG_HTTP=true; shift ;;
+        --branch) BRANCH="$2"; shift 2 ;;
         *) echo "Unknown option: $1"; exit 1 ;;
     esac
 done
@@ -50,27 +52,27 @@ fi
 REPO_URL="https://github.com/kman0001/tubesync-plex.git"
 mkdir -p "$BASE_DIR"
 PIP_BIN="$BASE_DIR/venv/bin/pip"
-PY_FILE="$BASE_DIR/tubesync-plex-metadata.py"
+PY_FILE="$BASE_DIR/src/cli.py"
 REQ_FILE="$BASE_DIR/requirements.txt"
 
 # ----------------------------
-# 1. Git fetch + reset
+# 2. Git fetch + checkout branch
 # ----------------------------
 cd "$BASE_DIR"
 if [ ! -d "$BASE_DIR/.git" ]; then
     log "Initializing git repository..."
     git init
     git remote add origin "$REPO_URL"
-    git fetch origin
-    git reset --hard origin/main
+    git fetch origin "$BRANCH"
+    git checkout -B "$BRANCH" "origin/$BRANCH"
 else
     log "Updating repository..."
-    git fetch origin
-    git reset --hard origin/main
+    git fetch origin "$BRANCH"
+    git checkout -B "$BRANCH" "origin/$BRANCH"
 fi
 
 # ----------------------------
-# 2. Python venv (with fallback to virtualenv)
+# 3. Python venv (with fallback to virtualenv)
 # ----------------------------
 if [ ! -d "$BASE_DIR/venv" ]; then
     log "Creating virtual environment..."
@@ -90,7 +92,7 @@ else
 fi
 
 # ----------------------------
-# 3. Install / update Python dependencies
+# 4. Install / update Python dependencies
 # ----------------------------
 log "Installing/updating Python dependencies..."
 if [ -f "$REQ_FILE" ]; then
@@ -100,24 +102,17 @@ fi
 export PATH="$BASE_DIR/venv/bin:$PATH"
 
 # ----------------------------
-# 4. Run Python script
+# 5. Run CLI script
 # ----------------------------
 if [ -f "$PY_FILE" ]; then
-    log "Running tubesync-plex..."
+    log "Running tubesync-plex (branch: $BRANCH)..."
     CMD="$BASE_DIR/venv/bin/python $PY_FILE --config $BASE_DIR/config/config.json"
 
-    # Disable watchdog if requested
-    if [ "$DISABLE_WATCHDOG" = true ]; then
-        CMD="$CMD --disable-watchdog"
-    fi
-
-    # Pass debug-http flag if requested
-    if [ "$DEBUG_HTTP" = true ]; then
-        CMD="$CMD --debug-http"
-    fi
+    [ "$DISABLE_WATCHDOG" = true ] && CMD="$CMD --disable-watchdog"
+    [ "$DEBUG_HTTP" = true ] && CMD="$CMD --debug-http"
 
     exec $CMD
 else
-    log "ERROR: tubesync-plex-metadata.py not found."
+    log "ERROR: cli.py not found at $PY_FILE."
     exit 1
 fi
