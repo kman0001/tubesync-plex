@@ -198,7 +198,7 @@ def remove_from_cache(path):
         cache_modified = True
 
 # ==============================
-# FFmpeg setup (기존 구조)
+# FFmpeg setup
 # ==============================
 def setup_ffmpeg():
     arch = platform.machine()
@@ -369,6 +369,20 @@ def apply_nfo(ep, file_path):
 # ==============================
 # Process single file
 # ==============================
+import hashlib
+
+def file_hash(path):
+    """Compute SHA256 hash of a file."""
+    h = hashlib.sha256()
+    try:
+        with open(path, "rb") as f:
+            while chunk := f.read(8192):
+                h.update(chunk)
+    except Exception as e:
+        logging.warning(f"Failed to hash file {path}: {e}")
+        return None
+    return h.hexdigest()
+
 def process_file(file_path, ignore_processed=False):
     abs_path = Path(file_path).resolve()
     str_path = str(abs_path)
@@ -396,10 +410,27 @@ def process_file(file_path, ignore_processed=False):
     nfo_path = abs_path.with_suffix(".nfo")
     if nfo_path.exists() and nfo_path.stat().st_size > 0 and plex_item:
         try:
-            if not config.get("silent", False):
-                print(f"[INFO] Applying NFO: {abs_path}")
-            apply_nfo(plex_item, str_path)
-            success = True
+            # Compute NFO hash
+            nfo_sha = file_hash(nfo_path)
+            cached_sha = cache.get(f"{str_path}.nfo_sha")
+
+            # Apply metadata if hash is different or if NFO exists (always delete)
+            if nfo_sha != cached_sha or nfo_sha is None:
+                if not config.get("silent", False):
+                    print(f"[INFO] Applying NFO: {abs_path}")
+                apply_nfo(plex_item, str_path)
+                # Update NFO hash in cache
+                if nfo_sha:
+                    update_cache(f"{str_path}.nfo_sha", nfo_sha)
+                success = True
+            else:
+                # Even if hash matches, ensure NFO is deleted
+                try:
+                    nfo_path.unlink()
+                    if detail:
+                        print(f"[DEBUG] Deleted NFO (hash matched): {nfo_path}")
+                except Exception as e:
+                    logging.warning(f"Failed to delete NFO: {nfo_path} - {e}")
         except Exception as e:
             logging.error(f"NFO processing error for {nfo_path}: {e}")
 
