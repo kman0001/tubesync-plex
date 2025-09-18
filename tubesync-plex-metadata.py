@@ -162,7 +162,18 @@ log_lock = threading.Lock()
 # ==============================
 # Cache management
 # ==============================
-cache_modified = False
+# Initialize cache from disk or empty
+if CACHE_FILE.exists():
+    try:
+        with CACHE_FILE.open("r", encoding="utf-8") as f:
+            cache = json.load(f)
+    except Exception as e:
+        logging.warning(f"Failed to load existing cache, starting fresh: {e}")
+        cache = {}
+else:
+    cache = {}
+
+cache_modified = False  # Track if cache has changed
 
 def save_cache():
     """Save cache to disk only if modified"""
