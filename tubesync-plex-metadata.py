@@ -20,11 +20,22 @@ parser.add_argument("--disable-watchdog", action="store_true", help="Disable fol
 parser.add_argument("--detail", action="store_true", help="Enable detailed logging")
 parser.add_argument("--debug-http", action="store_true", help="Enable HTTP debug logging")
 parser.add_argument("--debug", action="store_true", help="Enable debug mode (implies detail logging)")
+parser.add_argument("--base-dir", default=os.environ.get("BASE_DIR", "/app"), help="Base directory for installation")
 args = parser.parse_args()
 
+# ==============================
+# Variables
+# ==============================
 DISABLE_WATCHDOG = args.disable_watchdog
 DETAIL = args.detail or args.debug
 DEBUG_HTTP = args.debug_http
+BASE_DIR = Path(args.base_dir)
+VENVS_BIN = BASE_DIR / "venv/bin"
+
+# FFmpeg paths
+FFMPEG_BIN = VENVS_BIN / "ffmpeg"
+FFPROBE_BIN = VENVS_BIN / "ffprobe"
+FFMPEG_SHA_FILE = BASE_DIR / ".ffmpeg_sha"
 
 # ==============================
 # Default config
@@ -88,10 +99,13 @@ subtitles_enabled = config.get("subtitles", False)
 # ==============================
 # Logging
 # ==============================
-silent = config.get("silent", False)
-detail = (config.get("detail", False) or DETAIL) and not silent
-log_level = logging.DEBUG if args.debug else (logging.INFO if not silent else logging.WARNING)
+log_level = logging.DEBUG if DETAIL else logging.INFO
 logging.basicConfig(level=log_level, format='[%(levelname)s] %(message)s')
+
+logging.info(f"BASE_DIR = {BASE_DIR}")
+logging.info(f"DISABLE_WATCHDOG = {DISABLE_WATCHDOG}")
+logging.info(f"DETAIL = {DETAIL}")
+logging.info(f"DEBUG_HTTP = {DEBUG_HTTP}")
 
 # ==============================
 # HTTP debug session
@@ -184,19 +198,13 @@ def update_cache(path, ratingKey=None, nfo_hash=None):
         cache_modified = True
 
 # ==============================
-# FFmpeg setup (MD5 기반, venv/bin 설치)
+# FFmpeg setup (MD5 기반)
 # ==============================
 def setup_ffmpeg():
-    # 설치 경로를 venv/bin으로 설정
-    ff_bin_dir = BASE_DIR / "venv" / "bin"
-    ff_bin_dir.mkdir(parents=True, exist_ok=True)
-    ffmpeg_path = ff_bin_dir / "ffmpeg"
-    ffprobe_path = ff_bin_dir / "ffprobe"
-
     arch = platform.machine()
-    if arch == "x86_64":
+    if arch=="x86_64":
         url = "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz"
-    elif arch == "aarch64":
+    elif arch=="aarch64":
         url = "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-arm64-static.tar.xz"
     else:
         logging.error(f"Unsupported arch: {arch}")
@@ -207,25 +215,29 @@ def setup_ffmpeg():
     tmp_dir.mkdir(parents=True, exist_ok=True)
     tar_path = tmp_dir / "ffmpeg.tar.xz"
 
+    # MD5 fetch
     try:
         r = requests.get(md5_url, timeout=10)
         r.raise_for_status()
         remote_md5 = r.text.strip().split()[0]
-        logging.info(f"[DEBUG] Remote MD5: {remote_md5}")
+        logging.debug(f"Remote MD5: {remote_md5}")
     except Exception as e:
         logging.warning(f"Failed to fetch remote MD5: {e}")
         remote_md5 = None
 
+    # Local MD5
     local_md5 = FFMPEG_SHA_FILE.read_text().strip() if FFMPEG_SHA_FILE.exists() else None
-    if ffmpeg_path.exists() and remote_md5 and local_md5 == remote_md5:
+    if FFMPEG_BIN.exists() and remote_md5 and local_md5 == remote_md5:
         logging.info("FFmpeg up-to-date (MD5 match)")
         return
 
-    if ffmpeg_path.exists():
+    # Remove old binaries if mismatch
+    if FFMPEG_BIN.exists():
         logging.warning("Local FFmpeg MD5 mismatch, redownloading...")
-        ffmpeg_path.unlink(missing_ok=True)
-        ffprobe_path.unlink(missing_ok=True)
+        FFMPEG_BIN.unlink(missing_ok=True)
+        FFPROBE_BIN.unlink(missing_ok=True)
 
+    # Download
     logging.info("Downloading FFmpeg...")
     try:
         r = requests.get(url, stream=True)
@@ -237,6 +249,7 @@ def setup_ffmpeg():
         logging.error(f"Failed to download FFmpeg: {e}")
         sys.exit(1)
 
+    # MD5 check
     if remote_md5:
         h = hashlib.md5()
         with open(tar_path, "rb") as f:
@@ -246,17 +259,19 @@ def setup_ffmpeg():
             logging.error("Downloaded FFmpeg MD5 mismatch, aborting")
             sys.exit(1)
 
+    # Extract
     try:
         extract_dir = tmp_dir / "extract"
         shutil.rmtree(extract_dir, ignore_errors=True)
         extract_dir.mkdir(parents=True)
         subprocess.run(["tar", "-xJf", str(tar_path), "-C", str(extract_dir)], check=True)
-        ff_path = next(extract_dir.glob("**/ffmpeg"))
-        fp_path = next(extract_dir.glob("**/ffprobe"))
-        shutil.move(str(ff_path), ffmpeg_path)
-        shutil.move(str(fp_path), ffprobe_path)
-        os.chmod(ffmpeg_path, 0o755)
-        os.chmod(ffprobe_path, 0o755)
+        ffmpeg_path = next(extract_dir.glob("**/ffmpeg"))
+        ffprobe_path = next(extract_dir.glob("**/ffprobe"))
+        VENVS_BIN.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(ffmpeg_path), FFMPEG_BIN)
+        shutil.move(str(ffprobe_path), FFPROBE_BIN)
+        os.chmod(FFMPEG_BIN, 0o755)
+        os.chmod(FFPROBE_BIN, 0o755)
         if remote_md5: FFMPEG_SHA_FILE.write_text(remote_md5)
     except Exception as e:
         logging.error(f"FFmpeg extraction/move failed: {e}")
@@ -264,12 +279,8 @@ def setup_ffmpeg():
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
-    # PATH에 venv/bin 포함
-    os.environ["PATH"] = f"{ff_bin_dir}:{os.environ.get('PATH','')}"
-    if detail: logging.info("FFmpeg installed/updated successfully")
-
-# FFMPEG_BIN 변수도 새 경로로 지정
-FFMPEG_BIN = BASE_DIR / "venv" / "bin" / "ffmpeg"
+    os.environ["PATH"] = f"{VENVS_BIN}:{os.environ.get('PATH','')}"
+    logging.info("FFmpeg installed/updated successfully")
 
 # ==============================
 # Plex helpers
