@@ -321,12 +321,32 @@ def upload_subtitles(ep, srt_files):
             print(f"[ERROR] Subtitle upload failed: {srt} - {e}")
 
 # ==============================
-# NFO processing
+# NFO processing with hash
 # ==============================
+import hashlib
+
+def compute_nfo_hash(nfo_path):
+    """Compute SHA256 hash of the NFO file."""
+    h = hashlib.sha256()
+    with open(nfo_path, "rb") as f:
+        for chunk in iter(lambda: f.read(4096), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
 def apply_nfo(ep, file_path):
+    """Apply NFO metadata if changed based on hash, then delete NFO."""
     nfo_path = Path(file_path).with_suffix(".nfo")
     if not nfo_path.exists() or nfo_path.stat().st_size == 0:
         return False
+    global cache
+    nfo_hash = compute_nfo_hash(nfo_path)
+    cached_hash = cache.get(file_path, {}).get("nfo_hash")
+    if cached_hash == nfo_hash:
+        if detail:
+            print(f"[DEBUG] NFO hash unchanged, skipping: {nfo_path}")
+        return False  # Skip if hash unchanged
+
+    # Parse and apply metadata
     try:
         tree = ET.parse(str(nfo_path), parser=ET.XMLParser(recover=True))
         root = tree.getroot()
@@ -338,6 +358,10 @@ def apply_nfo(ep, file_path):
         ep.editSortTitle(aired, locked=True)
         ep.editSummary(plot, locked=True)
 
+        # Update cache with new nfo hash
+        cache[file_path] = {"plex_id": ep.key, "nfo_hash": nfo_hash}
+
+        # Delete NFO after processing
         try:
             nfo_path.unlink()
             if detail:
@@ -352,20 +376,6 @@ def apply_nfo(ep, file_path):
 # ==============================
 # Process single file
 # ==============================
-import hashlib
-
-def file_hash(path):
-    """Compute SHA256 hash of a file."""
-    h = hashlib.sha256()
-    try:
-        with open(path, "rb") as f:
-            while chunk := f.read(8192):
-                h.update(chunk)
-    except Exception as e:
-        logging.warning(f"Failed to hash file {path}: {e}")
-        return None
-    return h.hexdigest()
-
 def process_file(file_path, ignore_processed=False):
     abs_path = Path(file_path).resolve()
     str_path = str(abs_path)
@@ -374,48 +384,32 @@ def process_file(file_path, ignore_processed=False):
     if abs_path.suffix.lower() not in VIDEO_EXTS:
         return False
 
+    global cache
     plex_item = None
-    key = cache.get(str_path)
-    if key:
-        try:
-            plex_item = plex.fetchItem(key)
-        except Exception as e:
-            if detail:
-                logging.warning(f"Failed to fetch Plex item {key}: {e}")
-            plex_item = None
+    if str_path in cache:
+        plex_id = cache[str_path].get("plex_id")
+        if plex_id:
+            try:
+                plex_item = plex.fetchItem(plex_id)
+            except Exception as e:
+                if detail:
+                    logging.warning(f"Failed to fetch Plex item {plex_id}: {e}")
+                plex_item = None
 
     if not plex_item:
         plex_item = find_plex_item(str_path)
         if plex_item:
-            update_cache(str_path, plex_item.key)
+            # Update cache with Plex ID but keep existing nfo_hash if present
+            nfo_hash = cache.get(str_path, {}).get("nfo_hash")
+            cache[str_path] = {"plex_id": plex_item.key, "nfo_hash": nfo_hash}
 
     success = False
     nfo_path = abs_path.with_suffix(".nfo")
     if nfo_path.exists() and nfo_path.stat().st_size > 0 and plex_item:
-        try:
-            # Compute NFO hash
-            nfo_sha = file_hash(nfo_path)
-            cached_sha = cache.get(f"{str_path}.nfo_sha")
-
-            # Apply metadata if hash is different or if NFO exists (always delete)
-            if nfo_sha != cached_sha or nfo_sha is None:
-                if not config.get("silent", False):
-                    print(f"[INFO] Applying NFO: {abs_path}")
-                apply_nfo(plex_item, str_path)
-                # Update NFO hash in cache
-                if nfo_sha:
-                    update_cache(f"{str_path}.nfo_sha", nfo_sha)
-                success = True
-            else:
-                # Even if hash matches, ensure NFO is deleted
-                try:
-                    nfo_path.unlink()
-                    if detail:
-                        print(f"[DEBUG] Deleted NFO (hash matched): {nfo_path}")
-                except Exception as e:
-                    logging.warning(f"Failed to delete NFO: {nfo_path} - {e}")
-        except Exception as e:
-            logging.error(f"NFO processing error for {nfo_path}: {e}")
+        if not config.get("silent", False):
+            print(f"[INFO] Applying NFO: {abs_path}")
+        if apply_nfo(plex_item, str_path):
+            success = True
 
     processed_files.add(str_path)
     return success
