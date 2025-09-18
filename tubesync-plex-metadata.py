@@ -434,12 +434,6 @@ def scan_and_update_cache():
 # ==============================
 # Main function
 # ==============================
-def main():
-    logging.info(f"BASE_DIR = {BASE_DIR}")
-    logging.info(f"DISABLE_WATCHDOG = {DISABLE_WATCHDOG}")
-    logging.info(f"DETAIL = {DETAIL}")
-    logging.info(f"DEBUG_HTTP = {DEBUG_HTTP}")
-
     setup_ffmpeg()
 
     # scan_and_update_cache(), process_file(), save_cache() 등 기존 함수 그대로 사용
