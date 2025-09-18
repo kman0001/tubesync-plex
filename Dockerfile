@@ -39,22 +39,7 @@ RUN apk add --no-cache \
     libxslt \
     libstdc++
 
-# ffmpeg 다운로드 및 설치 (플랫폼별)
-ARG TARGETPLATFORM
-RUN TMPDIR=$(mktemp -d) && \
-    if [ "$TARGETPLATFORM" = "linux/amd64" ]; then \
-        FFMPEG_URL="https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz"; \
-    elif [ "$TARGETPLATFORM" = "linux/arm64" ]; then \
-        FFMPEG_URL="https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-arm64-static.tar.xz"; \
-    else \
-        echo "Unsupported platform: $TARGETPLATFORM" && exit 1; \
-    fi && \
-    curl -L $FFMPEG_URL | tar -xJ -C $TMPDIR && \
-    cp $TMPDIR/ffmpeg*/ffmpeg /usr/local/bin/ && \
-    chmod +x /usr/local/bin/ffmpeg && \
-    rm -rf $TMPDIR
-
-# builder stage에서 설치한 Python 패키지만 runtime으로 복사
+# Python 패키지 복사
 COPY --from=builder /usr/local /usr/local
 
 # 앱 소스 및 엔트리포인트 복사
