@@ -438,7 +438,7 @@ def process_file(file_path, ignore_processed=False):
     return success
 
 # ==============================
-# Watchdog event handler
+# Watchdog event handler (improved with NFO hash check)
 # ==============================
 class VideoEventHandler(FileSystemEventHandler):
     def __init__(self):
@@ -456,10 +456,12 @@ class VideoEventHandler(FileSystemEventHandler):
         ext = os.path.splitext(path)[1].lower()
         with self.lock:
             if event.event_type == "deleted" and ext in VIDEO_EXTS:
+                # Remove from cache on deletion
                 remove_from_cache(path)
                 save_cache()
             elif event.event_type == "created":
                 if ext in VIDEO_EXTS:
+                    # Add to cache if not already present
                     if path not in cache:
                         plex_item = find_plex_item(path)
                         if plex_item:
@@ -482,17 +484,44 @@ class VideoEventHandler(FileSystemEventHandler):
             self.video_timer.start()
 
     def process_nfo_queue(self):
+        """Process queued NFO files with hash check and always delete after processing"""
         with self.lock:
             queue = list(self.nfo_queue)
             self.nfo_queue.clear()
             self.nfo_timer = None
+
         for nfo_path in queue:
             video_path = self._find_video(nfo_path)
-            if video_path:
+            if not video_path:
+                continue
+
+            abs_video_path = Path(video_path).resolve()
+            nfo_sha = file_hash(nfo_path)
+            cached_sha = cache.get(f"{str(abs_video_path)}.nfo_sha")
+
+            if nfo_sha != cached_sha or nfo_sha is None:
+                # Only process if new or changed NFO
                 process_file(video_path, ignore_processed=True)
+                if nfo_sha:
+                    update_cache(f"{str(abs_video_path)}.nfo_sha", nfo_sha)
+                    save_cache()
+            else:
+                # Hash matches → still delete to prevent repeated processing
+                if detail:
+                    print(f"[DEBUG] Skipping NFO (hash matched): {nfo_path}")
+
+            # Always delete NFO after processing or skipping
+            try:
+                Path(nfo_path).unlink()
+                if detail:
+                    print(f"[DEBUG] Deleted NFO: {nfo_path}")
+            except Exception as e:
+                logging.warning(f"Failed to delete NFO: {nfo_path} - {e}")
+
         self._process_retry()
 
     def process_video_queue(self):
+        """Process new video files detected by watchdog"""
         with self.lock:
             queue = list(self.video_queue)
             self.video_queue.clear()
@@ -509,15 +538,34 @@ class VideoEventHandler(FileSystemEventHandler):
         return None
 
     def _process_retry(self):
+        """Retry processing failed NFOs with hash check to avoid infinite loop"""
         now = time.time()
         for path, (retry_time, count) in list(self.retry_queue.items()):
             if now >= retry_time:
-                if process_file(path, ignore_processed=True):
-                    del self.retry_queue[path]
-                elif count < 3:
-                    self.retry_queue[path] = (now + 5, count + 1)
+                abs_video_path = Path(path).resolve()
+                nfo_path = abs_video_path.with_suffix(".nfo")
+                nfo_sha = file_hash(nfo_path) if nfo_path.exists() else None
+                cached_sha = cache.get(f"{str(abs_video_path)}.nfo_sha")
+
+                if nfo_sha != cached_sha:
+                    if process_file(path, ignore_processed=True):
+                        if nfo_sha:
+                            update_cache(f"{str(abs_video_path)}.nfo_sha", nfo_sha)
+                            save_cache()
+                        del self.retry_queue[path]
+                    elif count < 3:
+                        self.retry_queue[path] = (now + 5, count + 1)
+                    else:
+                        print(f"[WARN] NFO failed 3x: {path}")
+                        del self.retry_queue[path]
                 else:
-                    print(f"[WARN] NFO failed 3x: {path}")
+                    # Hash identical → just delete to stop retrying
+                    try:
+                        nfo_path.unlink()
+                        if detail:
+                            print(f"[DEBUG] Deleted NFO (hash matched, retry skipped): {nfo_path}")
+                    except Exception:
+                        pass
                     del self.retry_queue[path]
 
 # ==============================
