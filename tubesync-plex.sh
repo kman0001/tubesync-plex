@@ -31,11 +31,13 @@ fi
 # ----------------------------
 BASE_DIR=""
 DISABLE_WATCHDOG=false
+DEBUG_HTTP=false
 
 while [[ $# -gt 0 ]]; do
     case $1 in
         --base-dir) BASE_DIR="$2"; shift 2 ;;
         --disable-watchdog) DISABLE_WATCHDOG=true; shift ;;
+        --debug-http) DEBUG_HTTP=true; shift ;;
         *) echo "Unknown option: $1"; exit 1 ;;
     esac
 done
@@ -119,5 +121,3 @@ else
     log "ERROR: tubesync-plex-metadata.py not found."
     exit 1
 fi
-
-
