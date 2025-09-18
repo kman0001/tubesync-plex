@@ -346,53 +346,72 @@ def upload_subtitles(ep,srt_files):
 # ==============================
 # 파일 처리 (한 스레드 = 한 파일)
 # ==============================
-def process_single_file(file_path):
+def process_file(file_path, ignore_processed=False):
     abs_path = Path(file_path).resolve()
     str_path = str(abs_path)
-    if str_path in processed_files: return False
-    if abs_path.suffix.lower() not in VIDEO_EXTS: return False
+    logging.debug(f"[DEBUG] Processing file: {str_path}")
 
-    plex_item=None
-    ratingKey=cache.get(str_path,{}).get("ratingKey")
+    if not ignore_processed and str_path in processed_files:
+        logging.debug(f"[DEBUG] Already processed, skipping: {str_path}")
+        return False
+    if abs_path.suffix.lower() not in VIDEO_EXTS:
+        logging.debug(f"[DEBUG] Unsupported extension, skipping: {str_path}")
+        return False
+
+    plex_item = None
+    ratingKey = cache.get(str_path, {}).get("ratingKey")
     if ratingKey:
-        try: plex_item=plex.fetchItem(ratingKey)
-        except: plex_item=None
-    if not plex_item: plex_item=find_plex_item(str_path)
-    if plex_item: update_cache(str_path, plex_item.ratingKey)
+        try:
+            plex_item = plex.fetchItem(ratingKey)
+        except Exception as e:
+            logging.warning(f"[DEBUG] Failed to fetch Plex item for {str_path}: {e}")
+    if not plex_item:
+        plex_item = find_plex_item(str_path)
+        if plex_item:
+            logging.debug(f"[DEBUG] Found Plex item for {str_path}: ratingKey={plex_item.ratingKey}")
+    if plex_item:
+        update_cache(str_path, plex_item.ratingKey)
+
     processed_files.add(str_path)
 
-    success=False
-    nfo_path=abs_path.with_suffix(".nfo")
-    if nfo_path.exists() and nfo_path.stat().st_size>0 and plex_item:
-        success=apply_nfo(plex_item,str_path)
+    success = False
+    nfo_path = abs_path.with_suffix(".nfo")
+    if nfo_path.exists() and nfo_path.stat().st_size > 0 and plex_item:
+        logging.debug(f"[DEBUG] Applying NFO: {nfo_path}")
+        success = apply_nfo(plex_item, str_path)
 
     if subtitles_enabled and plex_item:
-        srt_files=extract_subtitles(str_path)
-        if srt_files: upload_subtitles(plex_item,srt_files)
+        logging.debug(f"[DEBUG] Extracting subtitles for: {str_path}")
+        srt_files = extract_subtitles(str_path)
+        if srt_files:
+            logging.debug(f"[DEBUG] Uploading subtitles for: {str_path}")
+            upload_subtitles(plex_item, srt_files)
+
+    logging.debug(f"[DEBUG] Finished processing {str_path}, success={success}")
     return success
 
 # ==============================
-# Initial scan + cache
+# Initial scan with debug logging
 # ==============================
 def scan_and_update_cache():
-    video_files=[]
+    video_files = []
     for lib_id in config["plex_library_ids"]:
-        try: section=plex.library.sectionByID(lib_id)
-        except: continue
-        for p in getattr(section,"locations",[]):
-            for root,dirs,files in os.walk(p):
+        try:
+            section = plex.library.sectionByID(lib_id)
+        except Exception as e:
+            logging.warning(f"[DEBUG] Failed to access library ID {lib_id}: {e}")
+            continue
+        locations = getattr(section, "locations", [])
+        logging.info(f"[DEBUG] Section '{section.title}' locations: {locations}")
+        for p in locations:
+            for root, dirs, files in os.walk(p):
                 for f in files:
                     if f.lower().endswith(VIDEO_EXTS):
-                        video_files.append(os.path.abspath(os.path.join(root,f)))
-    for f in video_files:
-        if f not in cache:
-            plex_item=find_plex_item(f)
-            if plex_item: update_cache(f, plex_item.ratingKey)
-        nfo_path=Path(f).with_suffix(".nfo")
-        if nfo_path.exists() and nfo_path.stat().st_size>0:
-            plex_item=find_plex_item(f)
-            if plex_item: apply_nfo(plex_item,f)
-    save_cache()
+                        full_path = os.path.abspath(os.path.join(root, f))
+                        logging.debug(f"[DEBUG] Found video file: {full_path}")
+                        video_files.append(full_path)
+
+    logging.info(f"[INFO] Total video files found: {len(video_files)}")
     return video_files
 
 # ==============================
