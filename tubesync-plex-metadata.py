@@ -434,6 +434,7 @@ def scan_and_update_cache():
 # ==============================
 # Main function
 # ==============================
+def main():
     setup_ffmpeg()
 
     # scan_and_update_cache(), process_file(), save_cache() 등 기존 함수 그대로 사용
