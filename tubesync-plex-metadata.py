@@ -19,9 +19,11 @@ parser.add_argument("--config", required=True, help="Path to config file")
 parser.add_argument("--disable-watchdog", action="store_true", help="Disable folder watchdog")
 parser.add_argument("--detail", action="store_true", help="Enable detailed logging")
 parser.add_argument("--debug-http", action="store_true", help="Enable HTTP debug logging")
+parser.add_argument("--debug", action="store_true", help="Enable debug mode (implies detail logging)")
 args = parser.parse_args()
+
 DISABLE_WATCHDOG = args.disable_watchdog
-DETAIL = args.detail
+DETAIL = args.detail or args.debug
 DEBUG_HTTP = args.debug_http
 
 # ==============================
@@ -87,8 +89,8 @@ subtitles_enabled = args.subtitles or config.get("subtitles", False)
 # Logging
 # ==============================
 silent = config.get("silent", False)
-detail = config.get("detail", False) and not silent
-log_level = logging.INFO if not silent else logging.WARNING
+detail = (config.get("detail", False) or DETAIL) and not silent
+log_level = logging.DEBUG if args.debug else (logging.INFO if not silent else logging.WARNING)
 logging.basicConfig(level=log_level, format='[%(levelname)s] %(message)s')
 
 # ==============================
