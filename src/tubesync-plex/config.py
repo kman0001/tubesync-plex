@@ -1,10 +1,7 @@
 import json
 from pathlib import Path
-from .utils import ensure_path
 
 BASE_DIR = Path("/app")
-CONFIG_DIR = BASE_DIR / "config"
-CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 
 default_config = {
     "_comment": {
@@ -35,24 +32,34 @@ default_config = {
 }
 
 def load_config(config_path, disable_watchdog=False):
-    CONFIG_FILE = Path(config_path)
-    CACHE_FILE = CONFIG_FILE.parent / "tubesync_cache.json"
-
-    if not CONFIG_FILE.exists():
-        with CONFIG_FILE.open("w", encoding="utf-8") as f:
+    config_file = Path(config_path)
+    config_file.parent.mkdir(parents=True, exist_ok=True)
+    if not config_file.exists():
+        with config_file.open("w", encoding="utf-8") as f:
             json.dump(default_config, f, indent=4, ensure_ascii=False)
-        print(f"[INFO] {CONFIG_FILE} created. Please edit and rerun.")
+        print(f"[INFO] {config_file} created. Please edit it and rerun.")
         exit(0)
 
-    with CONFIG_FILE.open("r", encoding="utf-8") as f:
+    with config_file.open("r", encoding="utf-8") as f:
         config = json.load(f)
 
     if disable_watchdog:
         config["watch_folders"] = False
 
-    # ensure cache file exists
-    ensure_path(CACHE_FILE.parent)
-    if not CACHE_FILE.exists():
-        CACHE_FILE.write_text("{}")
+    cache_file = config_file.parent / "tubesync_cache.json"
+    if cache_file.exists():
+        try:
+            with cache_file.open("r", encoding="utf-8") as f:
+                config["cache"] = json.load(f)
+        except:
+            config["cache"] = {}
+    else:
+        config["cache"] = {}
 
-    return config, CONFIG_FILE, CACHE_FILE
+    return config, config_file, cache_file
+
+def save_cache(config):
+    cache_file = BASE_DIR / "config" / "tubesync_cache.json"
+    cache_file.parent.mkdir(parents=True, exist_ok=True)
+    with cache_file.open("w", encoding="utf-8") as f:
+        json.dump(config.get("cache", {}), f, indent=2, ensure_ascii=False)
