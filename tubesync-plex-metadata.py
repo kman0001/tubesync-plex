@@ -95,6 +95,9 @@ subtitles_enabled = config.get("subtitles", False)
 # ==============================
 # Logging setup
 # ==============================
+if not DEBUG_HTTP:
+    logging.getLogger("urllib3").setLevel(logging.WARNING)
+    logging.getLogger("requests").setLevel(logging.WARNING)
 log_level = logging.DEBUG if DETAIL else logging.INFO
 logging.basicConfig(level=log_level, format='[%(levelname)s] %(message)s')
 
