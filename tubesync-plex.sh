@@ -2,43 +2,52 @@
 set -e
 
 # ----------------------------
-# Helper
+# Helper function
 # ----------------------------
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"; }
 
 # ----------------------------
-# Parse arguments
+# Default BASE_DIR
 # ----------------------------
 BASE_DIR=""
-DISABLE_WATCHDOG=false
-DEBUG_HTTP=false
+PY_FILE="tubesync-plex-metadata.py"
 
+# ----------------------------
+# Parse arguments
+# ----------------------------
+ARGS=()
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --base-dir) BASE_DIR="$2"; shift 2 ;;
-        --disable-watchdog) DISABLE_WATCHDOG=true; shift ;;
-        --debug-http) DEBUG_HTTP=true; shift ;;
-        *) echo "Unknown option: $1"; exit 1 ;;
+        --base-dir)
+            BASE_DIR="$2"
+            shift 2
+            ;;
+        --disable-watchdog|--detail|--debug-http|--debug)
+            ARGS+=("$1")
+            shift
+            ;;
+        *)
+            log "Unknown option: $1"
+            exit 1
+            ;;
     esac
 done
 
 if [ -z "$BASE_DIR" ]; then
-    echo "ERROR: --base-dir must be specified"
+    log "ERROR: --base-dir must be specified"
     exit 1
 fi
 
+# ----------------------------
+# Git fetch / clone
+# ----------------------------
+REPO_URL="https://github.com/kman0001/tubesync-plex.git"
 mkdir -p "$BASE_DIR"
-PY_FILE="$BASE_DIR/tubesync-plex-metadata.py"
-PIP_BIN="$BASE_DIR/venv/bin/pip"
-REQ_FILE="$BASE_DIR/requirements.txt"
-
-# ----------------------------
-# Git clone / fetch & reset
-# ----------------------------
 cd "$BASE_DIR"
+
 if [ ! -d ".git" ]; then
     log "Cloning repository..."
-    git clone https://github.com/kman0001/tubesync-plex.git .
+    git clone "$REPO_URL" .
 else
     log "Updating repository..."
     git fetch origin
@@ -46,23 +55,36 @@ else
 fi
 
 # ----------------------------
-# Python venv
+# Python venv setup
 # ----------------------------
-if [ ! -d "venv" ]; then
+VENVDIR="$BASE_DIR/venv"
+PIP_BIN="$VENVDIR/bin/pip"
+
+if [ ! -d "$VENVDIR" ]; then
     log "Creating virtual environment..."
-    python3 -m venv venv || virtualenv venv
+    python3 -m venv "$VENVDIR"
+else
+    log "Virtual environment already exists."
 fi
 
-log "Installing Python dependencies..."
-"$PIP_BIN" install --disable-pip-version-check -q -r "$REQ_FILE"
+# ----------------------------
+# Install / update dependencies
+# ----------------------------
+REQ_FILE="$BASE_DIR/requirements.txt"
+if [ -f "$REQ_FILE" ]; then
+    log "Installing/updating Python dependencies..."
+    "$PIP_BIN" install --disable-pip-version-check -q -r "$REQ_FILE"
+fi
 
-export PATH="$BASE_DIR/venv/bin:$PATH"
+export PATH="$VENVDIR/bin:$PATH"
 
 # ----------------------------
-# Run Python
+# Run Python script
 # ----------------------------
-CMD="$BASE_DIR/venv/bin/python $PY_FILE --config $BASE_DIR/config/config.json --base-dir $BASE_DIR"
-[ "$DISABLE_WATCHDOG" = true ] && CMD="$CMD --disable-watchdog"
-[ "$DEBUG_HTTP" = true ] && CMD="$CMD --debug-http --detail"
-
-exec $CMD
+if [ -f "$BASE_DIR/$PY_FILE" ]; then
+    log "Running tubesync-plex..."
+    exec "$VENVDIR/bin/python" "$BASE_DIR/$PY_FILE" --config "$BASE_DIR/config/config.json" --base-dir "$BASE_DIR" "${ARGS[@]}"
+else
+    log "ERROR: $PY_FILE not found."
+    exit 1
+fi
