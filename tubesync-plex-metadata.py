@@ -72,14 +72,15 @@ if DISABLE_WATCHDOG:
 silent = config.get("silent", False)
 detail = config.get("detail", False) and not silent
 
-log_level = logging.DEBUG if detail else (logging.INFO if not silent else logging.WARNING)
+# 기본 로그는 INFO 수준
+log_level = logging.INFO if not silent else logging.WARNING
 logging.basicConfig(level=log_level, format='[%(levelname)s] %(message)s')
 
 # ==============================
 # HTTP Debug session
 # ==============================
 class HTTPDebugSession(requests.Session):
-    """Requests session that logs all HTTP requests/responses"""
+    """Requests session that logs all HTTP requests/responses only if enable_debug=True"""
     def __init__(self, enable_debug=False):
         super().__init__()
         self.enable_debug = enable_debug
@@ -107,12 +108,10 @@ class HTTPDebugSession(requests.Session):
 # PlexServer with HTTP debug
 # ==============================
 class PlexServerWithHTTPDebug(PlexServer):
-    def __init__(self, baseurl, token, debug_http=False):
-        super().__init__(baseurl, token)
-        self._debug_http = debug_http
-        self._debug_session = HTTPDebugSession(enable_debug=self._debug_http)
-
     def _request(self, path, method="GET", headers=None, params=None, data=None, timeout=None):
+        if not hasattr(self, "_debug_session"):
+            # --debug-http 옵션만 HTTP 로그를 켬
+            self._debug_session = HTTPDebugSession(enable_debug=args.debug_http)
         url = self._buildURL(path)
         req_headers = headers or {}
         if self._token:
