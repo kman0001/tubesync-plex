@@ -157,44 +157,27 @@ cache_lock = threading.Lock()
 log_lock = threading.Lock()
 
 # ==============================
-# Cache management
+# Cache management update (store Plex ID + NFO hash)
 # ==============================
-if CACHE_FILE.exists():
-    try:
-        with CACHE_FILE.open("r", encoding="utf-8") as f:
-            cache = json.load(f)
-    except Exception as e:
-        logging.warning(f"Failed to load cache: {e}")
-        cache = {}
-else:
-    cache = {}
-
-cache_modified = False
-
-def save_cache():
+def update_cache(path, plex_id=None, nfo_hash=None):
+    """
+    Update cache for a video file.
+    Stores Plex ID and NFO hash together.
+    """
     global cache_modified
-    with cache_lock:
-        if not cache_modified:
-            return
-        try:
-            CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
-            with CACHE_FILE.open("w", encoding="utf-8") as f:
-                json.dump(cache, f, indent=2, ensure_ascii=False)
-            logging.debug(f"Saved cache to {CACHE_FILE}, total items: {len(cache)}")
-            cache_modified = False
-        except Exception as e:
-            logging.error(f"Failed to save cache: {e}")
+    path = str(path)
+    current = cache.get(path, {})
 
-def update_cache(path, key):
-    global cache_modified
-    if cache.get(path) != key:
-        cache[path] = key
-        cache_modified = True
+    updated = False
+    if plex_id and current.get("plex_id") != plex_id:
+        current["plex_id"] = plex_id
+        updated = True
+    if nfo_hash and current.get("nfo_hash") != nfo_hash:
+        current["nfo_hash"] = nfo_hash
+        updated = True
 
-def remove_from_cache(path):
-    global cache_modified
-    if path in cache:
-        del cache[path]
+    if updated or path not in cache:
+        cache[path] = current
         cache_modified = True
 
 # ==============================
@@ -438,7 +421,7 @@ def process_file(file_path, ignore_processed=False):
     return success
 
 # ==============================
-# Watchdog event handler (improved with NFO hash check)
+# Watchdog event handler (final version)
 # ==============================
 class VideoEventHandler(FileSystemEventHandler):
     def __init__(self):
@@ -454,37 +437,55 @@ class VideoEventHandler(FileSystemEventHandler):
             return
         path = os.path.abspath(event.src_path)
         ext = os.path.splitext(path)[1].lower()
+
         with self.lock:
+            # ==============================
+            # Video file deleted
+            # Remove Plex ID and NFO hash from cache
+            # ==============================
             if event.event_type == "deleted" and ext in VIDEO_EXTS:
-                # Remove from cache on deletion
-                remove_from_cache(path)
+                remove_from_cache(path)  # removes both Plex ID and NFO hash
                 save_cache()
+
+            # ==============================
+            # New video or NFO file created
+            # ==============================
             elif event.event_type == "created":
+                # Video created
                 if ext in VIDEO_EXTS:
-                    # Add to cache if not already present
                     if path not in cache:
                         plex_item = find_plex_item(path)
                         if plex_item:
                             update_cache(path, plex_item.key)
                         save_cache()
                     self.schedule_video(path)
+
+                # NFO created
                 elif ext == ".nfo":
                     self.schedule_nfo(path)
 
+    # ==============================
+    # Schedule NFO processing
+    # ==============================
     def schedule_nfo(self, path):
         self.nfo_queue.add(path)
         if not self.nfo_timer:
             self.nfo_timer = threading.Timer(watch_debounce_delay, self.process_nfo_queue)
             self.nfo_timer.start()
 
+    # ==============================
+    # Schedule Video processing
+    # ==============================
     def schedule_video(self, path):
         self.video_queue.add(path)
         if not self.video_timer:
             self.video_timer = threading.Timer(watch_debounce_delay, self.process_video_queue)
             self.video_timer.start()
 
+    # ==============================
+    # Process queued NFO files
+    # ==============================
     def process_nfo_queue(self):
-        """Process queued NFO files with hash check and always delete after processing"""
         with self.lock:
             queue = list(self.nfo_queue)
             self.nfo_queue.clear()
@@ -492,44 +493,46 @@ class VideoEventHandler(FileSystemEventHandler):
 
         for nfo_path in queue:
             video_path = self._find_video(nfo_path)
-            if not video_path:
-                continue
+            if video_path:
+                # Compute hash of NFO
+                nfo_hash = compute_hash(nfo_path)
+                cached_hash = cache.get(video_path, {}).get("nfo_hash")
 
-            abs_video_path = Path(video_path).resolve()
-            nfo_sha = file_hash(nfo_path)
-            cached_sha = cache.get(f"{str(abs_video_path)}.nfo_sha")
-
-            if nfo_sha != cached_sha or nfo_sha is None:
-                # Only process if new or changed NFO
-                process_file(video_path, ignore_processed=True)
-                if nfo_sha:
-                    update_cache(f"{str(abs_video_path)}.nfo_sha", nfo_sha)
-                    save_cache()
-            else:
-                # Hash matches → still delete to prevent repeated processing
-                if detail:
-                    print(f"[DEBUG] Skipping NFO (hash matched): {nfo_path}")
-
-            # Always delete NFO after processing or skipping
-            try:
-                Path(nfo_path).unlink()
-                if detail:
-                    print(f"[DEBUG] Deleted NFO: {nfo_path}")
-            except Exception as e:
-                logging.warning(f"Failed to delete NFO: {nfo_path} - {e}")
+                # ==============================
+                # If NFO hash differs or not cached -> apply metadata
+                # ==============================
+                if nfo_hash != cached_hash:
+                    plex_item = find_plex_item(video_path)
+                    if plex_item:
+                        apply_nfo(plex_item, video_path)
+                        update_cache(video_path, plex_item.key, nfo_hash)
+                
+                # ==============================
+                # Delete NFO after processing
+                # ==============================
+                try:
+                    Path(nfo_path).unlink()
+                except Exception as e:
+                    logging.warning(f"Failed to delete NFO: {nfo_path} - {e}")
 
         self._process_retry()
 
+    # ==============================
+    # Process queued video files
+    # ==============================
     def process_video_queue(self):
-        """Process new video files detected by watchdog"""
         with self.lock:
             queue = list(self.video_queue)
             self.video_queue.clear()
             self.video_timer = None
+
         for video_path in queue:
             process_file(video_path, ignore_processed=True)
         save_cache()
 
+    # ==============================
+    # Find video file matching NFO
+    # ==============================
     def _find_video(self, nfo_path):
         for ext in VIDEO_EXTS:
             candidate = str(Path(nfo_path).with_suffix(ext))
@@ -537,35 +540,19 @@ class VideoEventHandler(FileSystemEventHandler):
                 return candidate
         return None
 
+    # ==============================
+    # Retry mechanism for NFO processing failures
+    # ==============================
     def _process_retry(self):
-        """Retry processing failed NFOs with hash check to avoid infinite loop"""
         now = time.time()
         for path, (retry_time, count) in list(self.retry_queue.items()):
             if now >= retry_time:
-                abs_video_path = Path(path).resolve()
-                nfo_path = abs_video_path.with_suffix(".nfo")
-                nfo_sha = file_hash(nfo_path) if nfo_path.exists() else None
-                cached_sha = cache.get(f"{str(abs_video_path)}.nfo_sha")
-
-                if nfo_sha != cached_sha:
-                    if process_file(path, ignore_processed=True):
-                        if nfo_sha:
-                            update_cache(f"{str(abs_video_path)}.nfo_sha", nfo_sha)
-                            save_cache()
-                        del self.retry_queue[path]
-                    elif count < 3:
-                        self.retry_queue[path] = (now + 5, count + 1)
-                    else:
-                        print(f"[WARN] NFO failed 3x: {path}")
-                        del self.retry_queue[path]
+                if process_file(path, ignore_processed=True):
+                    del self.retry_queue[path]
+                elif count < 3:
+                    self.retry_queue[path] = (now + 5, count + 1)
                 else:
-                    # Hash identical → just delete to stop retrying
-                    try:
-                        nfo_path.unlink()
-                        if detail:
-                            print(f"[DEBUG] Deleted NFO (hash matched, retry skipped): {nfo_path}")
-                    except Exception:
-                        pass
+                    print(f"[WARN] NFO failed 3x: {path}")
                     del self.retry_queue[path]
 
 # ==============================
