@@ -102,14 +102,22 @@ export PATH="$BASE_DIR/venv/bin:$PATH"
 # ----------------------------
 if [ -f "$PY_FILE" ]; then
     log "Running tubesync-plex..."
-    # Pass all additional arguments ($@) to Python
-    CMD="$BASE_DIR/venv/bin/python $PY_FILE --config $BASE_DIR/config/config.json $@"
+    CMD="$BASE_DIR/venv/bin/python $PY_FILE --config $BASE_DIR/config/config.json"
+
+    # Disable watchdog if requested
     if [ "$DISABLE_WATCHDOG" = true ]; then
         CMD="$CMD --disable-watchdog"
     fi
+
+    # Pass debug-http flag if requested
+    if [ "$DEBUG_HTTP" = true ]; then
+        CMD="$CMD --debug-http"
+    fi
+
     exec $CMD
 else
     log "ERROR: tubesync-plex-metadata.py not found."
     exit 1
 fi
+
 
