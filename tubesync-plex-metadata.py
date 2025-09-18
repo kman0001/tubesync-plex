@@ -392,29 +392,43 @@ def watch_worker(stop_event):
         file_queue.task_done()
 
 # ==============================
-# Initial scan
+# Initial scan with debug logs
 # ==============================
 def scan_and_update_cache():
-    all_files=[]
+    all_files = []
     for lib_id in config["plex_library_ids"]:
-        try: section=plex.library.sectionByID(lib_id)
-        except: continue
-        for p in getattr(section,"locations",[]):
-            for root,dirs,files in os.walk(p):
+        try:
+            section = plex.library.sectionByID(lib_id)
+        except Exception as e:
+            logging.warning(f"Failed to access section {lib_id}: {e}")
+            continue
+
+        locations = getattr(section, "locations", [])
+        logging.info(f"Section '{section.title}' locations: {locations}")
+
+        for p in locations:
+            for root, dirs, files in os.walk(p):
                 for f in files:
                     if f.lower().endswith(VIDEO_EXTS):
-                        all_files.append(os.path.abspath(os.path.join(root,f)))
-    # 캐시 업데이트 및 NFO 적용
+                        all_files.append(os.path.abspath(os.path.join(root, f)))
+
+    logging.info(f"Found {len(all_files)} video files for processing")
+
     for f in all_files:
         if f not in cache:
-            plex_item=find_plex_item(f)
-            if plex_item: update_cache(f, plex_item.ratingKey)
-        nfo_path=Path(f).with_suffix(".nfo")
-        if nfo_path.exists() and nfo_path.stat().st_size>0:
-            plex_item=find_plex_item(f)
-            if plex_item: apply_nfo(plex_item,f)
+            plex_item = find_plex_item(f)
+            if plex_item:
+                logging.info(f"Caching Plex item for {f} (ratingKey={plex_item.ratingKey})")
+                update_cache(f, plex_item.ratingKey)
+
+        nfo_path = Path(f).with_suffix(".nfo")
+        if nfo_path.exists() and nfo_path.stat().st_size > 0:
+            plex_item = find_plex_item(f)
+            if plex_item:
+                logging.info(f"Applying NFO for {f}")
+                apply_nfo(plex_item, f)
+
     save_cache()
-    return all_files
 
 # ==============================
 # Main
