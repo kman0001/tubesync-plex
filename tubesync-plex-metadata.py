@@ -281,16 +281,22 @@ def setup_ffmpeg():
     if DETAIL: logging.info("FFmpeg installed/updated successfully")
 
 # ==============================
-# Plex helpers
+# Plex helpers (with debug)
 # ==============================
-def find_plex_item(abs_path):
+def find_plex_item(abs_path, plex_server):
+    logging.debug(f"[FIND_PLEX_ITEM] Searching Plex item for: {abs_path}")
     for lib_id in config["plex_library_ids"]:
-        try: section = plex.library.sectionByID(lib_id)
-        except: continue
+        try:
+            section = plex_server.library.sectionByID(lib_id)
+        except Exception as e:
+            logging.warning(f"[FIND_PLEX_ITEM] Failed to access library ID {lib_id}: {e}")
+            continue
         for item in section.all():
-            for part in getattr(item,"iterParts",lambda: [])():
-                if os.path.abspath(part.file)==abs_path:
+            for part in getattr(item, "iterParts", lambda: [])():
+                if os.path.abspath(part.file) == abs_path:
+                    logging.debug(f"[FIND_PLEX_ITEM] Found item: {item.title} (ratingKey={item.ratingKey})")
                     return item
+    logging.warning(f"[FIND_PLEX_ITEM] No Plex item found for: {abs_path}")
     return None
 
 # ==============================
@@ -370,31 +376,59 @@ def upload_subtitles(ep,srt_files):
                 logging.error(f"[ERROR] Subtitle upload failed: {srt} - {e}, retries left: {retries}")
 
 # ==============================
-# File processing
+# File processing (with debug)
 # ==============================
 def process_file(file_path):
     abs_path = Path(file_path).resolve()
     str_path = str(abs_path)
-    if str_path in processed_files: return False
-    if abs_path.suffix.lower() not in VIDEO_EXTS: return False
+    logging.debug(f"[PROCESS_FILE] Start processing: {str_path}")
 
-    plex_item=None
-    ratingKey=cache.get(str_path,{}).get("ratingKey")
+    if str_path in processed_files:
+        logging.debug(f"[PROCESS_FILE] Already processed: {str_path}")
+        return False
+
+    if abs_path.suffix.lower() not in VIDEO_EXTS:
+        logging.debug(f"[PROCESS_FILE] Skipped (not video): {str_path}")
+        return False
+
+    # Plex item 가져오기
+    ratingKey = cache.get(str_path, {}).get("ratingKey")
+    plex_item = None
     if ratingKey:
-        try: plex_item=plex.fetchItem(ratingKey)
-        except: plex_item=None
-    if not plex_item: plex_item=find_plex_item(str_path)
-    if plex_item: update_cache(str_path, plex_item.ratingKey)
+        try:
+            plex_item = plex.fetchItem(ratingKey)
+            logging.debug(f"[PROCESS_FILE] Fetched Plex item by ratingKey: {ratingKey}")
+        except Exception as e:
+            logging.warning(f"[PROCESS_FILE] Failed to fetch item by ratingKey {ratingKey}: {e}")
+
+    if not plex_item:
+        plex_item = find_plex_item(str_path, plex)
+
+    if plex_item:
+        update_cache(str_path, plex_item.ratingKey)
+    else:
+        logging.warning(f"[PROCESS_FILE] Plex item not found: {str_path}")
+        processed_files.add(str_path)
+        return False
+
+    success = False
+    nfo_path = abs_path.with_suffix(".nfo")
+    if nfo_path.exists() and nfo_path.stat().st_size > 0:
+        try:
+            success = apply_nfo(plex_item, str_path)
+            logging.info(f"[PROCESS_FILE] NFO applied: {str_path}")
+        except Exception as e:
+            logging.error(f"[PROCESS_FILE] Failed to apply NFO for {str_path}: {e}")
+
+    if subtitles_enabled:
+        try:
+            srt_files = extract_subtitles(str_path)
+            if srt_files:
+                upload_subtitles(plex_item, srt_files)
+        except Exception as e:
+            logging.error(f"[PROCESS_FILE] Subtitle extraction/upload failed for {str_path}: {e}")
+
     processed_files.add(str_path)
-
-    success=False
-    nfo_path=abs_path.with_suffix(".nfo")
-    if nfo_path.exists() and nfo_path.stat().st_size>0 and plex_item:
-        success=apply_nfo(plex_item,str_path)
-
-    if subtitles_enabled and plex_item:
-        srt_files=extract_subtitles(str_path)
-        if srt_files: upload_subtitles(plex_item,srt_files)
     return success
 
 # ==============================
@@ -414,22 +448,42 @@ def watch_worker(stop_event):
             continue
 
 # ==============================
-# Scan directories
+# Directory scan + cache update (with debug)
 # ==============================
-def scan_and_update_cache():
-    video_files=[]
-    for lib_id in config["plex_library_ids"]:
-        try: section=plex.library.sectionByID(lib_id)
-        except: continue
-        locations=getattr(section,"locations",[])
-        logging.info(f"[DEBUG] Section '{section.title}' locations: {locations}")
-        for p in locations:
-            for root,dirs,files in os.walk(p):
-                for f in files:
-                    if f.lower().endswith(VIDEO_EXTS):
-                        full_path=os.path.join(root,f)
-                        video_files.append(full_path)
-    return video_files
+def scan_and_update_cache(base_dirs):
+    """
+    base_dirs: list of directories to scan
+    """
+    logging.info(f"[SCAN] Starting scan for {len(base_dirs)} directories")
+    total_files = 0
+    processed_count = 0
+    skipped_count = 0
+
+    for base_dir in base_dirs:
+        logging.debug(f"[SCAN] Walking directory: {base_dir}")
+        for root, dirs, files in os.walk(base_dir):
+            for fname in files:
+                total_files += 1
+                fpath = os.path.join(root, fname)
+                try:
+                    if process_file(fpath):
+                        processed_count += 1
+                        logging.debug(f"[SCAN] Processed: {fpath}")
+                    else:
+                        skipped_count += 1
+                        logging.debug(f"[SCAN] Skipped: {fpath}")
+                except Exception as e:
+                    logging.error(f"[SCAN] Exception processing {fpath}: {e}")
+
+    logging.info(f"[SCAN] Completed scan")
+    logging.info(f"[SCAN] Total files: {total_files}, Processed: {processed_count}, Skipped/Failed: {skipped_count}")
+
+    # 캐시 저장
+    try:
+        save_cache()
+        logging.info(f"[SCAN] Cache updated successfully")
+    except Exception as e:
+        logging.error(f"[SCAN] Failed to save cache: {e}")
 
 # ==============================
 # Main function
