@@ -100,7 +100,7 @@ export PATH="$BASE_DIR/venv/bin:$PATH"
 if [ -f "$PY_FILE" ]; then
     log "Running tubesync-plex..."
     CMD_ENV="BASE_DIR=$BASE_DIR"
-    CMD="$BASE_DIR/venv/bin/python $PY_FILE --config $BASE_DIR/config/config.json"
+    CMD="$BASE_DIR/venv/bin/python $PY_FILE --config $BASE_DIR/config/config.json ${EXTRA_PY_ARGS[*]}"
 
     if [ "$DISABLE_WATCHDOG" = true ]; then
         CMD="$CMD --disable-watchdog"
