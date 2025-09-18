@@ -29,7 +29,7 @@ args = parser.parse_args()
 BASE_DIR = Path(args.base_dir)
 DISABLE_WATCHDOG = args.disable_watchdog
 DETAIL = args.detail or args.debug
-DEBUG_HTTP = args.debug_http
+DEBUG_HTTP = args.debug_http  # HTTP 로그는 독립 옵션
 
 # 기본 config 경로
 CONFIG_FILE = Path(args.config) if args.config else BASE_DIR / "config" / "config.json"
@@ -145,7 +145,11 @@ class PlexServerWithHTTPDebug(PlexServer):
 # Connect Plex
 # ==============================
 try:
-    plex = PlexServerWithHTTPDebug(config["plex_base_url"], config["plex_token"], debug_http=args.debug_http)
+    plex = PlexServerWithHTTPDebug(
+        config["plex_base_url"],
+        config["plex_token"],
+        debug_http=DEBUG_HTTP  # 여기서 독립 옵션 적용
+    )
 except Exception as e:
     logging.error(f"Failed to connect to Plex: {e}")
     sys.exit(1)
