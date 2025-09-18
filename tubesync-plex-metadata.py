@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
-import os, sys, json, time, threading, subprocess, shutil, hashlib
+import os, sys, json, time, threading, subprocess, shutil, hashlib, queue
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from queue import Queue, Empty
 from plexapi.server import PlexServer
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
@@ -20,9 +19,10 @@ parser.add_argument("--config", required=True, help="Path to config file")
 parser.add_argument("--disable-watchdog", action="store_true", help="Disable folder watchdog")
 parser.add_argument("--detail", action="store_true", help="Enable detailed logging")
 parser.add_argument("--debug-http", action="store_true", help="Enable HTTP debug logging")
-parser.add_argument("--debug", action="store_true", help="Enable debug logging")
 args = parser.parse_args()
-DEBUG = args.debug
+DISABLE_WATCHDOG = args.disable_watchdog
+DETAIL = args.detail
+DEBUG_HTTP = args.debug_http
 
 # ==============================
 # Default config
@@ -40,7 +40,8 @@ default_config = {
         "max_concurrent_requests": "Max concurrent Plex API requests",
         "request_delay": "Delay between Plex API requests (sec)",
         "watch_folders": "True = enable real-time folder monitoring",
-        "watch_debounce_delay": "Debounce time (sec) before processing events"
+        "watch_debounce_delay": "Debounce time (sec) before processing events",
+        "delete_nfo_after_apply": "True = remove NFO file after applying"
     },
     "plex_base_url": "",
     "plex_token": "",
@@ -53,7 +54,8 @@ default_config = {
     "max_concurrent_requests": 4,
     "request_delay": 0.2,
     "watch_folders": True,
-    "watch_debounce_delay": 3
+    "watch_debounce_delay": 3,
+    "delete_nfo_after_apply": True
 }
 
 BASE_DIR = Path(os.environ.get("BASE_DIR", "/app"))
@@ -79,13 +81,14 @@ if DISABLE_WATCHDOG:
     config["watch_folders"] = False
 
 delete_nfo_after_apply = config.get("delete_nfo_after_apply", True)
+subtitles_enabled = args.subtitles or config.get("subtitles", False)
 
 # ==============================
 # Logging
 # ==============================
 silent = config.get("silent", False)
 detail = config.get("detail", False) and not silent
-log_level = logging.DEBUG if DEBUG else (logging.INFO if not config.get("silent", False) else logging.WARNING)
+log_level = logging.INFO if not silent else logging.WARNING
 logging.basicConfig(level=log_level, format='[%(levelname)s] %(message)s')
 
 # ==============================
@@ -101,10 +104,10 @@ class HTTPDebugSession(requests.Session):
 
     def send(self, request, **kwargs):
         if self.enable_debug:
-            logging.debug(f"[HTTP DEBUG] REQUEST: {request.method} {request.url}")
+            print("[HTTP DEBUG] REQUEST:", request.method, request.url)
         response = super().send(request, **kwargs)
         if self.enable_debug:
-            logging.debug(f"[HTTP DEBUG] RESPONSE: {response.status_code} {response.reason}")
+            print("[HTTP DEBUG] RESPONSE:", response.status_code, response.reason)
         return response
 
 # ==============================
@@ -141,9 +144,14 @@ cache_lock = threading.Lock()
 api_semaphore = threading.Semaphore(config.get("max_concurrent_requests", 2))
 request_delay = config.get("request_delay", 0.1)
 threads = config.get("threads", 4)
-subtitles_enabled = config.get("subtitles", False)
 processed_files = set()
+watch_debounce_delay = config.get("watch_debounce_delay", 2)
 cache_modified = False
+file_queue = queue.Queue()
+
+LANG_MAP = {"eng":"en","jpn":"ja","kor":"ko","fre":"fr","fra":"fr","spa":"es",
+            "ger":"de","deu":"de","ita":"it","chi":"zh","und":"und"}
+def map_lang(code): return LANG_MAP.get(code.lower(),"und")
 
 # ==============================
 # Cache handling
@@ -174,7 +182,7 @@ def update_cache(path, ratingKey=None, nfo_hash=None):
         cache_modified = True
 
 # ==============================
-# FFmpeg setup
+# FFmpeg setup (MD5 기반)
 # ==============================
 def setup_ffmpeg():
     arch = platform.machine()
@@ -191,28 +199,25 @@ def setup_ffmpeg():
     tmp_dir.mkdir(parents=True, exist_ok=True)
     tar_path = tmp_dir / "ffmpeg.tar.xz"
 
-    # 1. 원격 MD5 가져오기
     try:
         r = requests.get(md5_url, timeout=10)
         r.raise_for_status()
         remote_md5 = r.text.strip().split()[0]
+        logging.info(f"[DEBUG] Remote MD5: {remote_md5}")
     except Exception as e:
         logging.warning(f"Failed to fetch remote MD5: {e}")
         remote_md5 = None
 
-    # 2. 로컬 FFmpeg 최신 여부 확인
     local_md5 = FFMPEG_SHA_FILE.read_text().strip() if FFMPEG_SHA_FILE.exists() else None
     if FFMPEG_BIN.exists() and remote_md5 and local_md5 == remote_md5:
         logging.info("FFmpeg up-to-date (MD5 match)")
         return
 
-    # 3. 로컬 파일 손상 시 삭제 후 재다운로드
     if FFMPEG_BIN.exists():
         logging.warning("Local FFmpeg MD5 mismatch, redownloading...")
         FFMPEG_BIN.unlink(missing_ok=True)
         (FFMPEG_BIN.parent / "ffprobe").unlink(missing_ok=True)
 
-    # 4. 다운로드
     logging.info("Downloading FFmpeg...")
     try:
         r = requests.get(url, stream=True)
@@ -224,7 +229,6 @@ def setup_ffmpeg():
         logging.error(f"Failed to download FFmpeg: {e}")
         sys.exit(1)
 
-    # 5. 다운로드 파일 MD5 검증
     if remote_md5:
         h = hashlib.md5()
         with open(tar_path, "rb") as f:
@@ -234,7 +238,6 @@ def setup_ffmpeg():
             logging.error("Downloaded FFmpeg MD5 mismatch, aborting")
             sys.exit(1)
 
-    # 6. 압축 해제 및 설치
     try:
         extract_dir = tmp_dir / "extract"
         shutil.rmtree(extract_dir, ignore_errors=True)
@@ -302,122 +305,109 @@ def apply_nfo(ep, file_path):
         return False
 
 # ==============================
-# Subtitle extraction & Plex upload with retries
+# Subtitle extraction & upload
 # ==============================
-def extract_subtitles(file_path):
-    base, _ = os.path.splitext(file_path)
+def extract_subtitles(video_path):
+    base, _ = os.path.splitext(video_path)
     srt_files=[]
     try:
         result=subprocess.run([str(FFMPEG_BIN.parent/"ffprobe"),"-v","error","-select_streams","s",
                                "-show_entries","stream=index:stream_tags=language,codec_name",
-                               "-of","json",file_path],
+                               "-of","json",video_path],
                               capture_output=True,text=True,check=True)
         streams=json.loads(result.stdout).get("streams",[])
         for s in streams:
             idx=s.get("index")
             codec=s.get("codec_name","")
             if codec.lower() in ["pgs","dvdsub","hdmv_pgs","vobsub"]:
-                logging.warning(f"Skipping unsupported subtitle codec {codec} in {file_path}")
+                logging.warning(f"Skipping unsupported subtitle codec {codec} in {video_path}")
                 continue
-            lang=s.get("tags",{}).get("language","und")
+            lang=map_lang(s.get("tags",{}).get("language","und"))
             srt=f"{base}.{lang}.srt"
             if os.path.exists(srt): continue
             try:
-                subprocess.run([str(FFMPEG_BIN),"-y","-i",file_path,"-map",f"0:s:{idx}",srt],
+                subprocess.run([str(FFMPEG_BIN),"-y","-i",video_path,"-map",f"0:s:{idx}",srt],
                                stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,check=True)
                 srt_files.append((srt,lang))
-            except Exception:
-                logging.warning(f"Skipping failed subtitle stream idx={idx} for {file_path}")
+            except Exception as e:
+                logging.error(f"[ERROR] Subtitle extraction failed for stream {idx} in {video_path} - {e}")
     except Exception as e:
-        logging.error(f"[ERROR] ffprobe failed: {file_path} - {e}")
+        logging.error(f"[ERROR] ffprobe failed: {video_path} - {e}")
     return srt_files
 
 def upload_subtitles(ep,srt_files):
     for srt,lang in srt_files:
-        for attempt in range(1,4):
+        retries=3
+        while retries>0:
             try:
                 with api_semaphore:
                     ep.uploadSubtitles(srt,language=lang)
                     time.sleep(request_delay)
                 break
             except Exception as e:
-                logging.warning(f"[ERROR] Subtitle upload attempt {attempt} failed: {srt} - {e}")
-                time.sleep(1)
+                retries-=1
+                logging.error(f"[ERROR] Subtitle upload failed: {srt} - {e}, retries left: {retries}")
 
 # ==============================
 # File processing
 # ==============================
-def process_single_file(file_path):
+def process_file(file_path):
     abs_path = Path(file_path).resolve()
     str_path = str(abs_path)
-    if DEBUG: logging.debug(f"[DEBUG] Start processing: {str_path}")
+    if str_path in processed_files: return False
+    if abs_path.suffix.lower() not in VIDEO_EXTS: return False
 
-    if str_path in processed_files:
-        if DEBUG: logging.debug(f"[DEBUG] Already processed: {str_path}")
-        return False
-
-    plex_item = find_plex_item(str_path)
-    if plex_item:
-        update_cache(str_path, plex_item.ratingKey)
-
+    plex_item=None
+    ratingKey=cache.get(str_path,{}).get("ratingKey")
+    if ratingKey:
+        try: plex_item=plex.fetchItem(ratingKey)
+        except: plex_item=None
+    if not plex_item: plex_item=find_plex_item(str_path)
+    if plex_item: update_cache(str_path, plex_item.ratingKey)
     processed_files.add(str_path)
-    success = False
 
-    # NFO 적용
-    nfo_path = abs_path.with_suffix(".nfo")
-    if nfo_path.exists() and nfo_path.stat().st_size > 0 and plex_item:
-        success = apply_nfo(plex_item, str_path)
+    success=False
+    nfo_path=abs_path.with_suffix(".nfo")
+    if nfo_path.exists() and nfo_path.stat().st_size>0 and plex_item:
+        success=apply_nfo(plex_item,str_path)
 
-    # 자막 추출
     if subtitles_enabled and plex_item:
-        srt_files = extract_subtitles(str_path)
-        if srt_files: upload_subtitles(plex_item, srt_files)
-
-    if DEBUG: logging.debug(f"[DEBUG] Finished processing: {str_path}, success={success}")
+        srt_files=extract_subtitles(str_path)
+        if srt_files: upload_subtitles(plex_item,srt_files)
     return success
 
 # ==============================
 # Watchdog
 # ==============================
-event_queue = Queue()
 class WatchHandler(FileSystemEventHandler):
-    def on_created(self, event):
+    def on_any_event(self,event):
         if event.is_directory: return
-        if Path(event.src_path).suffix.lower() in VIDEO_EXTS:
-            event_queue.put(event.src_path)
+        file_queue.put(str(Path(event.src_path).resolve()))
 
 def watch_worker(stop_event):
     while not stop_event.is_set():
         try:
-            file_path = event_queue.get(timeout=1)
-            logging.info(f"[WATCH] Processing {file_path}")
-            process_single_file(file_path)
-            event_queue.task_done()
-        except Empty:
+            path=file_queue.get(timeout=0.5)
+            process_file(path)
+        except queue.Empty:
             continue
 
 # ==============================
-# Initial scan
+# Scan directories
 # ==============================
 def scan_and_update_cache():
     video_files=[]
     for lib_id in config["plex_library_ids"]:
         try: section=plex.library.sectionByID(lib_id)
         except: continue
-        for p in getattr(section,"locations",[]):
+        locations=getattr(section,"locations",[])
+        logging.info(f"[DEBUG] Section '{section.title}' locations: {locations}")
+        for p in locations:
             for root,dirs,files in os.walk(p):
                 for f in files:
                     if f.lower().endswith(VIDEO_EXTS):
-                        full_path = os.path.abspath(os.path.join(root,f))
+                        full_path=os.path.join(root,f)
                         video_files.append(full_path)
-                        if full_path not in cache:
-                            plex_item=find_plex_item(full_path)
-                            if plex_item: update_cache(full_path, plex_item.ratingKey)
-                        nfo_path=Path(full_path).with_suffix(".nfo")
-                        if nfo_path.exists() and nfo_path.stat().st_size>0:
-                            plex_item=find_plex_item(full_path)
-                            if plex_item: apply_nfo(plex_item,full_path)
-    save_cache()
     return video_files
 
 # ==============================
@@ -426,41 +416,38 @@ def scan_and_update_cache():
 def main():
     logging.info("START")
     setup_ffmpeg()
-    video_files = scan_and_update_cache()  # 항상 리스트 반환
 
-    if DEBUG: logging.debug(f"[DEBUG] Total video files: {len(video_files)}")
+    video_files = scan_and_update_cache()
+    logging.info(f"[INFO] Total video files found: {len(video_files)}")
 
-    if threads > 1:
-        with ThreadPoolExecutor(max_workers=threads) as executor:
-            futures = {executor.submit(process_single_file, f): f for f in video_files}
-            for fut in as_completed(futures):
-                _ = fut.result()
-    else:
-        for f in video_files:
-            process_single_file(f)
+    with ThreadPoolExecutor(max_workers=threads) as executor:
+        futures = {executor.submit(process_file,f):f for f in video_files}
+        for fut in as_completed(futures):
+            try: fut.result()
+            except Exception as e: logging.error(f"[ERROR] Processing {futures[fut]} failed: {e}")
 
     save_cache()
-    logging.info("END")
 
-    stop_event=threading.Event()
-    if config.get("watch_folders",True):
-        observer=Observer()
+    if config["watch_folders"] and not DISABLE_WATCHDOG:
+        stop_event = threading.Event()
+        observer = Observer()
         for lib_id in config["plex_library_ids"]:
             try: section=plex.library.sectionByID(lib_id)
             except: continue
             for loc in getattr(section,"locations",[]):
-                observer.schedule(WatchHandler(),loc,recursive=True)
+                observer.schedule(WatchHandler(), loc, recursive=True)
         observer.start()
-        watch_thread=threading.Thread(target=watch_worker,args=(stop_event,),daemon=True)
+        watch_thread = threading.Thread(target=watch_worker, args=(stop_event,))
         watch_thread.start()
         try:
             while True: time.sleep(1)
         except KeyboardInterrupt:
             stop_event.set()
             observer.stop()
-            observer.join()
+        observer.join()
+        watch_thread.join()
+
+    logging.info("END")
 
 if __name__=="__main__":
-    logging.info("START")
     main()
-    logging.info("END")
