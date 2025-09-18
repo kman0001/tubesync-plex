@@ -11,14 +11,15 @@ import platform
 import requests
 import logging
 
-# ==============================
+# --------------------------
 # Argument parsing
-# ==============================
-parser = argparse.ArgumentParser(description="TubeSync Plex Metadata Sync")
-parser.add_argument("--disable-watchdog", action="store_true", help="Disable folder watching")
-parser.add_argument("--config", type=str, default=None, help="Path to config.json")
+# --------------------------
+parser = argparse.ArgumentParser(description="TubeSync Plex Metadata")
+parser.add_argument("--config", required=True, help="Path to config file")
+parser.add_argument("--disable-watchdog", action="store_true", help="Disable folder watchdog")
+parser.add_argument("--detail", action="store_true", help="Enable detailed logging")
+parser.add_argument("--debug-http", action="store_true", help="Enable HTTP debug logging")
 args = parser.parse_args()
-DISABLE_WATCHDOG = args.disable_watchdog
 
 # ==============================
 # Default config
@@ -58,7 +59,7 @@ CONFIG_DIR = BASE_DIR / "config"
 CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 CONFIG_FILE = Path(args.config) if args.config else CONFIG_DIR / "config.json"
 CACHE_FILE = CONFIG_FILE.parent / "tubesync_cache.json"
-FFMPEG_BIN = BASE_DIR / "ffmpeg"           # venv 내부가 아닌 앱 내부 전용 설치
+FFMPEG_BIN = BASE_DIR / "ffmpeg"           # dedicated FFmpeg installed inside the app
 FFMPEG_SHA_FILE = BASE_DIR / ".ffmpeg_sha"
 
 # Load or create config
@@ -71,17 +72,21 @@ if not CONFIG_FILE.exists():
 with CONFIG_FILE.open("r", encoding="utf-8") as f:
     config = json.load(f)
 
-if DISABLE_WATCHDOG:
+if args.disable_watchdog:
     config["watch_folders"] = False
 
 # ==============================
 # Logging setup
 # ==============================
 silent = config.get("silent", False)
-detail = config.get("detail", False) and not silent  # silent=True면 detail 무시
+detail = config.get("detail", False) and not silent
 
 log_level = logging.DEBUG if detail else (logging.INFO if not silent else logging.WARNING)
 logging.basicConfig(level=log_level, format='[%(levelname)s] %(message)s')
+
+# HTTP debug
+http_logger = logging.getLogger("urllib3")
+http_logger.setLevel(logging.DEBUG if args.debug_http else logging.WARNING)
 
 # ==============================
 # Plex connection
@@ -93,7 +98,7 @@ except Exception as e:
     sys.exit(1)
 
 # ==============================
-# Globals
+# Global constants
 # ==============================
 VIDEO_EXTS = (".mkv", ".mp4", ".avi", ".mov", ".wmv", ".flv", ".m4v")
 api_semaphore = threading.Semaphore(config.get("max_concurrent_requests", 2))
@@ -119,6 +124,7 @@ else:
     logging.debug(f"Created empty cache at {CACHE_FILE}")
 
 def save_cache():
+    """Save cache to disk safely with lock"""
     with cache_lock:
         try:
             CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -128,10 +134,11 @@ def save_cache():
         except Exception as e:
             logging.error(f"Failed to save cache: {e}")
 
-# -----------------------------
-# FFmpeg + FFprobe setup (with SHA check & network error handling)
-# -----------------------------
+# ==============================
+# FFmpeg + FFprobe setup
+# ==============================
 def setup_ffmpeg():
+    """Setup static FFmpeg/FFprobe for the system architecture"""
     arch = platform.machine()
     if arch == "x86_64":
         url = "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz"
@@ -153,12 +160,11 @@ def setup_ffmpeg():
         with open(FFMPEG_SHA_FILE, "r") as f:
             local_sha = f.read().strip()
 
-    # If FFmpeg exists and SHA matches, skip download
+    # Skip download if up-to-date
     if os.path.exists(FFMPEG_BIN) and remote_sha and remote_sha == local_sha:
         if detail: print("[INFO] Static FFmpeg/FFprobe up-to-date, skipping download.")
     else:
         if os.path.exists(FFMPEG_BIN) and not remote_sha:
-            # Network error, but local FFmpeg exists → keep it
             if detail: print("[WARN] Network error fetching SHA, using existing FFmpeg/FFprobe.")
         else:
             with log_lock: print("[INFO] Downloading/updating static FFmpeg and FFprobe...")
@@ -190,8 +196,8 @@ def setup_ffmpeg():
             # Move ffprobe
             ffprobe_path = next(tmp_dir.glob("**/ffprobe"), None)
             if ffprobe_path:
-                shutil.move(str(ffprobe_path), FFPROBE_BIN)
-                os.chmod(FFPROBE_BIN, 0o755)
+                shutil.move(str(ffprobe_path), FFMPEG_BIN.parent / "ffprobe")
+                os.chmod(str(FFMPEG_BIN.parent / "ffprobe"), 0o755)
             elif detail:
                 print("[WARN] ffprobe binary not found, only ffmpeg installed.")
 
@@ -200,12 +206,11 @@ def setup_ffmpeg():
                     f.write(remote_sha)
             shutil.rmtree(tmp_dir, ignore_errors=True)
 
-    # Add venv bin to PATH for subprocesses
     os.environ["PATH"] = f"{os.path.dirname(FFMPEG_BIN)}:{os.environ.get('PATH','')}"
 
-# -----------------------------
+# ==============================
 # Plex item finder
-# -----------------------------
+# ==============================
 def find_plex_item(abs_path):
     """Find Plex item by absolute path across libraries"""
     for lib_id in config["plex_library_ids"]:
@@ -219,9 +224,9 @@ def find_plex_item(abs_path):
                     return item
     return None
 
-# -----------------------------
+# ==============================
 # Library scan & cache update
-# -----------------------------
+# ==============================
 def scan_and_update_cache():
     """Full Plex library scan to update cache"""
     global cache
@@ -266,6 +271,7 @@ def map_lang(code):
     return LANG_MAP.get(code.lower(), "und")
 
 def extract_subtitles(video_path):
+    """Extract subtitle streams from a video file using ffprobe + ffmpeg"""
     base, _ = os.path.splitext(video_path)
     srt_files = []
     ffprobe_cmd = [
@@ -295,10 +301,7 @@ def extract_subtitles(video_path):
     return srt_files
 
 def upload_subtitles(ep, srt_files):
-    """
-    Upload extracted subtitles to Plex.
-    Respects max concurrent requests and detail/silent logging.
-    """
+    """Upload extracted subtitles to Plex respecting concurrency and logging"""
     for srt, lang in srt_files:
         try:
             with api_semaphore:
@@ -346,15 +349,10 @@ def apply_nfo(ep, file_path):
         return False
 
 # -----------------------------
-# Process single file with NFO & subtitles
+# Process single file
 # -----------------------------
 def process_file(file_path, ignore_processed=False):
-    """
-    Process a single video file:
-    - Apply NFO if exists
-    - Extract & upload subtitles if enabled
-    - Respect silent/detail flags
-    """
+    """Process video file: apply NFO and upload subtitles"""
     abs_path = Path(file_path).resolve()
     if not ignore_processed and abs_path in processed_files:
         return False
@@ -418,7 +416,7 @@ def process_file(file_path, ignore_processed=False):
 # Watchdog event handler
 # -----------------------------
 class VideoEventHandler(FileSystemEventHandler):
-    """Handles create/delete events for video & NFO files with debounce"""
+    """Handle create/delete events for video & NFO files with debounce"""
 
     def __init__(self):
         self.nfo_queue = set()
@@ -448,18 +446,21 @@ class VideoEventHandler(FileSystemEventHandler):
                 self.schedule_nfo(path)
 
     def schedule_nfo(self, path):
+        """Add NFO file to queue with debounce"""
         self.nfo_queue.add(path)
         if not self.nfo_timer:
             self.nfo_timer = threading.Timer(10, self.process_nfo_queue)
             self.nfo_timer.start()
 
     def schedule_video(self, path):
+        """Add video file to queue with debounce"""
         self.video_queue.add(path)
         if not self.video_timer:
             self.video_timer = threading.Timer(2, self.process_video_queue)
             self.video_timer.start()
 
     def process_nfo_queue(self):
+        """Process queued NFO files"""
         with self.lock:
             queue = list(self.nfo_queue)
             self.nfo_queue.clear()
@@ -471,6 +472,7 @@ class VideoEventHandler(FileSystemEventHandler):
         self._process_retry()
 
     def process_video_queue(self):
+        """Process queued video files"""
         with self.lock:
             queue = list(self.video_queue)
             self.video_queue.clear()
@@ -480,6 +482,7 @@ class VideoEventHandler(FileSystemEventHandler):
         save_cache()
 
     def _find_video(self, nfo_path):
+        """Find corresponding video file for NFO"""
         for ext in VIDEO_EXTS:
             candidate = str(Path(nfo_path).with_suffix(ext))
             if os.path.exists(candidate):
@@ -487,6 +490,7 @@ class VideoEventHandler(FileSystemEventHandler):
         return None
 
     def _process_retry(self):
+        """Retry failed NFO processes up to 3 times"""
         now = time.time()
         for path, (retry_time, count) in list(self.retry_queue.items()):
             if now >= retry_time:
@@ -502,6 +506,7 @@ class VideoEventHandler(FileSystemEventHandler):
 # Main entry point
 # -----------------------------
 def main():
+    """Main execution: scan libraries, process files, optionally watch folders"""
     scan_and_update_cache()
     save_cache()
 
@@ -517,7 +522,7 @@ def main():
 
     save_cache()
 
-    if config.get("watch_folders", False) and not DISABLE_WATCHDOG:
+    if config.get("watch_folders", False) and not args.disable_watchdog:
         observer = Observer()
         handler = VideoEventHandler()
         for lib_id in config["plex_library_ids"]:
