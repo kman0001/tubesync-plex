@@ -491,31 +491,59 @@ def scan_and_update_cache(base_dirs):
 def main():
     setup_ffmpeg()
 
-    # scan_and_update_cache(), process_file(), save_cache() 등 기존 함수 그대로 사용
-    video_files = scan_and_update_cache()
+    # ----------------------
+    # scan_and_update_cache()용 base_dirs 준비
+    # ----------------------
+    base_dirs = []
+    for lib_id in config["plex_library_ids"]:
+        try:
+            section = plex.library.sectionByID(lib_id)
+        except Exception as e:
+            logging.warning(f"Failed to access Plex library ID {lib_id}: {e}")
+            continue
+        for loc in getattr(section, "locations", []):
+            base_dirs.append(loc)
+
+    # ----------------------
+    # 캐시 업데이트용 스캔
+    # ----------------------
+    scan_and_update_cache(base_dirs)
+
+    # ----------------------
+    # 개별 파일 처리
+    # ----------------------
+    video_files = list(processed_files)  # scan 과정에서 processed_files에 추가됨
     logging.info(f"[INFO] Total video files found: {len(video_files)}")
 
     with ThreadPoolExecutor(max_workers=threads) as executor:
-        futures = {executor.submit(process_file,f):f for f in video_files}
+        futures = {executor.submit(process_file, f): f for f in video_files}
         for fut in as_completed(futures):
-            try: fut.result()
-            except Exception as e: logging.error(f"[ERROR] Processing {futures[fut]} failed: {e}")
+            try:
+                fut.result()
+            except Exception as e:
+                logging.error(f"[ERROR] Processing {futures[fut]} failed: {e}")
 
     save_cache()
 
-    if config["watch_folders"] and not DISABLE_WATCHDOG:
+    # ----------------------
+    # Watchdog
+    # ----------------------
+    if config.get("watch_folders", False) and not DISABLE_WATCHDOG:
         stop_event = threading.Event()
         observer = Observer()
         for lib_id in config["plex_library_ids"]:
-            try: section = plex.library.sectionByID(lib_id)
-            except: continue
-            for loc in getattr(section,"locations",[]):
+            try:
+                section = plex.library.sectionByID(lib_id)
+            except:
+                continue
+            for loc in getattr(section, "locations", []):
                 observer.schedule(WatchHandler(), loc, recursive=True)
         observer.start()
         watch_thread = threading.Thread(target=watch_worker, args=(stop_event,))
         watch_thread.start()
         try:
-            while True: time.sleep(1)
+            while True:
+                time.sleep(1)
         except KeyboardInterrupt:
             stop_event.set()
             observer.stop()
