@@ -128,9 +128,9 @@ def save_cache():
         except Exception as e:
             logging.error(f"Failed to save cache: {e}")
 
-# ==============================
-# FFmpeg setup
-# ==============================
+# -----------------------------
+# FFmpeg + FFprobe setup (with SHA check & network error handling)
+# -----------------------------
 def setup_ffmpeg():
     arch = platform.machine()
     if arch == "x86_64":
@@ -138,42 +138,70 @@ def setup_ffmpeg():
     elif arch == "aarch64":
         url = "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-arm64-static.tar.xz"
     else:
-        logging.error(f"Unsupported architecture: {arch}")
+        print(f"[ERROR] Unsupported architecture: {arch}")
         sys.exit(1)
 
     sha_url = url + ".sha256"
     remote_sha = None
     try:
-        remote_sha = requests.get(sha_url, timeout=5).text.strip().split()[0]
+        remote_sha = requests.get(sha_url, timeout=10).text.strip().split()[0]
     except Exception as e:
-        logging.warning(f"Failed to fetch remote SHA: {e}")
+        print(f"[WARN] Failed to fetch FFmpeg SHA: {e}")
 
-    local_sha = FFMPEG_SHA_FILE.read_text().strip() if FFMPEG_SHA_FILE.exists() else None
+    local_sha = None
+    if os.path.exists(FFMPEG_SHA_FILE):
+        with open(FFMPEG_SHA_FILE, "r") as f:
+            local_sha = f.read().strip()
 
-    # 네트워크 오류나 SHA 미일치 시만 설치
-    if not FFMPEG_BIN.exists() or (remote_sha and remote_sha != local_sha):
-        logging.info("Downloading/updating static FFmpeg...")
-        tmp_dir = Path("/tmp/ffmpeg_download")
-        shutil.rmtree(tmp_dir, ignore_errors=True)
-        tmp_dir.mkdir(parents=True, exist_ok=True)
-        try:
-            subprocess.run(f"curl -fL {url} | tar -xJ --strip-components=1 -C {tmp_dir} ffmpeg", 
-                           shell=True, check=True)
-            shutil.move(str(tmp_dir / "ffmpeg"), FFMPEG_BIN)
-            FFMPEG_BIN.chmod(0o755)
-            if remote_sha:
-                FFMPEG_SHA_FILE.write_text(remote_sha)
-        except subprocess.CalledProcessError as e:
-            logging.error(f"FFmpeg download/extract failed: {e}")
-            if FFMPEG_BIN.exists():
-                logging.info("Using existing local FFmpeg binary")
-            else:
-                sys.exit(1)
-        finally:
+    # If FFmpeg exists and SHA matches, skip download
+    if os.path.exists(FFMPEG_BIN) and remote_sha and remote_sha == local_sha:
+        if detail: print("[INFO] Static FFmpeg/FFprobe up-to-date, skipping download.")
+    else:
+        if os.path.exists(FFMPEG_BIN) and not remote_sha:
+            # Network error, but local FFmpeg exists → keep it
+            if detail: print("[WARN] Network error fetching SHA, using existing FFmpeg/FFprobe.")
+        else:
+            with log_lock: print("[INFO] Downloading/updating static FFmpeg and FFprobe...")
+            tmp_dir = Path("/tmp/ffmpeg_download")
             shutil.rmtree(tmp_dir, ignore_errors=True)
-    os.environ["PATH"] = f"{FFMPEG_BIN.parent}:{os.environ.get('PATH','')}"
+            tmp_dir.mkdir(parents=True, exist_ok=True)
+            try:
+                subprocess.run(f"curl -L {url} | tar -xJ -C {tmp_dir}", 
+                               shell=True, check=True)
+            except subprocess.CalledProcessError as e:
+                print(f"[ERROR] Failed to download/extract FFmpeg: {e}")
+                if os.path.exists(FFMPEG_BIN):
+                    print("[WARN] Using existing FFmpeg/FFprobe despite download failure.")
+                    return
+                else:
+                    sys.exit(1)
 
-setup_ffmpeg()
+            os.makedirs(os.path.dirname(FFMPEG_BIN), exist_ok=True)
+
+            # Move ffmpeg
+            ffmpeg_path = next(tmp_dir.glob("**/ffmpeg"), None)
+            if ffmpeg_path:
+                shutil.move(str(ffmpeg_path), FFMPEG_BIN)
+                os.chmod(FFMPEG_BIN, 0o755)
+            else:
+                print("[ERROR] ffmpeg binary not found in downloaded archive.")
+                sys.exit(1)
+
+            # Move ffprobe
+            ffprobe_path = next(tmp_dir.glob("**/ffprobe"), None)
+            if ffprobe_path:
+                shutil.move(str(ffprobe_path), FFPROBE_BIN)
+                os.chmod(FFPROBE_BIN, 0o755)
+            elif detail:
+                print("[WARN] ffprobe binary not found, only ffmpeg installed.")
+
+            if remote_sha:
+                with open(FFMPEG_SHA_FILE, "w") as f:
+                    f.write(remote_sha)
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    # Add venv bin to PATH for subprocesses
+    os.environ["PATH"] = f"{os.path.dirname(FFMPEG_BIN)}:{os.environ.get('PATH','')}"
 
 # -----------------------------
 # Plex item finder
@@ -228,56 +256,58 @@ def scan_and_update_cache():
 # -----------------------------
 # Subtitles
 # -----------------------------
-LANG_MAP = {"eng":"en","jpn":"ja","kor":"ko","fre":"fr","fra":"fr","spa":"es","ger":"de","deu":"de","ita":"it","chi":"zh","und":"und"}
-def map_lang(code): 
-    return LANG_MAP.get(code.lower(),"und")
+LANG_MAP = {
+    "eng":"en","jpn":"ja","kor":"ko","fre":"fr","fra":"fr",
+    "spa":"es","ger":"de","deu":"de","ita":"it","chi":"zh","und":"und"
+}
+
+def map_lang(code):
+    """Map FFmpeg language codes to standardized 2-letter codes"""
+    return LANG_MAP.get(code.lower(), "und")
 
 def extract_subtitles(video_path):
-    """
-    Extract embedded subtitles from video into .srt files.
-    detail=True이면 ffprobe/ffmpeg stderr 출력
-    """
-    base,_ = os.path.splitext(video_path)
+    base, _ = os.path.splitext(video_path)
     srt_files = []
-    ffprobe_cmd = [str(FFMPEG_BIN.parent / "ffprobe"), "-v", "error", "-select_streams", "s",
-                   "-show_entries", "stream=index:stream_tags=language,codec_name",
-                   "-of", "json", str(video_path)]
+    ffprobe_cmd = [
+        "ffprobe","-v","error","-select_streams","s",
+        "-show_entries","stream=index:stream_tags=language,codec_name",
+        "-of","json", video_path
+    ]
     try:
-        result = subprocess.run(ffprobe_cmd, capture_output=True, text=True)
+        result = subprocess.run(ffprobe_cmd, capture_output=True, text=True, check=True)
         streams = json.loads(result.stdout).get("streams", [])
         for s in streams:
             idx = s.get("index")
-            lang = map_lang(s.get("tags", {}).get("language","und"))
+            lang = map_lang(s.get("tags", {}).get("language", "und"))
             srt = f"{base}.{lang}.srt"
-            if Path(srt).exists(): 
+            if os.path.exists(srt):
                 continue
-            ffmpeg_cmd = [str(FFMPEG_BIN), "-y", "-i", str(video_path), f"-map", f"0:s:{idx}", srt]
-            try:
-                if detail:
-                    subprocess.run(ffmpeg_cmd, check=True)
-                else:
-                    subprocess.run(ffmpeg_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
-                if Path(srt).exists(): 
-                    srt_files.append((srt, lang))
-            except subprocess.CalledProcessError as e:
-                logging.error(f"ffmpeg extraction failed for {video_path} stream {idx}: {e}")
+            subprocess.run(
+                ["ffmpeg","-y","-i",video_path,f"-map","0:s:{idx}",srt],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=True
+            )
+            if os.path.exists(srt):
+                srt_files.append((srt, lang))
     except Exception as e:
-        logging.error(f"ffprobe failed for {video_path}: {e}")
+        print(f"[ERROR] ffprobe/ffmpeg failed: {video_path} - {e}")
     return srt_files
 
 def upload_subtitles(ep, srt_files):
     """
-    Upload extracted subtitles to Plex episode object.
-    Uses semaphore and request_delay to avoid rate limits.
+    Upload extracted subtitles to Plex.
+    Respects max concurrent requests and detail/silent logging.
     """
     for srt, lang in srt_files:
         try:
             with api_semaphore:
                 ep.uploadSubtitles(srt, language=lang)
                 time.sleep(request_delay)
-            logging.info(f"Uploaded subtitle: {srt}")
+            if detail:
+                print(f"[SUBTITLE] Uploaded: {srt}")
         except Exception as e:
-            logging.error(f"Subtitle upload failed: {srt} - {e}")
+            print(f"[ERROR] Subtitle upload failed: {srt} - {e}")
 
 # -----------------------------
 # NFO processing
