@@ -15,29 +15,28 @@ import argparse
 # Arguments
 # ==============================
 parser = argparse.ArgumentParser(description="TubeSync Plex Metadata")
-parser.add_argument("--config", help="Path to config file (optional)")
+parser.add_argument("--config", required=True, help="Path to config file")
 parser.add_argument("--disable-watchdog", action="store_true", help="Disable folder watchdog")
 parser.add_argument("--detail", action="store_true", help="Enable detailed logging")
 parser.add_argument("--debug-http", action="store_true", help="Enable HTTP debug logging")
 parser.add_argument("--debug", action="store_true", help="Enable debug mode (implies detail logging)")
-parser.add_argument("--base-dir", help="Base directory override", default=os.environ.get("BASE_DIR", "/app"))
+parser.add_argument("--base-dir", help="Base directory override", default=os.environ.get("BASE_DIR", str(Path(__file__).parent.resolve())))
 args = parser.parse_args()
 
 # ==============================
 # Global flags
 # ==============================
-BASE_DIR = Path(args.base_dir)
+BASE_DIR = Path(args.base_dir).resolve()
 DISABLE_WATCHDOG = args.disable_watchdog
 DETAIL = args.detail or args.debug
-DEBUG_HTTP = args.debug_http  # HTTP 로그는 독립 옵션
+DEBUG_HTTP = args.debug_http
 
-# 기본 config 경로
-CONFIG_FILE = Path(args.config) if args.config else BASE_DIR / "config" / "config.json"
+CONFIG_FILE = Path(args.config).resolve()
 CACHE_FILE = CONFIG_FILE.parent / "tubesync_cache.json"
 
 VENVDIR = BASE_DIR / "venv"
-FFMPEG_BIN = VENVDIR / "ffmpeg"
-FFPROBE_BIN = VENVDIR / "ffprobe"
+FFMPEG_BIN = VENVDIR / "bin/ffmpeg"
+FFPROBE_BIN = VENVDIR / "bin/ffprobe"
 FFMPEG_SHA_FILE = BASE_DIR / ".ffmpeg_md5"
 
 # ==============================
@@ -101,6 +100,9 @@ logging.basicConfig(level=log_level, format='[%(levelname)s] %(message)s')
 
 logging.info(f"BASE_DIR = {BASE_DIR}")
 logging.info(f"CONFIG_FILE = {CONFIG_FILE}")
+logging.info(f"VENVDIR = {VENVDIR}")
+logging.info(f"FFMPEG_BIN = {FFMPEG_BIN}")
+logging.info(f"FFPROBE_BIN = {FFPROBE_BIN}")
 logging.info(f"DISABLE_WATCHDOG = {DISABLE_WATCHDOG}")
 logging.info(f"DETAIL = {DETAIL}")
 logging.info(f"DEBUG_HTTP = {DEBUG_HTTP}")
