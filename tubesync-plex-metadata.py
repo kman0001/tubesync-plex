@@ -27,32 +27,32 @@ DISABLE_WATCHDOG = args.disable_watchdog
 # ==============================
 # Default config
 # ==============================
-{
+default_config = {
     "_comment": {
         "plex_base_url": "Base URL of your Plex server (e.g., http://localhost:32400).",
         "plex_token": "Your Plex authentication token.",
         "plex_library_ids": "List of Plex library IDs to sync (e.g., [10,21,35]).",
-        "silent": "true = only summary logs, false = detailed logs",
-        "detail": "true = verbose mode (debug output)",
-        "subtitles": "true = extract and upload subtitles",
-        "always_apply_nfo": "true = always apply NFO metadata regardless of hash",
+        "silent": "True = only summary logs, False = detailed logs",
+        "detail": "True = verbose mode (debug output)",
+        "subtitles": "True = extract and upload subtitles",
+        "always_apply_nfo": "True = always apply NFO metadata regardless of hash",
         "threads": "Number of worker threads for initial scanning",
         "max_concurrent_requests": "Max concurrent Plex API requests",
         "request_delay": "Delay between Plex API requests (sec)",
-        "watch_folders": "true = enable real-time folder monitoring",
+        "watch_folders": "True = enable real-time folder monitoring",
         "watch_debounce_delay": "Debounce time (sec) before processing events"
     },
     "plex_base_url": "http://172.17.0.1:32400",
     "plex_token": "TomfudPwL2pzJguMc39E",
     "plex_library_ids": [69, 70, 83],
-    "silent": false,
-    "detail": true,
-    "subtitles": false,
-	"always_apply_nfo": true,
+    "silent": False,
+    "detail": True,
+    "subtitles": False,
+    "always_apply_nfo": True,
     "threads": 8,
     "max_concurrent_requests": 4,
     "request_delay": 0.2,
-    "watch_folders": true,
+    "watch_folders": True,
     "watch_debounce_delay": 3
 }
 
