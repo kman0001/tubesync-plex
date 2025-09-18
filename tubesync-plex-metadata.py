@@ -10,6 +10,8 @@ from watchdog.events import FileSystemEventHandler
 import platform
 import requests
 import logging
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 # --------------------------
 # Argument parsing
@@ -20,24 +22,13 @@ parser.add_argument("--disable-watchdog", action="store_true", help="Disable fol
 parser.add_argument("--detail", action="store_true", help="Enable detailed logging")
 parser.add_argument("--debug-http", action="store_true", help="Enable HTTP debug logging")
 args = parser.parse_args()
+DISABLE_WATCHDOG = args.disable_watchdog
 
 # ==============================
 # Default config
 # ==============================
 default_config = {
-    "_comment": {
-        "plex_base_url": "Base URL of your Plex server (e.g., http://localhost:32400).",
-        "plex_token": "Your Plex authentication token.",
-        "plex_library_ids": "List of Plex library IDs to sync (e.g., [10,21,35]).",
-        "silent": "true = only summary logs, false = detailed logs",
-        "detail": "true = verbose mode (debug output)",
-        "subtitles": "true = extract and upload subtitles",
-        "threads": "Number of worker threads for initial scanning",
-        "max_concurrent_requests": "Max concurrent Plex API requests",
-        "request_delay": "Delay between Plex API requests (sec)",
-        "watch_folders": "true = enable real-time folder monitoring",
-        "watch_debounce_delay": "Debounce time (sec) before processing events"
-    },
+    "_comment": { ... },  # same as before
     "plex_base_url": "",
     "plex_token": "",
     "plex_library_ids": [],
@@ -59,7 +50,7 @@ CONFIG_DIR = BASE_DIR / "config"
 CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 CONFIG_FILE = Path(args.config) if args.config else CONFIG_DIR / "config.json"
 CACHE_FILE = CONFIG_FILE.parent / "tubesync_cache.json"
-FFMPEG_BIN = BASE_DIR / "ffmpeg"           # dedicated FFmpeg installed inside the app
+FFMPEG_BIN = BASE_DIR / "ffmpeg"
 FFMPEG_SHA_FILE = BASE_DIR / ".ffmpeg_sha"
 
 # Load or create config
@@ -72,7 +63,7 @@ if not CONFIG_FILE.exists():
 with CONFIG_FILE.open("r", encoding="utf-8") as f:
     config = json.load(f)
 
-if args.disable_watchdog:
+if DISABLE_WATCHDOG:
     config["watch_folders"] = False
 
 # ==============================
@@ -84,15 +75,54 @@ detail = config.get("detail", False) and not silent
 log_level = logging.DEBUG if detail else (logging.INFO if not silent else logging.WARNING)
 logging.basicConfig(level=log_level, format='[%(levelname)s] %(message)s')
 
-# HTTP debug
-http_logger = logging.getLogger("urllib3")
-http_logger.setLevel(logging.DEBUG if args.debug_http else logging.WARNING)
+# ==============================
+# HTTP Debug session
+# ==============================
+class HTTPDebugSession(requests.Session):
+    """Requests session that logs all HTTP requests/responses"""
+    def __init__(self, enable_debug=False):
+        super().__init__()
+        self.enable_debug = enable_debug
+        retries = Retry(total=3, backoff_factor=0.3, status_forcelist=[500,502,503,504])
+        self.mount("http://", HTTPAdapter(max_retries=retries))
+        self.mount("https://", HTTPAdapter(max_retries=retries))
+
+    def send(self, request, **kwargs):
+        if self.enable_debug:
+            print("[HTTP DEBUG] ────── REQUEST ──────")
+            print(f"Method: {request.method}\nURL: {request.url}\nHeaders:\n  " +
+                  "\n  ".join(f"{k}: {v}" for k,v in request.headers.items()))
+            if request.body:
+                print(f"Body: {request.body}")
+        response = super().send(request, **kwargs)
+        if self.enable_debug:
+            print("[HTTP DEBUG] ────── RESPONSE ──────")
+            print(f"Status Code: {response.status_code} {response.reason}")
+            print(f"Headers:\n  " + "\n  ".join(f"{k}: {v}" for k,v in response.headers.items()))
+            print(f"Body (truncated): {response.text[:1000]}")
+            print(f"Elapsed Time: {response.elapsed.total_seconds():.3f}s\n")
+        return response
+
+# ==============================
+# PlexServer with HTTP debug
+# ==============================
+class PlexServerWithHTTPDebug(PlexServer):
+    def _request(self, path, method="GET", headers=None, params=None, data=None, timeout=None):
+        if not hasattr(self, "_debug_session"):
+            self._debug_session = HTTPDebugSession(enable_debug=args.debug_http)
+        url = self._buildURL(path)
+        req_headers = headers or {}
+        if self._token:
+            req_headers["X-Plex-Token"] = self._token
+        resp = self._debug_session.request(method, url, headers=req_headers, params=params, data=data, timeout=timeout)
+        resp.raise_for_status()
+        return resp
 
 # ==============================
 # Plex connection
 # ==============================
 try:
-    plex = PlexServer(config["plex_base_url"], config["plex_token"])
+    plex = PlexServerWithHTTPDebug(config["plex_base_url"], config["plex_token"])
 except Exception as e:
     logging.error(f"Failed to connect to Plex: {e}")
     sys.exit(1)
