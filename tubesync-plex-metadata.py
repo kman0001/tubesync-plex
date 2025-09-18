@@ -280,13 +280,15 @@ def setup_ffmpeg():
     os.environ["PATH"] = f"{FFMPEG_BIN.parent}:{os.environ.get('PATH','')}"
     if DETAIL: logging.info("FFmpeg installed/updated successfully")
 
-# -----------------------------
+# ==============================
 # Plex helpers
-# -----------------------------
+# ==============================
 def find_plex_item(abs_path):
-    abs_path = str(Path(abs_path).resolve())
-    logging.debug(f"[FIND_PLEX_ITEM] Searching Plex item for: {abs_path}")
-
+    """
+    주어진 파일 절대경로에 대응되는 Plex 아이템을 반환.
+    Plex 라이브러리 타입(tvshow/movie/video)에 모두 대응.
+    """
+    abs_path = os.path.abspath(abs_path)
     for lib_id in config["plex_library_ids"]:
         try:
             section = plex.library.sectionByID(lib_id)
@@ -294,30 +296,23 @@ def find_plex_item(abs_path):
             logging.warning(f"[FIND_PLEX_ITEM] Failed to access library ID {lib_id}: {e}")
             continue
 
-        # 라이브러리 타입에 관계없이 검색
-        try:
-            if getattr(section, "TYPE", "").lower() == "show":
-                results = section.search(libtype="episode")
-            else:
-                # movie / video / 기타
-                results = section.search(libtype="movie")
-        except Exception as e:
-            logging.warning(f"[FIND_PLEX_ITEM] Failed to search items in library ID {lib_id}: {e}")
+        section_type = getattr(section, "TYPE", "").lower()
+        if section_type == "show":
+            results = section.search(libtype="episode")
+        elif section_type in ("movie", "video"):
+            results = section.search(libtype="movie")
+        else:
             continue
 
         for item in results:
-            # parts 속성과 iterParts() 모두 체크
-            parts = getattr(item, "parts", None)
-            if parts is None:
-                parts = getattr(item, "iterParts", lambda: [])()
-            for part in parts:
+            # episode 객체는 iterParts() 존재
+            for part in getattr(item, "iterParts", lambda: [])():
                 try:
-                    part_path = str(Path(part.file).resolve())
-                    if part_path == abs_path:
+                    if os.path.abspath(part.file) == abs_path:
                         logging.debug(f"[FIND_PLEX_ITEM] Found item: {item.title} (ratingKey={item.ratingKey})")
                         return item
-                except Exception as e:
-                    logging.warning(f"[FIND_PLEX_ITEM] Failed to resolve part path: {e}")
+                except Exception:
+                    continue
 
     logging.warning(f"[FIND_PLEX_ITEM] No Plex item found for: {abs_path}")
     return None
