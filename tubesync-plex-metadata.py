@@ -177,13 +177,16 @@ LANG_MAP = {"eng":"en","jpn":"ja","kor":"ko","fre":"fr","fra":"fr","spa":"es",
 def map_lang(code): return LANG_MAP.get(code.lower(),"und")
 
 # ==============================
-# Cache handling
+# Cache handling (updated)
 # ==============================
 if CACHE_FILE.exists():
     with CACHE_FILE.open("r", encoding="utf-8") as f:
         cache = json.load(f)
 else:
     cache = {}
+
+cache_lock = threading.Lock()
+cache_modified = False
 
 def save_cache():
     global cache_modified
@@ -192,6 +195,7 @@ def save_cache():
             CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
             with CACHE_FILE.open("w", encoding="utf-8") as f:
                 json.dump(cache, f, indent=2, ensure_ascii=False)
+            logging.info(f"[CACHE] Saved to {CACHE_FILE}")
             cache_modified = False
 
 def update_cache(path, ratingKey=None, nfo_hash=None):
@@ -318,7 +322,7 @@ def find_plex_item(abs_path):
     return None
 
 # ==============================
-# NFO handling
+# NFO handling (updated)
 # ==============================
 def compute_nfo_hash(nfo_path):
     h = hashlib.sha256()
@@ -326,27 +330,36 @@ def compute_nfo_hash(nfo_path):
         for chunk in iter(lambda:f.read(4096),b""): h.update(chunk)
     return h.hexdigest()
 
-def apply_nfo(ep, file_path):
+def apply_nfo(plex_item, file_path):
     nfo_path = Path(file_path).with_suffix(".nfo")
     if not nfo_path.exists() or nfo_path.stat().st_size==0: return False
+
     nfo_hash = compute_nfo_hash(nfo_path)
     cached_hash = cache.get(file_path, {}).get("nfo_hash")
-    if not config.get("always_apply_nfo", False) and cached_hash==nfo_hash:
-        if detail: logging.info(f"NFO unchanged: {nfo_path}")
+
+    # 항상 적용 옵션 체크
+    if not config.get("always_apply_nfo", True) and cached_hash == nfo_hash:
+        logging.debug(f"[NFO] Unchanged, skipping: {nfo_path}")
         return False
+
     try:
         tree = ET.parse(str(nfo_path), parser=ET.XMLParser(recover=True))
         root = tree.getroot()
-        ep.editTitle(root.findtext("title",""), locked=True)
-        ep.editSummary(root.findtext("plot",""), locked=True)
-        ep.editSortTitle(root.findtext("aired",""), locked=True)
-        update_cache(file_path, ep.ratingKey, nfo_hash)
+        plex_item.editTitle(root.findtext("title",""), locked=True)
+        plex_item.editSummary(root.findtext("plot",""), locked=True)
+        plex_item.editSortTitle(root.findtext("aired",""), locked=True)
+
+        # 캐시 업데이트
+        update_cache(file_path, plex_item.ratingKey, nfo_hash)
+
+        # 적용 후 NFO 삭제
         if delete_nfo_after_apply:
             try: nfo_path.unlink()
-            except: pass
+            except Exception as e: logging.warning(f"[NFO] Failed to delete {nfo_path}: {e}")
+
         return True
     except Exception as e:
-        logging.error(f"Error applying NFO {nfo_path}: {e}")
+        logging.error(f"[NFO] Failed to apply {nfo_path}: {e}")
         return False
 
 # ==============================
@@ -466,92 +479,83 @@ def watch_worker(stop_event):
             continue
 
 # ==============================
-# Scan Plex libraries + update cache
+# Scan and update cache (updated)
 # ==============================
 def scan_and_update_cache(base_dirs):
     """
-    Scan Plex libraries, add missing meta IDs, remove deleted files.
-    base_dirs: list of directories to scan
+    1) 영상 파일 스캔
+    2) 캐시와 비교하여 누락/삭제 반영
     """
     global cache
     existing_files = set(cache.keys())
-    all_files = []
+    current_files = set()
 
-    # 모든 파일 수집
+    total_files = 0
     for base_dir in base_dirs:
         for root, dirs, files in os.walk(base_dir):
             for f in files:
-                all_files.append(os.path.join(root, f))
+                abs_path = os.path.abspath(os.path.join(root,f))
+                if not abs_path.lower().endswith(VIDEO_EXTS):
+                    continue
+                total_files += 1
+                current_files.add(abs_path)
 
-    current_files = set()
-    total_files = 0
-
-    for f in all_files:
-        abs_path = os.path.abspath(f)
-        if not f.lower().endswith(VIDEO_EXTS):
-            continue
-        total_files += 1
-        current_files.add(abs_path)
-
-        # 캐시에 없으면 Plex 아이템 찾아서 등록
-        if abs_path not in cache or cache.get(abs_path) is None:
-            plex_item = find_plex_item(abs_path)
-            if plex_item:
-                cache[abs_path] = plex_item.ratingKey
-                processed_files.add(abs_path)  # <<< 캐시 등록 시 processed_files에도 추가
+                # 캐시에 없으면 Plex 아이템 찾아 등록
+                if abs_path not in cache or cache.get(abs_path) is None:
+                    plex_item = find_plex_item(abs_path)
+                    if plex_item:
+                        update_cache(abs_path, plex_item.ratingKey)
+                        processed_files.add(abs_path)  # 스캔 시 processed_files에 추가
 
     # 삭제된 파일 캐시에서 제거
     removed = existing_files - current_files
     for f in removed:
         cache.pop(f, None)
-        if f in processed_files:
-            processed_files.remove(f)
+        if f in processed_files: processed_files.remove(f)
 
     logging.info(f"[SCAN] Completed scan. Total video files found: {total_files}")
-    try:
-        save_cache()
-        logging.info("[SCAN] Cache updated successfully")
-    except Exception as e:
-        logging.error(f"[SCAN] Failed to save cache: {e}")
+    save_cache()
 
 # ==============================
-# Main function
+# Main (simplified)
 # ==============================
 def main():
     setup_ffmpeg()
 
     # ----------------------
-    # scan_and_update_cache()용 base_dirs 준비
+    # base_dirs 준비
     # ----------------------
     base_dirs = []
     for lib_id in config["plex_library_ids"]:
         try:
             section = plex.library.sectionByID(lib_id)
         except Exception as e:
-            logging.warning(f"Failed to access Plex library ID {lib_id}: {e}")
+            logging.warning(f"[MAIN] Failed to access library ID {lib_id}: {e}")
             continue
         for loc in getattr(section, "locations", []):
             base_dirs.append(loc)
 
     # ----------------------
-    # 캐시 업데이트용 스캔
+    # 스캔 & 캐시 업데이트
     # ----------------------
     scan_and_update_cache(base_dirs)
 
     # ----------------------
-    # 개별 파일 처리
+    # 개별 파일 처리 (NFO 적용 / 자막 업로드)
     # ----------------------
-    video_files = list(processed_files)  # scan 과정에서 processed_files에 추가됨
-    logging.info(f"[INFO] Total video files found: {len(video_files)}")
+    video_files = list(processed_files)
+    logging.info(f"[MAIN] Total video files to process: {len(video_files)}")
 
     with ThreadPoolExecutor(max_workers=threads) as executor:
         futures = {executor.submit(process_file, f): f for f in video_files}
         for fut in as_completed(futures):
-            try:
-                fut.result()
+            try: fut.result()
             except Exception as e:
-                logging.error(f"[ERROR] Processing {futures[fut]} failed: {e}")
+                logging.error(f"[MAIN] Processing failed for {futures[fut]}: {e}")
 
+    # ----------------------
+    # 캐시 최종 저장
+    # ----------------------
     save_cache()
 
     # ----------------------
