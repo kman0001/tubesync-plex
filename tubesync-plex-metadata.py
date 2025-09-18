@@ -15,7 +15,7 @@ import argparse
 # Arguments
 # ==============================
 parser = argparse.ArgumentParser(description="TubeSync Plex Metadata")
-parser.add_argument("--config", required=True, help="Path to config file")
+parser.add_argument("--config", help="Path to config file (optional)")
 parser.add_argument("--disable-watchdog", action="store_true", help="Disable folder watchdog")
 parser.add_argument("--detail", action="store_true", help="Enable detailed logging")
 parser.add_argument("--debug-http", action="store_true", help="Enable HTTP debug logging")
@@ -31,11 +31,13 @@ DISABLE_WATCHDOG = args.disable_watchdog
 DETAIL = args.detail or args.debug
 DEBUG_HTTP = args.debug_http
 
-CONFIG_FILE = Path(args.config)
+# 기본 config 경로
+CONFIG_FILE = Path(args.config) if args.config else BASE_DIR / "config" / "config.json"
 CACHE_FILE = CONFIG_FILE.parent / "tubesync_cache.json"
 
 VENVDIR = BASE_DIR / "venv"
-FFMPEG_BIN = BASE_DIR / "venv/bin/ffmpeg"
+FFMPEG_BIN = VENVDIR / "ffmpeg"
+FFPROBE_BIN = VENVDIR / "ffprobe"
 FFMPEG_SHA_FILE = BASE_DIR / ".ffmpeg_md5"
 
 # ==============================
@@ -98,6 +100,7 @@ log_level = logging.DEBUG if DETAIL else logging.INFO
 logging.basicConfig(level=log_level, format='[%(levelname)s] %(message)s')
 
 logging.info(f"BASE_DIR = {BASE_DIR}")
+logging.info(f"CONFIG_FILE = {CONFIG_FILE}")
 logging.info(f"DISABLE_WATCHDOG = {DISABLE_WATCHDOG}")
 logging.info(f"DETAIL = {DETAIL}")
 logging.info(f"DEBUG_HTTP = {DEBUG_HTTP}")
@@ -193,7 +196,7 @@ def update_cache(path, ratingKey=None, nfo_hash=None):
         cache_modified = True
 
 # ==============================
-# FFmpeg setup (MD5 based)
+# FFmpeg setup
 # ==============================
 def setup_ffmpeg():
     arch = platform.machine()
@@ -220,14 +223,12 @@ def setup_ffmpeg():
         remote_md5 = None
 
     local_md5 = FFMPEG_SHA_FILE.read_text().strip() if FFMPEG_SHA_FILE.exists() else None
-    if FFMPEG_BIN.exists() and remote_md5 and local_md5 == remote_md5:
+    if FFMPEG_BIN.exists() and FFPROBE_BIN.exists() and remote_md5 and local_md5 == remote_md5:
         logging.info("FFmpeg up-to-date (MD5 match)")
         return
 
-    if FFMPEG_BIN.exists():
-        logging.warning("Local FFmpeg MD5 mismatch, redownloading...")
-        FFMPEG_BIN.unlink(missing_ok=True)
-        (FFMPEG_BIN.parent / "ffprobe").unlink(missing_ok=True)
+    if FFMPEG_BIN.exists(): FFMPEG_BIN.unlink(missing_ok=True)
+    if FFPROBE_BIN.exists(): FFPROBE_BIN.unlink(missing_ok=True)
 
     logging.info("Downloading FFmpeg...")
     try:
@@ -257,11 +258,10 @@ def setup_ffmpeg():
         ffmpeg_path = next(extract_dir.glob("**/ffmpeg"))
         ffprobe_path = next(extract_dir.glob("**/ffprobe"))
         shutil.move(str(ffmpeg_path), FFMPEG_BIN)
-        shutil.move(str(ffprobe_path), FFMPEG_BIN.parent / "ffprobe")
+        shutil.move(str(ffprobe_path), FFPROBE_BIN)
         os.chmod(FFMPEG_BIN, 0o755)
-        os.chmod(FFMPEG_BIN.parent / "ffprobe", 0o755)
-        if remote_md5:
-            FFMPEG_SHA_FILE.write_text(remote_md5)
+        os.chmod(FFPROBE_BIN, 0o755)
+        if remote_md5: FFMPEG_SHA_FILE.write_text(remote_md5)
     except Exception as e:
         logging.error(f"FFmpeg extraction/move failed: {e}")
         sys.exit(1)
