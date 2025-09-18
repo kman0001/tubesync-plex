@@ -13,9 +13,9 @@ import logging
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-# --------------------------
+# ==============================
 # Argument parsing
-# --------------------------
+# ==============================
 parser = argparse.ArgumentParser(description="TubeSync Plex Metadata")
 parser.add_argument("--config", required=True, help="Path to config file")
 parser.add_argument("--disable-watchdog", action="store_true", help="Disable folder watchdog")
@@ -90,7 +90,7 @@ logging.basicConfig(level=log_level, format='[%(levelname)s] %(message)s')
 # HTTP Debug session
 # ==============================
 class HTTPDebugSession(requests.Session):
-    """Requests session that logs HTTP requests/responses only if enabled"""
+    """Requests session that logs HTTP requests/responses if enabled"""
     def __init__(self, enable_debug=False):
         super().__init__()
         self.enable_debug = enable_debug
@@ -99,7 +99,6 @@ class HTTPDebugSession(requests.Session):
         self.mount("https://", HTTPAdapter(max_retries=retries))
 
     def send(self, request, **kwargs):
-        # Only log if debug is enabled
         if self.enable_debug:
             print("[HTTP DEBUG] ────── REQUEST ──────")
             print(f"Method: {request.method}\nURL: {request.url}\nHeaders:\n  " +
@@ -125,6 +124,7 @@ class PlexServerWithHTTPDebug(PlexServer):
         self._debug_session = HTTPDebugSession(enable_debug=debug_http)
 
     def _request(self, path, method="GET", headers=None, params=None, data=None, timeout=None):
+        """Override request to use debug session"""
         url = self._buildURL(path)
         req_headers = headers or {}
         if self._token:
@@ -162,7 +162,7 @@ log_lock = threading.Lock()
 # ==============================
 # Cache management
 # ==============================
-# Initialize cache from disk or empty
+# Load existing cache or initialize empty
 if CACHE_FILE.exists():
     try:
         with CACHE_FILE.open("r", encoding="utf-8") as f:
@@ -208,7 +208,7 @@ def remove_from_cache(path):
 # FFmpeg + FFprobe setup
 # ==============================
 def setup_ffmpeg():
-    """Setup static FFmpeg/FFprobe for the system architecture"""
+    """Download/setup static FFmpeg and FFprobe binaries for the current architecture"""
     arch = platform.machine()
     if arch == "x86_64":
         url = "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz"
@@ -218,6 +218,7 @@ def setup_ffmpeg():
         print(f"[ERROR] Unsupported architecture: {arch}")
         sys.exit(1)
 
+    # Fetch SHA256 for integrity check
     sha_url = url + ".sha256"
     remote_sha = None
     try:
@@ -254,7 +255,7 @@ def setup_ffmpeg():
 
             os.makedirs(os.path.dirname(FFMPEG_BIN), exist_ok=True)
 
-            # Move ffmpeg
+            # Move binaries to target directory
             ffmpeg_path = next(tmp_dir.glob("**/ffmpeg"), None)
             if ffmpeg_path:
                 shutil.move(str(ffmpeg_path), FFMPEG_BIN)
@@ -263,7 +264,6 @@ def setup_ffmpeg():
                 print("[ERROR] ffmpeg binary not found in downloaded archive.")
                 sys.exit(1)
 
-            # Move ffprobe
             ffprobe_path = next(tmp_dir.glob("**/ffprobe"), None)
             if ffprobe_path:
                 shutil.move(str(ffprobe_path), FFMPEG_BIN.parent / "ffprobe")
@@ -282,11 +282,11 @@ def setup_ffmpeg():
 # Plex item finder
 # ==============================
 def find_plex_item(abs_path):
-    """Find Plex item by absolute path across libraries"""
+    """Find Plex item by absolute path across all specified libraries"""
     for lib_id in config["plex_library_ids"]:
         try:
             section = plex.library.sectionByID(lib_id)
-        except:
+        except Exception:
             continue
         for item in section.all():
             for part in item.iterParts():
@@ -298,7 +298,7 @@ def find_plex_item(abs_path):
 # Library scan & cache update
 # ==============================
 def scan_and_update_cache():
-    """Full Plex library scan to update cache"""
+    """Scan Plex libraries and update cache with video file keys"""
     global cache
     existing_files = set(cache.keys())
     all_files = []
@@ -306,7 +306,7 @@ def scan_and_update_cache():
     for lib_id in config["plex_library_ids"]:
         try:
             section = plex.library.sectionByID(lib_id)
-        except:
+        except Exception:
             continue
         for p in getattr(section, "locations", []):
             for root, dirs, files in os.walk(p):
@@ -324,13 +324,14 @@ def scan_and_update_cache():
             if plex_item:
                 cache[abs_path] = plex_item.key
 
+    # Remove deleted files from cache
     removed = existing_files - current_files
     for f in removed:
         cache.pop(f, None)
 
-# -----------------------------
-# Subtitles
-# -----------------------------
+# ==============================
+# Subtitle extraction & upload
+# ==============================
 LANG_MAP = {
     "eng":"en","jpn":"ja","kor":"ko","fre":"fr","fra":"fr",
     "spa":"es","ger":"de","deu":"de","ita":"it","chi":"zh","und":"und"
@@ -371,7 +372,7 @@ def extract_subtitles(video_path):
     return srt_files
 
 def upload_subtitles(ep, srt_files):
-    """Upload extracted subtitles to Plex respecting concurrency and logging"""
+    """Upload extracted subtitles to Plex respecting concurrency and delay"""
     for srt, lang in srt_files:
         try:
             with api_semaphore:
@@ -382,11 +383,11 @@ def upload_subtitles(ep, srt_files):
         except Exception as e:
             print(f"[ERROR] Subtitle upload failed: {srt} - {e}")
 
-# -----------------------------
+# ==============================
 # NFO processing
-# -----------------------------
+# ==============================
 def apply_nfo(ep, file_path):
-    """Apply NFO metadata to Plex item"""
+    """Apply NFO metadata to a Plex item"""
     nfo_path = Path(file_path).with_suffix(".nfo")
     if not nfo_path.exists() or nfo_path.stat().st_size == 0:
         return False
@@ -418,11 +419,11 @@ def apply_nfo(ep, file_path):
         print(f"[!] Error processing {nfo_path}: {e}")
         return False
 
-# -----------------------------
+# ==============================
 # Process single file
-# -----------------------------
+# ==============================
 def process_file(file_path, ignore_processed=False):
-    """Process video file: apply NFO and upload subtitles"""
+    """Process a video file: apply NFO metadata and extract/upload subtitles"""
     abs_path = Path(file_path).resolve()
     if not ignore_processed and abs_path in processed_files:
         return False
@@ -482,11 +483,11 @@ def process_file(file_path, ignore_processed=False):
     processed_files.add(abs_path)
     return success
 
-# -----------------------------
+# ==============================
 # Watchdog event handler
-# -----------------------------
+# ==============================
 class VideoEventHandler(FileSystemEventHandler):
-    """Handle create/delete events for video & NFO files with debounce"""
+    """Handle create/delete events for video and NFO files with debounce"""
 
     def __init__(self):
         self.nfo_queue = set()
@@ -497,6 +498,7 @@ class VideoEventHandler(FileSystemEventHandler):
         self.retry_queue = {}  # {path: (timestamp, count)}
 
     def on_any_event(self, event):
+        """Handle any file system event"""
         if event.is_directory:
             return
         path = os.path.abspath(event.src_path)
@@ -552,7 +554,7 @@ class VideoEventHandler(FileSystemEventHandler):
         save_cache()
 
     def _find_video(self, nfo_path):
-        """Find corresponding video file for NFO"""
+        """Find corresponding video file for given NFO file"""
         for ext in VIDEO_EXTS:
             candidate = str(Path(nfo_path).with_suffix(ext))
             if os.path.exists(candidate):
@@ -572,9 +574,9 @@ class VideoEventHandler(FileSystemEventHandler):
                     print(f"[WARN] NFO failed 3x: {path}")
                     del self.retry_queue[path]
 
-# -----------------------------
+# ==============================
 # Main entry point
-# -----------------------------
+# ==============================
 def main():
     """Main execution: scan libraries, process files, optionally watch folders"""
     scan_and_update_cache()
@@ -592,13 +594,14 @@ def main():
 
     save_cache()
 
+    # Start Watchdog if enabled
     if config.get("watch_folders", False) and not args.disable_watchdog:
         observer = Observer()
         handler = VideoEventHandler()
         for lib_id in config["plex_library_ids"]:
             try:
                 section = plex.library.sectionByID(lib_id)
-            except:
+            except Exception:
                 continue
             for p in getattr(section, "locations", []):
                 observer.schedule(handler, p, recursive=True)
@@ -614,3 +617,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
