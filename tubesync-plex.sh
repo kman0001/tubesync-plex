@@ -7,9 +7,9 @@ set -e
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"; }
 
 # ----------------------------
-# 0. Check required system packages (no installation, just warning)
+# 0. Check required system packages
 # ----------------------------
-REQUIRED_PACKAGES=(git curl tar xz python3 pip3)
+REQUIRED_PACKAGES=(git python3 pip3)
 MISSING_PACKAGES=()
 
 for PKG in "${REQUIRED_PACKAGES[@]}"; do
@@ -50,9 +50,6 @@ mkdir -p "$BASE_DIR"
 PIP_BIN="$BASE_DIR/venv/bin/pip"
 PY_FILE="$BASE_DIR/tubesync-plex-metadata.py"
 REQ_FILE="$BASE_DIR/requirements.txt"
-FFMPEG_BIN="$BASE_DIR/venv/bin/ffmpeg"
-FFPROBE_BIN="$BASE_DIR/venv/bin/ffprobe"
-FFMPEG_CHECKSUM_FILE="$BASE_DIR/venv/bin/.ffmpeg_checksum"
 
 # ----------------------------
 # 1. Git fetch + reset
@@ -98,57 +95,10 @@ if [ -f "$REQ_FILE" ]; then
     "$PIP_BIN" install --disable-pip-version-check -q -r "$REQ_FILE"
 fi
 
-# ----------------------------
-# 4. Setup static FFmpeg in venv (architecture detection & checksum)
-# ----------------------------
-ARCH=$(uname -m)
-if [ "$ARCH" = "x86_64" ]; then
-    FFMPEG_URL="https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz"
-elif [ "$ARCH" = "aarch64" ]; then
-    FFMPEG_URL="https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-arm64-static.tar.xz"
-else
-    log "Unsupported architecture: $ARCH"
-    exit 1
-fi
-
-REMOTE_SHA=$(curl -sL "$FFMPEG_URL.sha256" | awk '{print $1}')
-LOCAL_SHA=""
-if [ -f "$FFMPEG_CHECKSUM_FILE" ]; then
-    LOCAL_SHA=$(cat "$FFMPEG_CHECKSUM_FILE")
-fi
-
-if [ ! -x "$FFMPEG_BIN" ] || [ "$REMOTE_SHA" != "$LOCAL_SHA" ]; then
-    log "Downloading/updating static FFmpeg..."
-    TMP_DIR=$(mktemp -d)
-    mkdir -p "$BASE_DIR/venv/bin"
-
-    curl --progress-bar -L "$FFMPEG_URL" | tar -xJ -C "$TMP_DIR"
-
-    FFMPEG_PATH=$(find "$TMP_DIR" -type f -name "ffmpeg" | head -n 1)
-    FFPROBE_PATH=$(find "$TMP_DIR" -type f -name "ffprobe" | head -n 1)
-    if [ -z "$FFMPEG_PATH" ]; then
-        log "ERROR: ffmpeg binary not found in downloaded archive."
-        rm -rf "$TMP_DIR"
-        exit 1
-    fi
-    cp "$FFMPEG_PATH" "$FFMPEG_BIN"
-    chmod +x "$FFMPEG_BIN"
-
-    if [ -n "$FFPROBE_PATH" ]; then
-        cp "$FFPROBE_PATH" "$FFPROBE_BIN"
-        chmod +x "$FFPROBE_BIN"
-    fi
-
-    echo "$REMOTE_SHA" > "$FFMPEG_CHECKSUM_FILE"
-    rm -rf "$TMP_DIR"
-else
-    log "Static FFmpeg is up-to-date."
-fi
-
 export PATH="$BASE_DIR/venv/bin:$PATH"
 
 # ----------------------------
-# 5. Run Python script
+# 4. Run Python script
 # ----------------------------
 if [ -f "$PY_FILE" ]; then
     log "Running tubesync-plex..."
