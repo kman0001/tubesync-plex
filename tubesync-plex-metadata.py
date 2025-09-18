@@ -28,7 +28,19 @@ DISABLE_WATCHDOG = args.disable_watchdog
 # Default config
 # ==============================
 default_config = {
-    "_comment": { ... },  # same as before
+    "_comment": {
+        "plex_base_url": "Base URL of your Plex server (e.g., http://localhost:32400).",
+        "plex_token": "Your Plex authentication token.",
+        "plex_library_ids": "List of Plex library IDs to sync (e.g., [10,21,35]).",
+        "silent": "true = only summary logs, false = detailed logs",
+        "detail": "true = verbose mode (debug output)",
+        "subtitles": "true = extract and upload subtitles",
+        "threads": "Number of worker threads for initial scanning",
+        "max_concurrent_requests": "Max concurrent Plex API requests",
+        "request_delay": "Delay between Plex API requests (sec)",
+        "watch_folders": "true = enable real-time folder monitoring",
+        "watch_debounce_delay": "Debounce time (sec) before processing events"
+    },
     "plex_base_url": "",
     "plex_token": "",
     "plex_library_ids": [],
@@ -71,8 +83,6 @@ if DISABLE_WATCHDOG:
 # ==============================
 silent = config.get("silent", False)
 detail = config.get("detail", False) and not silent
-
-# 기본 로그는 INFO 수준
 log_level = logging.INFO if not silent else logging.WARNING
 logging.basicConfig(level=log_level, format='[%(levelname)s] %(message)s')
 
@@ -80,7 +90,7 @@ logging.basicConfig(level=log_level, format='[%(levelname)s] %(message)s')
 # HTTP Debug session
 # ==============================
 class HTTPDebugSession(requests.Session):
-    """Requests session that logs all HTTP requests/responses only if enable_debug=True"""
+    """Requests session that logs all HTTP requests/responses if debug enabled"""
     def __init__(self, enable_debug=False):
         super().__init__()
         self.enable_debug = enable_debug
@@ -108,6 +118,7 @@ class HTTPDebugSession(requests.Session):
 # PlexServer with HTTP debug
 # ==============================
 class PlexServerWithHTTPDebug(PlexServer):
+    """PlexServer wrapper that enables HTTP debug logging"""
     def _request(self, path, method="GET", headers=None, params=None, data=None, timeout=None):
         if not hasattr(self, "_debug_session"):
             self._debug_session = HTTPDebugSession(enable_debug=args.debug_http)
@@ -142,28 +153,38 @@ cache_lock = threading.Lock()
 log_lock = threading.Lock()
 
 # ==============================
-# Cache
+# Cache management
 # ==============================
-if CACHE_FILE.exists():
-    with CACHE_FILE.open("r", encoding="utf-8") as f:
-        cache = json.load(f)
-else:
-    cache = {}
-    CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with CACHE_FILE.open("w", encoding="utf-8") as f:
-        json.dump(cache, f, indent=2, ensure_ascii=False)
-    logging.debug(f"Created empty cache at {CACHE_FILE}")
+cache_modified = False
 
 def save_cache():
-    """Save cache to disk safely with lock"""
+    """Save cache to disk only if modified"""
+    global cache_modified
     with cache_lock:
+        if not cache_modified:
+            return
         try:
             CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
             with CACHE_FILE.open("w", encoding="utf-8") as f:
                 json.dump(cache, f, indent=2, ensure_ascii=False)
             logging.debug(f"Saved cache to {CACHE_FILE}, total items: {len(cache)}")
+            cache_modified = False
         except Exception as e:
             logging.error(f"Failed to save cache: {e}")
+
+def update_cache(path, key):
+    """Add or update cache entry"""
+    global cache_modified
+    if cache.get(path) != key:
+        cache[path] = key
+        cache_modified = True
+
+def remove_from_cache(path):
+    """Remove cache entry"""
+    global cache_modified
+    if path in cache:
+        del cache[path]
+        cache_modified = True
 
 # ==============================
 # FFmpeg + FFprobe setup
