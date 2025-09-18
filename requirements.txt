@@ -1,16 +1,11 @@
 # -------------------------------
-# HTTP & Plex API dependencies
+# HTTP requests
 # -------------------------------
 requests==2.32.3
-urllib3==2.2.3
-certifi==2024.8.30
-idna==3.10
-charset-normalizer==3.3.2
 
 # -------------------------------
-# Config & XML parsing
+# XML parsing for NFO
 # -------------------------------
-configparser==7.1.0
 lxml==5.3.0
 
 # -------------------------------
@@ -19,7 +14,6 @@ lxml==5.3.0
 PlexAPI==4.15.16
 
 # -------------------------------
-# Folder watching
+# Folder watching (optional)
 # -------------------------------
 watchdog==2.3.1
-psutil==5.9.8
