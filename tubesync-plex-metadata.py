@@ -184,13 +184,19 @@ def update_cache(path, ratingKey=None, nfo_hash=None):
         cache_modified = True
 
 # ==============================
-# FFmpeg setup (MD5 기반)
+# FFmpeg setup (MD5 기반, venv/bin 설치)
 # ==============================
 def setup_ffmpeg():
+    # 설치 경로를 venv/bin으로 설정
+    ff_bin_dir = BASE_DIR / "venv" / "bin"
+    ff_bin_dir.mkdir(parents=True, exist_ok=True)
+    ffmpeg_path = ff_bin_dir / "ffmpeg"
+    ffprobe_path = ff_bin_dir / "ffprobe"
+
     arch = platform.machine()
-    if arch=="x86_64":
+    if arch == "x86_64":
         url = "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz"
-    elif arch=="aarch64":
+    elif arch == "aarch64":
         url = "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-arm64-static.tar.xz"
     else:
         logging.error(f"Unsupported arch: {arch}")
@@ -211,14 +217,14 @@ def setup_ffmpeg():
         remote_md5 = None
 
     local_md5 = FFMPEG_SHA_FILE.read_text().strip() if FFMPEG_SHA_FILE.exists() else None
-    if FFMPEG_BIN.exists() and remote_md5 and local_md5 == remote_md5:
+    if ffmpeg_path.exists() and remote_md5 and local_md5 == remote_md5:
         logging.info("FFmpeg up-to-date (MD5 match)")
         return
 
-    if FFMPEG_BIN.exists():
+    if ffmpeg_path.exists():
         logging.warning("Local FFmpeg MD5 mismatch, redownloading...")
-        FFMPEG_BIN.unlink(missing_ok=True)
-        (FFMPEG_BIN.parent / "ffprobe").unlink(missing_ok=True)
+        ffmpeg_path.unlink(missing_ok=True)
+        ffprobe_path.unlink(missing_ok=True)
 
     logging.info("Downloading FFmpeg...")
     try:
@@ -245,12 +251,12 @@ def setup_ffmpeg():
         shutil.rmtree(extract_dir, ignore_errors=True)
         extract_dir.mkdir(parents=True)
         subprocess.run(["tar", "-xJf", str(tar_path), "-C", str(extract_dir)], check=True)
-        ffmpeg_path = next(extract_dir.glob("**/ffmpeg"))
-        ffprobe_path = next(extract_dir.glob("**/ffprobe"))
-        shutil.move(str(ffmpeg_path), FFMPEG_BIN)
-        shutil.move(str(ffprobe_path), FFMPEG_BIN.parent / "ffprobe")
-        os.chmod(FFMPEG_BIN, 0o755)
-        os.chmod(FFMPEG_BIN.parent / "ffprobe", 0o755)
+        ff_path = next(extract_dir.glob("**/ffmpeg"))
+        fp_path = next(extract_dir.glob("**/ffprobe"))
+        shutil.move(str(ff_path), ffmpeg_path)
+        shutil.move(str(fp_path), ffprobe_path)
+        os.chmod(ffmpeg_path, 0o755)
+        os.chmod(ffprobe_path, 0o755)
         if remote_md5: FFMPEG_SHA_FILE.write_text(remote_md5)
     except Exception as e:
         logging.error(f"FFmpeg extraction/move failed: {e}")
@@ -258,8 +264,12 @@ def setup_ffmpeg():
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
-    os.environ["PATH"] = f"{FFMPEG_BIN.parent}:{os.environ.get('PATH','')}"
+    # PATH에 venv/bin 포함
+    os.environ["PATH"] = f"{ff_bin_dir}:{os.environ.get('PATH','')}"
     if detail: logging.info("FFmpeg installed/updated successfully")
+
+# FFMPEG_BIN 변수도 새 경로로 지정
+FFMPEG_BIN = BASE_DIR / "venv" / "bin" / "ffmpeg"
 
 # ==============================
 # Plex helpers
