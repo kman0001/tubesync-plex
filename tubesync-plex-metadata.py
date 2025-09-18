@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import os, sys, json, time, threading, subprocess, shutil, hashlib, queue
+import os, sys, json, time, threading, subprocess, shutil, hashlib
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from plexapi.server import PlexServer
@@ -9,11 +9,11 @@ import platform, requests, logging
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 import lxml.etree as ET
+import argparse, queue
 
 # ==============================
 # Arguments
 # ==============================
-import argparse
 parser = argparse.ArgumentParser(description="TubeSync Plex Metadata")
 parser.add_argument("--config", required=True, help="Path to config file")
 parser.add_argument("--disable-watchdog", action="store_true", help="Disable folder watchdog")
@@ -22,6 +22,9 @@ parser.add_argument("--debug-http", action="store_true", help="Enable HTTP debug
 args = parser.parse_args()
 DISABLE_WATCHDOG = args.disable_watchdog
 
+# ==============================
+# Default config
+# ==============================
 # ==============================
 # Default config
 # ==============================
@@ -38,8 +41,7 @@ default_config = {
         "max_concurrent_requests": "Max concurrent Plex API requests",
         "request_delay": "Delay between Plex API requests (sec)",
         "watch_folders": "True = enable real-time folder monitoring",
-        "watch_debounce_delay": "Debounce time (sec) before processing events",
-        "delete_nfo_after_apply": "True = remove NFO file after applying"
+        "watch_debounce_delay": "Debounce time (sec) before processing events"
     },
     "plex_base_url": "",
     "plex_token": "",
@@ -52,8 +54,7 @@ default_config = {
     "max_concurrent_requests": 4,
     "request_delay": 0.2,
     "watch_folders": True,
-    "watch_debounce_delay": 3,
-    "delete_nfo_after_apply": True
+    "watch_debounce_delay": 3
 }
 
 BASE_DIR = Path(os.environ.get("BASE_DIR", "/app"))
@@ -98,7 +99,6 @@ class HTTPDebugSession(requests.Session):
         retries = Retry(total=3, backoff_factor=0.3, status_forcelist=[500,502,503,504])
         self.mount("http://", HTTPAdapter(max_retries=retries))
         self.mount("https://", HTTPAdapter(max_retries=retries))
-
     def send(self, request, **kwargs):
         if self.enable_debug:
             print("[HTTP DEBUG] REQUEST:", request.method, request.url)
@@ -114,7 +114,6 @@ class PlexServerWithHTTPDebug(PlexServer):
     def __init__(self, baseurl, token, debug_http=False):
         super().__init__(baseurl, token)
         self._debug_session = HTTPDebugSession(enable_debug=debug_http)
-
     def _request(self, path, method="GET", headers=None, params=None, data=None, timeout=None):
         url = self._buildURL(path)
         req_headers = headers or {}
@@ -145,7 +144,6 @@ subtitles_enabled = config.get("subtitles", False)
 processed_files = set()
 watch_debounce_delay = config.get("watch_debounce_delay", 2)
 cache_modified = False
-event_queue = queue.Queue()
 
 LANG_MAP = {"eng":"en","jpn":"ja","kor":"ko","fre":"fr","fra":"fr","spa":"es",
             "ger":"de","deu":"de","ita":"it","chi":"zh","und":"und"}
@@ -191,12 +189,12 @@ def setup_ffmpeg():
     else:
         logging.error(f"Unsupported arch: {arch}")
         sys.exit(1)
-
     md5_url = url + ".md5"
     tmp_dir = Path("/tmp/ffmpeg_dl")
     tmp_dir.mkdir(parents=True, exist_ok=True)
     tar_path = tmp_dir / "ffmpeg.tar.xz"
 
+    # 원격 MD5
     try:
         r = requests.get(md5_url, timeout=10)
         r.raise_for_status()
@@ -205,6 +203,7 @@ def setup_ffmpeg():
         logging.warning(f"Failed to fetch remote MD5: {e}")
         remote_md5 = None
 
+    # 로컬 파일 확인
     local_md5 = FFMPEG_SHA_FILE.read_text().strip() if FFMPEG_SHA_FILE.exists() else None
     if FFMPEG_BIN.exists() and remote_md5 and local_md5 == remote_md5:
         logging.info("FFmpeg up-to-date (MD5 match)")
@@ -226,6 +225,7 @@ def setup_ffmpeg():
         logging.error(f"Failed to download FFmpeg: {e}")
         sys.exit(1)
 
+    # MD5 검증
     if remote_md5:
         h = hashlib.md5()
         with open(tar_path, "rb") as f:
@@ -239,21 +239,21 @@ def setup_ffmpeg():
         extract_dir = tmp_dir / "extract"
         shutil.rmtree(extract_dir, ignore_errors=True)
         extract_dir.mkdir(parents=True)
-        subprocess.run(["tar", "-xJf", str(tar_path), "-C", str(extract_dir)], check=True)
+        subprocess.run(["tar","-xJf",str(tar_path),"-C",str(extract_dir)],check=True)
         ffmpeg_path = next(extract_dir.glob("**/ffmpeg"))
         ffprobe_path = next(extract_dir.glob("**/ffprobe"))
         shutil.move(str(ffmpeg_path), FFMPEG_BIN)
-        shutil.move(str(ffprobe_path), FFMPEG_BIN.parent / "ffprobe")
-        os.chmod(FFMPEG_BIN, 0o755)
-        os.chmod(FFMPEG_BIN.parent / "ffprobe", 0o755)
+        shutil.move(str(ffprobe_path), FFMPEG_BIN.parent/"ffprobe")
+        os.chmod(FFMPEG_BIN,0o755)
+        os.chmod(FFMPEG_BIN.parent/"ffprobe",0o755)
         if remote_md5: FFMPEG_SHA_FILE.write_text(remote_md5)
     except Exception as e:
         logging.error(f"FFmpeg extraction/move failed: {e}")
         sys.exit(1)
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
-
     os.environ["PATH"] = f"{FFMPEG_BIN.parent}:{os.environ.get('PATH','')}"
+    if detail: logging.info("FFmpeg installed/updated successfully")
 
 # ==============================
 # Plex helpers
@@ -269,7 +269,7 @@ def find_plex_item(abs_path):
     return None
 
 # ==============================
-# NFO handling
+# NFO
 # ==============================
 def compute_nfo_hash(nfo_path):
     h = hashlib.sha256()
@@ -301,7 +301,7 @@ def apply_nfo(ep, file_path):
         return False
 
 # ==============================
-# Subtitle extraction & upload
+# 자막 추출 & 업로드 (실패 스트림 건너뜀, 업로드 재시도 3회)
 # ==============================
 def extract_subtitles(video_path):
     base, _ = os.path.splitext(video_path)
@@ -326,7 +326,7 @@ def extract_subtitles(video_path):
                                stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,check=True)
                 srt_files.append((srt,lang))
             except Exception as e:
-                logging.warning(f"Subtitle stream {idx} extraction failed: {e}")
+                logging.error(f"Subtitle extraction failed for stream {idx} in {video_path}: {e}")
     except Exception as e:
         logging.error(f"[ERROR] ffprobe failed: {video_path} - {e}")
     return srt_files
@@ -340,12 +340,11 @@ def upload_subtitles(ep,srt_files):
                     time.sleep(request_delay)
                 break
             except Exception as e:
-                logging.warning(f"[WARNING] Subtitle upload failed ({attempt+1}/3): {srt} - {e}")
-                if attempt==2:
-                    logging.error(f"[ERROR] Subtitle upload failed after 3 attempts: {srt}")
+                logging.error(f"[ERROR] Subtitle upload failed (attempt {attempt+1}/3): {srt} - {e}")
+                if attempt==2: logging.warning(f"Giving up on {srt}")
 
 # ==============================
-# File processing
+# 파일 처리 (한 스레드 = 한 파일)
 # ==============================
 def process_single_file(file_path):
     abs_path = Path(file_path).resolve()
@@ -373,31 +372,7 @@ def process_single_file(file_path):
     return success
 
 # ==============================
-# Watchdog
-# ==============================
-class WatchHandler(FileSystemEventHandler):
-    def on_any_event(self,event):
-        if event.is_directory: return
-        path=str(Path(event.src_path).resolve())
-        event_queue.put((path,time.time()))
-
-def watch_worker(stop_event):
-    pending={}
-    while not stop_event.is_set():
-        now=time.time()
-        while not event_queue.empty():
-            path,ts=event_queue.get()
-            pending[path]=ts
-        to_process=[]
-        for path,ts in list(pending.items()):
-            if now-ts>=watch_debounce_delay:
-                to_process.append(path)
-                del pending[path]
-        for path in to_process: process_single_file(path)
-        time.sleep(0.5)
-
-# ==============================
-# Initial scan
+# Initial scan + cache
 # ==============================
 def scan_and_update_cache():
     video_files=[]
@@ -421,12 +396,30 @@ def scan_and_update_cache():
     return video_files
 
 # ==============================
+# Watchdog 큐 구조
+# ==============================
+event_queue = queue.Queue()
+
+class WatchHandler(FileSystemEventHandler):
+    def on_any_event(self,event):
+        if event.is_directory: return
+        path=str(Path(event.src_path).resolve())
+        event_queue.put(path)
+
+def watch_worker(stop_event):
+    while not stop_event.is_set():
+        try:
+            path = event_queue.get(timeout=0.5)
+            process_single_file(path)
+        except queue.Empty:
+            continue
+
+# ==============================
 # Main
 # ==============================
 def main():
     setup_ffmpeg()
-    video_files=scan_and_update_cache()
-    logging.info(f"Found {len(video_files)} video files for processing")
+    video_files = scan_and_update_cache()
 
     if threads>1:
         with ThreadPoolExecutor(max_workers=threads) as executor:
@@ -444,16 +437,20 @@ def main():
         for lib_id in config["plex_library_ids"]:
             try: section=plex.library.sectionByID(lib_id)
             except: continue
-            for path in getattr(section,"locations",[]):
-                observer.schedule(handler,path,recursive=True)
+            for loc in getattr(section,"locations",[]):
+                observer.schedule(handler, loc, recursive=True)
         observer.start()
-        threading.Thread(target=watch_worker,args=(stop_event,),daemon=True).start()
+        watch_thread=threading.Thread(target=watch_worker,args=(stop_event,),daemon=True)
+        watch_thread.start()
         try:
             while True: time.sleep(1)
         except KeyboardInterrupt:
             stop_event.set()
             observer.stop()
-        observer.join()
+            observer.join()
+            watch_thread.join()
 
 if __name__=="__main__":
+    logging.info("START")
     main()
+    logging.info("END")
