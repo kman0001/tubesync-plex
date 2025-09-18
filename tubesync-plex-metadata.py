@@ -110,7 +110,6 @@ class HTTPDebugSession(requests.Session):
 class PlexServerWithHTTPDebug(PlexServer):
     def _request(self, path, method="GET", headers=None, params=None, data=None, timeout=None):
         if not hasattr(self, "_debug_session"):
-            # --debug-http 옵션만 HTTP 로그를 켬
             self._debug_session = HTTPDebugSession(enable_debug=args.debug_http)
         url = self._buildURL(path)
         req_headers = headers or {}
@@ -124,7 +123,7 @@ class PlexServerWithHTTPDebug(PlexServer):
 # Plex connection
 # ==============================
 try:
-    plex = PlexServerWithHTTPDebug(config["plex_base_url"], config["plex_token"], debug_http=args.debug_http)
+    plex = PlexServerWithHTTPDebug(config["plex_base_url"], config["plex_token"])
 except Exception as e:
     logging.error(f"Failed to connect to Plex: {e}")
     sys.exit(1)
