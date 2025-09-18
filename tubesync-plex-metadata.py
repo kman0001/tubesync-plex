@@ -247,31 +247,59 @@ def find_plex_item(abs_path):
     return None
 
 # ==============================
-# Library scan & cache update
+# Scan and update cache with NFO hash
 # ==============================
 def scan_and_update_cache():
+    global cache  # ensure we use the global cache
     existing_files = set(cache.keys())
     all_files = []
+
     for lib_id in config["plex_library_ids"]:
         try:
             section = plex.library.sectionByID(lib_id)
-        except:
+        except Exception:
             continue
         for p in getattr(section, "locations", []):
             for root, dirs, files in os.walk(p):
                 for f in files:
                     if f.lower().endswith(VIDEO_EXTS):
-                        all_files.append(os.path.abspath(os.path.join(root,f)))
+                        all_files.append(os.path.abspath(os.path.join(root, f)))
 
     for f in all_files:
+        # initialize cache entry if not exists
         if f not in cache:
             plex_item = find_plex_item(f)
             if plex_item:
-                cache[f] = plex_item.key
+                cache[f] = {"plex_id": plex_item.key, "nfo_hash": None}
 
+        # check NFO
+        nfo_path = Path(f).with_suffix(".nfo")
+        if nfo_path.exists() and nfo_path.stat().st_size > 0:
+            # compute NFO hash
+            with nfo_path.open("rb") as nf:
+                import hashlib
+                nfo_hash = hashlib.sha256(nf.read()).hexdigest()
+            cached_hash = cache[f].get("nfo_hash")
+            if cached_hash != nfo_hash:
+                # new/changed NFO, apply metadata
+                plex_item = None
+                try:
+                    plex_item = plex.fetchItem(cache[f]["plex_id"])
+                except Exception:
+                    plex_item = find_plex_item(f)
+                    if plex_item:
+                        cache[f]["plex_id"] = plex_item.key
+
+                if plex_item:
+                    apply_nfo(plex_item, f)
+                    cache[f]["nfo_hash"] = nfo_hash  # update hash
+
+    # remove deleted files from cache
     removed = existing_files - set(all_files)
     for f in removed:
         cache.pop(f, None)
+
+    save_cache()
 
 # ==============================
 # Subtitle extraction & upload
