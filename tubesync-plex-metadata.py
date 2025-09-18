@@ -83,7 +83,7 @@ if DISABLE_WATCHDOG:
     config["watch_folders"] = False
 
 delete_nfo_after_apply = config.get("delete_nfo_after_apply", True)
-subtitles_enabled = args.subtitles or config.get("subtitles", False)
+subtitles_enabled = config.get("subtitles", False)
 
 # ==============================
 # Logging
