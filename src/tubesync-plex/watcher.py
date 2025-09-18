@@ -1,35 +1,34 @@
 import os, threading, time
 from watchdog.events import FileSystemEventHandler
-from tubesync_plex.metadata import process_file
+from .metadata import process_file
+from .utils import safe_print, sleep_delay
 
 class VideoEventHandler(FileSystemEventHandler):
-    def __init__(self, plex, config):
+    def __init__(self, plex, config, cache=None, semaphore=None):
         self.plex = plex
         self.config = config
-        self.video_queue = set()
+        self.cache = cache
+        self.semaphore = semaphore
         self.nfo_queue = set()
+        self.video_queue = set()
         self.lock = threading.Lock()
-        self.video_timer = None
         self.nfo_timer = None
+        self.video_timer = None
 
     def on_any_event(self, event):
-        if event.is_directory: return
+        if event.is_directory:
+            return
         path = os.path.abspath(event.src_path)
         ext = os.path.splitext(path)[1].lower()
         with self.lock:
-            if event.event_type == "deleted": 
-                self.config["cache"].pop(path,None)
+            if event.event_type == "deleted":
+                if path in self.cache:
+                    self.cache.pop(path, None)
             elif event.event_type == "created":
-                if ext in (".mkv", ".mp4", ".avi", ".mov", ".wmv", ".flv", ".m4v"):
+                if ext in (".mkv",".mp4",".avi",".mov",".wmv",".flv",".m4v"):
                     self.schedule_video(path)
                 elif ext == ".nfo":
                     self.schedule_nfo(path)
-
-    def schedule_video(self, path):
-        self.video_queue.add(path)
-        if not self.video_timer:
-            self.video_timer = threading.Timer(2, self.process_video_queue)
-            self.video_timer.start()
 
     def schedule_nfo(self, path):
         self.nfo_queue.add(path)
@@ -37,21 +36,26 @@ class VideoEventHandler(FileSystemEventHandler):
             self.nfo_timer = threading.Timer(10, self.process_nfo_queue)
             self.nfo_timer.start()
 
-    def process_video_queue(self):
-        with self.lock:
-            queue = list(self.video_queue)
-            self.video_queue.clear()
-            self.video_timer = None
-        for path in queue: process_file(path, self.plex, self.config)
+    def schedule_video(self, path):
+        self.video_queue.add(path)
+        if not self.video_timer:
+            self.video_timer = threading.Timer(2, self.process_video_queue)
+            self.video_timer.start()
 
     def process_nfo_queue(self):
         with self.lock:
             queue = list(self.nfo_queue)
             self.nfo_queue.clear()
             self.nfo_timer = None
-        for nfo_path in queue:
-            base = os.path.splitext(nfo_path)[0]
-            for ext in (".mkv",".mp4",".avi",".mov",".wmv",".flv",".m4v"):
-                candidate = base+ext
-                if os.path.exists(candidate):
-                    process_file(candidate, self.plex, self.config)
+        for nfo in queue:
+            # 매칭 비디오 처리
+            video_path = os.path.splitext(nfo)[0]  # 기본 확장 제거
+            process_file(video_path, self.plex, self.config, cache=self.cache, semaphore=self.semaphore)
+
+    def process_video_queue(self):
+        with self.lock:
+            queue = list(self.video_queue)
+            self.video_queue.clear()
+            self.video_timer = None
+        for video_path in queue:
+            process_file(video_path, self.plex, self.config, cache=self.cache, semaphore=self.semaphore)
