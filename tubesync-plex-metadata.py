@@ -298,33 +298,33 @@ def find_plex_item(abs_path):
 # Library scan & cache update
 # ==============================
 def scan_and_update_cache():
-    """Scan Plex libraries and update cache with video file keys"""
+    """Full Plex library scan to update cache"""
     global cache
     existing_files = set(cache.keys())
     all_files = []
 
+    # --- Collect all video files from libraries ---
     for lib_id in config["plex_library_ids"]:
         try:
             section = plex.library.sectionByID(lib_id)
-        except Exception:
+        except:
             continue
         for p in getattr(section, "locations", []):
             for root, dirs, files in os.walk(p):
                 for f in files:
-                    all_files.append(os.path.join(root, f))
+                    if not f.lower().endswith(VIDEO_EXTS):
+                        continue
+                    all_files.append(os.path.abspath(os.path.join(root, f)))
 
-    current_files = set()
+    # --- Update cache with Plex keys ---
     for f in all_files:
-        abs_path = os.path.abspath(f)
-        if not f.lower().endswith(VIDEO_EXTS):
-            continue
-        current_files.add(abs_path)
-        if abs_path not in cache:
-            plex_item = find_plex_item(abs_path)
+        if f not in cache:
+            plex_item = find_plex_item(f)
             if plex_item:
-                cache[abs_path] = plex_item.key
+                cache[f] = plex_item.key
 
-    # Remove deleted files from cache
+    # --- Remove deleted files from cache ---
+    current_files = set(all_files)
     removed = existing_files - current_files
     for f in removed:
         cache.pop(f, None)
@@ -423,7 +423,7 @@ def apply_nfo(ep, file_path):
 # Process single file
 # ==============================
 def process_file(file_path, ignore_processed=False):
-    """Process a video file: apply NFO metadata and extract/upload subtitles"""
+    """Process video file: apply NFO and upload subtitles"""
     abs_path = Path(file_path).resolve()
     if not ignore_processed and abs_path in processed_files:
         return False
@@ -440,11 +440,13 @@ def process_file(file_path, ignore_processed=False):
                 logging.warning(f"Failed to fetch Plex item {key}: {e}")
             plex_item = None
 
+    # --- Only call find_plex_item if cache miss ---
     if not plex_item:
         plex_item = find_plex_item(str(abs_path))
         if plex_item:
             cache[str(abs_path)] = plex_item.key
 
+    # --- NFO / subtitles handling ---
     nfo_path = abs_path.with_suffix(".nfo")
     success = False
 
@@ -578,7 +580,8 @@ class VideoEventHandler(FileSystemEventHandler):
 # Main entry point
 # ==============================
 def main():
-    """Main execution: scan libraries, process files, optionally watch folders"""
+    """Main execution"""
+    # --- Scan libraries once and fill cache first ---
     scan_and_update_cache()
     save_cache()
 
