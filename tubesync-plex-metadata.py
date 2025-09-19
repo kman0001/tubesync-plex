@@ -348,6 +348,15 @@ def process_nfo(file_path):
             logging.debug(f"[NFO] No NFO or empty file: {nfo_path}")
         return False
 
+    cached_hash = cache.get(str_path, {}).get("nfo_hash")
+    if DETAIL:
+        logging.debug(f"[NFO] Cached hash: {cached_hash}")
+
+    if cached_hash == nfo_hash and not config.get("always_apply_nfo", True):
+        if DETAIL:
+            logging.debug(f"[NFO] Skipped (unchanged): {nfo_path}")
+        return False
+
     nfo_hash = compute_nfo_hash(nfo_path)
     cached_hash = cache.get(str_path, {}).get("nfo_hash")
     if DETAIL:
@@ -379,11 +388,13 @@ def process_nfo(file_path):
     if not plex_item:
         plex_item = find_plex_item(str_path)
         if plex_item:
-            update_cache(str_path, plex_item.ratingKey)
+            update_cache(str_path, plex_item.ratingKey, nfo_hash)  # ✅ hash 같이 저장
         else:
             logging.warning(f"[NFO] Plex item not found for {str_path}")
+            # ⚠️ 여기서도 캐시에 nfo_hash만이라도 기록 (선택)
+            update_cache(str_path, None, nfo_hash)
             return False
-
+            
     # NFO 적용
     try:
         tree = ET.parse(str(nfo_path), parser=ET.XMLParser(recover=True))
@@ -393,7 +404,9 @@ def process_nfo(file_path):
         plex_item.editSortTitle(root.findtext("aired",""), locked=True)
         update_cache(str_path, plex_item.ratingKey, nfo_hash)
         if DETAIL:
-            logging.debug(f"[NFO] update_cache called with ratingKey={plex_item.ratingKey}, nfo_hash={nfo_hash}")
+            logging.debug(
+                f"[NFO] update_cache called with ratingKey={plex_item.ratingKey}, nfo_hash={nfo_hash}"
+            )
 
         if delete_nfo_after_apply:
             try: nfo_path.unlink()
