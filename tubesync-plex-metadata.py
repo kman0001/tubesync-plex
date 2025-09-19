@@ -463,18 +463,51 @@ def process_file(file_path):
     return True
 
 # ==============================
-# Watchdog 이벤트 처리
+# processed_files prune 기능
+# ==============================
+def prune_processed_files(max_size=10000):
+    """
+    processed_files가 너무 커지면 오래된 항목 제거
+    """
+    if len(processed_files) > max_size:
+        to_remove = list(processed_files)[:len(processed_files)-max_size]
+        for f in to_remove:
+            processed_files.remove(f)
+        logging.debug(f"[PRUNE] processed_files pruned {len(to_remove)} entries")
+
+# ==============================
+# Watchdog 이벤트 처리 (통합 개선)
 # ==============================
 class WatchHandler(FileSystemEventHandler):
-    def on_any_event(self, event):
-        if event.is_directory: return
+    def on_created(self, event):
+        if event.is_directory: 
+            return
         file_queue.put(str(Path(event.src_path).resolve()))
 
+    def on_modified(self, event):
+        if event.is_directory: 
+            return
+        file_queue.put(str(Path(event.src_path).resolve()))
+
+    def on_deleted(self, event):
+        if event.is_directory: 
+            return
+        abs_path = str(Path(event.src_path).resolve())
+        with cache_lock:
+            cache.pop(abs_path, None)
+        if abs_path in processed_files:
+            processed_files.remove(abs_path)
+        logging.info(f"[WATCHDOG] File deleted: {abs_path}")
+
+# ==============================
+# Watchdog 처리 루프
+# ==============================
 def watch_worker(stop_event):
     while not stop_event.is_set():
         try:
             path = file_queue.get(timeout=0.5)
             process_file(path)
+            prune_processed_files()
         except queue.Empty:
             continue
 
