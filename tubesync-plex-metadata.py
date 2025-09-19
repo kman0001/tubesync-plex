@@ -539,6 +539,23 @@ def watch_worker(stop_event):
             continue
 
 # ==============================
+# Scan: NFO 전용 (신규)
+# ==============================
+def scan_nfo_files(base_dirs):
+    """
+    base_dirs 내 모든 .nfo 파일 경로 수집
+    """
+    nfo_files = []
+    for base_dir in base_dirs:
+        for root, _, files in os.walk(base_dir):
+            for f in files:
+                if f.lower().endswith(".nfo"):
+                    nfo_files.append(os.path.abspath(os.path.join(root, f)))
+    if DETAIL:
+        logging.debug(f"[SCAN] Found {len(nfo_files)} NFO files")
+    return nfo_files
+
+# ==============================
 # Scan and update cache (updated)
 # ==============================
 def scan_and_update_cache(base_dirs):
@@ -594,13 +611,23 @@ def main():
     if DISABLE_WATCHDOG:
         scan_and_update_cache(base_dirs)
         logging.info(f"[MAIN] Processing NFO/Video files...")
+
+        # 기존: video_files = list(processed_files)
         video_files = list(processed_files)
+        nfo_files = scan_nfo_files(base_dirs)
+
         with ThreadPoolExecutor(max_workers=threads) as executor:
+            # NFO 파일 처리
+            for nfo in nfo_files:
+                executor.submit(process_nfo, nfo)
+            # 영상 파일 처리
             futures = {executor.submit(process_file, f): f for f in video_files}
             for fut in as_completed(futures):
-                try: fut.result()
+                try:
+                    fut.result()
                 except Exception as e:
                     logging.error(f"[MAIN] Failed: {futures[fut]} - {e}")
+
         save_cache()
 
     # Watchdog 활성화: 실시간 이벤트 처리
