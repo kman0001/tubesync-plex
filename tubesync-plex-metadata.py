@@ -365,7 +365,7 @@ def process_nfo(file_path):
 
     # Plex item 가져오기
     plex_item = None
-        ratingKey = cache.get(str_path, {}).get("ratingKey")
+    ratingKey = cache.get(str_path, {}).get("ratingKey")
     if DETAIL:
         logging.debug(f"[NFO] Cached ratingKey: {ratingKey}")
     if ratingKey:
