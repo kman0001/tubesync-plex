@@ -201,6 +201,8 @@ def save_cache():
 def update_cache(path, ratingKey=None, nfo_hash=None):
     global cache_modified
     path = str(path)
+    if DETAIL:
+        logging.debug(f"[CACHE] update_cache: path={path}, ratingKey={ratingKey}, nfo_hash={nfo_hash}")
     with cache_lock:
         current = cache.get(path, {})
         if ratingKey: current["ratingKey"] = ratingKey
@@ -332,11 +334,29 @@ def process_nfo(file_path):
     abs_path = Path(file_path).resolve()
     str_path = str(abs_path)
     nfo_path = abs_path.with_suffix(".nfo")
-    if not nfo_path.exists() or nfo_path.stat().st_size == 0:
+    
+    if DETAIL:
+        logging.debug(f"[NFO] Start processing: {str_path}")
+        logging.debug(f"[NFO] NFO path: {nfo_path} exists={nfo_path.exists()}")
+    
+    if nfo_path.exists() and nfo_path.stat().st_size > 0:
+        nfo_hash = compute_nfo_hash(nfo_path)
+        if DETAIL:
+            logging.debug(f"[NFO] Computed hash: {nfo_hash}")
+    else:
+        if DETAIL:
+            logging.debug(f"[NFO] No NFO or empty file: {nfo_path}")
         return False
 
     nfo_hash = compute_nfo_hash(nfo_path)
     cached_hash = cache.get(str_path, {}).get("nfo_hash")
+    if DETAIL:
+        logging.debug(f"[NFO] Cached hash: {cached_hash}")
+
+    if cached_hash == nfo_hash and not config.get("always_apply_nfo", True):
+        if DETAIL:
+            logging.debug(f"[NFO] Skipped (unchanged): {nfo_path}")
+        return False
 
     # 캐시와 비교 후 적용 여부 결정
     if cached_hash == nfo_hash and not config.get("always_apply_nfo", True):
@@ -345,12 +365,17 @@ def process_nfo(file_path):
 
     # Plex item 가져오기
     plex_item = None
-    ratingKey = cache.get(str_path, {}).get("ratingKey")
+        ratingKey = cache.get(str_path, {}).get("ratingKey")
+    if DETAIL:
+        logging.debug(f"[NFO] Cached ratingKey: {ratingKey}")
     if ratingKey:
         try:
             plex_item = plex.fetchItem(ratingKey)
-        except Exception:
-            pass
+            if DETAIL:
+                logging.debug(f"[NFO] Fetched Plex item via ratingKey: {plex_item.title}")
+        except Exception as e:
+            if DETAIL:
+                logging.debug(f"[NFO] fetchItem failed: {e}")
     if not plex_item:
         plex_item = find_plex_item(str_path)
         if plex_item:
@@ -367,6 +392,8 @@ def process_nfo(file_path):
         plex_item.editSummary(root.findtext("plot",""), locked=True)
         plex_item.editSortTitle(root.findtext("aired",""), locked=True)
         update_cache(str_path, plex_item.ratingKey, nfo_hash)
+        if DETAIL:
+            logging.debug(f"[NFO] update_cache called with ratingKey={plex_item.ratingKey}, nfo_hash={nfo_hash}")
 
         if delete_nfo_after_apply:
             try: nfo_path.unlink()
