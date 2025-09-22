@@ -331,7 +331,7 @@ def compute_nfo_hash(nfo_path):
 
 def process_nfo(nfo_file):
     abs_path = Path(nfo_file).resolve()
-    if not abs_path.exists(): 
+    if not abs_path.exists():
         return False
 
     # 대응 영상 찾기
@@ -339,10 +339,11 @@ def process_nfo(nfo_file):
     if not video_path.exists():
         for ext in VIDEO_EXTS:
             candidate = abs_path.with_suffix(ext)
-            if candidate.exists(): 
+            if candidate.exists():
                 video_path = candidate
                 break
-    if not video_path.exists(): 
+    if not video_path.exists():
+        logging.warning(f"[NFO] Video not found for {nfo_file}")
         return False
 
     str_video_path = str(video_path)
@@ -352,69 +353,85 @@ def process_nfo(nfo_file):
         if DETAIL: logging.debug(f"[NFO] Skipped (unchanged): {nfo_file}")
         return False
 
+    # Plex 아이템 찾기
     ratingKey = cache.get(str_video_path, {}).get("ratingKey")
-    if not ratingKey:
+    plex_item = None
+    if ratingKey:
+        try:
+            plex_item = plex.fetchItem(ratingKey)
+        except Exception:
+            plex_item = None
+
+    if not plex_item:
         plex_item = find_plex_item(str_video_path)
         if plex_item:
-            ratingKey = plex_item.ratingKey
-            update_cache(str_video_path, ratingKey=ratingKey)
+            update_cache(str_video_path, ratingKey=plex_item.ratingKey)
         else:
             logging.warning(f"[NFO] Plex item not found for {str_video_path}")
             return False
 
-    # Plex 아이템 찾아서 ratingKey 가져오기 후 메타 적용
-    apply_nfo_metadata(ratingKey, abs_path)
-    update_cache(str_video_path, ratingKey=ratingKey, nfo_hash=nfo_hash)
+    # NFO 메타 적용
+    apply_nfo_metadata(plex_item, abs_path)
+    update_cache(str_video_path, ratingKey=plex_item.ratingKey, nfo_hash=nfo_hash)
 
     # NFO 삭제 옵션
     if delete_nfo_after_apply:
-        try: 
+        try:
             abs_path.unlink()
-        except Exception as e: 
-            logging.warning(f"[NFO] Failed to delete {nfo_file}: {e}")
+            if DETAIL: logging.debug(f"[NFO] Deleted NFO: {abs_path}")
+        except Exception as e:
+            logging.warning(f"[NFO] Failed to delete {abs_path}: {e}")
 
     return True
 
-
-def apply_nfo_metadata(ratingKey, nfo_path):
+def apply_nfo_metadata(ep, nfo_path):
+    """
+    Plex item(ep) 기반으로 NFO 메타 적용
+    최소 항목: title, plot, aired, titleSort
+    thumb는 업로드
+    """
     try:
         tree = ET.parse(nfo_path)
         root = tree.getroot()
-        metadata = {}
 
-        # 최소 항목만 적용
-        if (title := root.findtext("title")): metadata["title"] = title
-        if (plot := root.findtext("plot")): metadata["summary"] = plot
+        # title
+        if (title := root.findtext("title")):
+            ep.editTitle(title, locked=True)
+
+        # plot -> summary
+        if (plot := root.findtext("plot")):
+            ep.editSummary(plot, locked=True)
+
+        # aired/released -> originallyAvailableAt
         if (aired := root.findtext("aired") or root.findtext("released")):
-            metadata["originallyAvailableAt"] = aired
-        if (titleSort := root.findtext("titleSort")): metadata["titleSort"] = titleSort
+            ep.editOriginallyAvailableAt(aired, locked=True)
 
-        # Thumb는 기존 방식 그대로 업로드
+        # titleSort
+        if (titleSort := root.findtext("titleSort")):
+            ep.editSortTitle(titleSort, locked=True)
+
+        # thumb 처리
         if (thumb := root.findtext("thumb")):
-            item = plex.fetchItem(ratingKey)
             thumb_path = Path(thumb)
             if thumb.startswith("http"):
                 try:
-                    resp = requests.get(thumb, stream=True)
+                    resp = requests.get(thumb, stream=True, timeout=10)
                     if resp.status_code == 200:
                         tmp_file = Path("/tmp/plex_thumb.jpg")
                         with open(tmp_file, "wb") as f:
                             for chunk in resp.iter_content(1024): f.write(chunk)
-                        item.uploadPoster(str(tmp_file))
+                        ep.uploadPoster(str(tmp_file))
                         tmp_file.unlink()
                 except Exception as e:
                     logging.warning(f"[NFO] Failed to download/upload thumb {thumb}: {e}")
             elif thumb_path.exists():
                 try:
-                    item.uploadPoster(str(thumb_path.resolve()))
+                    ep.uploadPoster(str(thumb_path.resolve()))
                 except Exception as e:
                     logging.warning(f"[NFO] Failed to upload local thumb {thumb_path}: {e}")
 
-        # Plex 메타 적용
-        if metadata:
-            plex.fetchItem(ratingKey).edit(**metadata)
-            if DETAIL:
-                logging.debug(f"[NFO] Applied metadata to ratingKey={ratingKey}: {metadata}")
+        if DETAIL:
+            logging.debug(f"[NFO] Applied metadata to ratingKey={ep.ratingKey}")
 
         return True
 
