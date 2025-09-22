@@ -83,16 +83,16 @@ default_config = {
     "plex_base_url": "",
     "plex_token": "",
     "plex_library_ids": [],
-    "silent": false,
-    "detail": false,
-    "subtitles": false,
-    "always_apply_nfo": true,
+    "silent": False,
+    "detail": False,
+    "subtitles": False,
+    "always_apply_nfo": True,
     "threads": 8,
     "max_concurrent_requests": 4,
     "request_delay": 0.2,
     "watch_folders": true,
     "watch_debounce_delay": 3,
-    "delete_nfo_after_apply": true
+    "delete_nfo_after_apply": True
 }
 
 # ==============================
