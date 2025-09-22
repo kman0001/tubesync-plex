@@ -387,17 +387,67 @@ def process_nfo(nfo_file):
 
 def apply_nfo_metadata(ratingKey, nfo_path):
     """
-    Plex 서버에 NFO 메타데이터 적용
-    ratingKey: Plex 아이템 ID
+    Plex 서버에 에피소드용 NFO 메타데이터 적용
+    ratingKey: Plex 에피소드 ID
     nfo_path: NFO 파일 경로
     """
     try:
-        with open(nfo_path, "r", encoding="utf-8") as f:
-            xml_data = f.read()
-        plex.fetchItem(ratingKey).edit(**{"metadata": xml_data})
+        import lxml.etree as ET
+
+        # XML 파싱
+        tree = ET.parse(nfo_path)
+        root = tree.getroot()
+
+        metadata = {}
+
+        # title
+        title = root.findtext("title")
+        if title:
+            metadata["title"] = title
+
+        # plot
+        plot = root.findtext("plot")
+        if plot:
+            metadata["summary"] = plot
+
+        # thumb (포스터/섬네일)
+        thumb = root.findtext("thumb")
+        if thumb:
+            metadata["thumb"] = thumb  # Plex API에서 thumb 업로드용으로 경로 변환 필요
+
+        # runtime
+        runtime = root.findtext("runtime")
+        if runtime:
+            try:
+                metadata["duration"] = int(runtime) * 1000  # Plex는 ms 단위
+            except ValueError:
+                pass
+
+        # studio
+        studio = root.findtext("studio")
+        if studio:
+            metadata["studio"] = studio
+
+        # aired
+        aired = root.findtext("aired")
+        if aired:
+            metadata["originallyAvailableAt"] = aired
+
+        # uniqueid
+        uniqueid = root.findtext("uniqueid")
+        if uniqueid:
+            metadata["guid"] = uniqueid
+
+        # Plex 적용
+        if metadata:
+            plex.fetchItem(ratingKey).edit(**metadata)
+            if DETAIL:
+                logging.debug(f"[NFO] Applied metadata to ratingKey={ratingKey}: {metadata}")
+
         return True
+
     except Exception as e:
-        logging.error(f"[NFO] Failed to apply NFO {nfo_path} - {e}")
+        logging.error(f"[NFO] Failed to apply NFO {nfo_path} - {e}", exc_info=True)
         return False
 
 # ==============================
