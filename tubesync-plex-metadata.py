@@ -404,7 +404,7 @@ def apply_nfo_metadata(ep, nfo_path):
 
         # aired/released -> originallyAvailableAt
         if (aired := root.findtext("aired") or root.findtext("released")):
-            ep.editOriginallyAvailableAt(aired, locked=True)
+            ep.edit(originallyAvailableAt=aired, lockedFields=['originallyAvailableAt'])
 
         # titleSort
         if (titleSort := root.findtext("titleSort")):
