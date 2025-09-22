@@ -315,7 +315,7 @@ def find_plex_item(abs_path):
     return None
 
 # ==============================
-# NFO process
+# NFO process (thumb 제거)
 # ==============================
 def compute_nfo_hash(nfo_path):
     try:
@@ -371,7 +371,7 @@ def process_nfo(nfo_file):
             return False
 
     # NFO 메타 적용
-    success = apply_nfo_metadata(plex_item.ratingKey, abs_path, str_video_path)
+    success = apply_nfo_metadata(plex_item.ratingKey, abs_path)
     if success:
         update_cache(str_video_path, ratingKey=plex_item.ratingKey, nfo_hash=nfo_hash)
 
@@ -385,16 +385,10 @@ def process_nfo(nfo_file):
 
     return success
 
-def apply_nfo_metadata(ratingKey, nfo_path, video_file):
-    """
-    NFO 메타데이터 적용 (로컬 포스터 전용, URL 업로드 제거)
-    
-    ratingKey : Plex 아이템의 ratingKey
-    nfo_path  : NFO 파일 경로
-    video_file: 해당 영상 파일 경로
-    """
+
+def apply_nfo_metadata(ratingKey, nfo_path):
     try:
-        ep = plex.fetchItem(ratingKey)
+        item = plex.fetchItem(ratingKey)
         tree = ET.parse(nfo_path)
         root = tree.getroot()
 
@@ -414,11 +408,11 @@ def apply_nfo_metadata(ratingKey, nfo_path, video_file):
         fields_to_modify = list(edit_kwargs.keys())
 
         # -----------------------------
-        # 1. 적용 대상 필드 잠금 해제
+        # 1. 적용 대상 필드만 잠금 해제
         # -----------------------------
         if fields_to_modify:
             try:
-                ep.edit(lockedFields=[])
+                item.edit(lockedFields=[])
             except Exception as e:
                 logging.warning(f"[NFO] Failed to unlock fields: {e}")
 
@@ -426,30 +420,14 @@ def apply_nfo_metadata(ratingKey, nfo_path, video_file):
         # 2. 메타 적용
         # -----------------------------
         if edit_kwargs:
-            try:
-                ep.edit(**edit_kwargs)
-            except Exception as e:
-                logging.error(f"[NFO] Failed to apply metadata: {e}")
+            item.edit(**edit_kwargs)
 
         # -----------------------------
-        # 3. 포스터 적용 (로컬 파일만)
-        # -----------------------------
-        if thumb := root.findtext("thumb"):
-            thumb_path = (Path(video_file).parent / thumb).resolve()
-            try:
-                if thumb_path.exists():
-                    ep.uploadPoster(str(thumb_path))
-                else:
-                    logging.warning(f"[NFO] Poster not found or not local: {thumb}")
-            except Exception as e:
-                logging.error(f"[NFO] Failed to apply poster {thumb_path}: {e}")
-
-        # -----------------------------
-        # 4. 적용한 필드 잠금
+        # 3. 적용한 필드만 잠금
         # -----------------------------
         if fields_to_modify:
             try:
-                ep.edit(lockedFields=fields_to_modify)
+                item.edit(lockedFields=fields_to_modify)
             except Exception as e:
                 logging.warning(f"[NFO] Failed to lock fields: {e}")
 
