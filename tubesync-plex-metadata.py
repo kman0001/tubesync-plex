@@ -384,54 +384,55 @@ def process_nfo(nfo_file):
 
     return True
 
-def apply_nfo_metadata(ep, nfo_path):
-    """
-    Plex item(ep) 기반으로 NFO 메타 적용
-    최소 항목: title, plot, aired, titleSort
-    thumb는 업로드
-    """
+def apply_nfo_metadata(ratingKey, nfo_path):
     try:
         tree = ET.parse(nfo_path)
         root = tree.getroot()
+        edit_kwargs = {"lockedFields": []}
 
-        # title
+        # 기본 메타 적용
         if (title := root.findtext("title")):
-            ep.editTitle(title, locked=True)
-
-        # plot -> summary
+            edit_kwargs["title"] = title
+            edit_kwargs["lockedFields"].append("title")
         if (plot := root.findtext("plot")):
-            ep.editSummary(plot, locked=True)
-
-        # aired/released -> originallyAvailableAt
+            edit_kwargs["summary"] = plot
+            edit_kwargs["lockedFields"].append("summary")
         if (aired := root.findtext("aired") or root.findtext("released")):
-            ep.edit(originallyAvailableAt=aired, lockedFields=['originallyAvailableAt'])
-
-        # titleSort
+            edit_kwargs["originallyAvailableAt"] = aired
+            edit_kwargs["lockedFields"].append("originallyAvailableAt")
         if (titleSort := root.findtext("titleSort")):
-            ep.editSortTitle(titleSort, locked=True)
+            edit_kwargs["titleSort"] = titleSort
+            edit_kwargs["lockedFields"].append("titleSort")
 
-        # thumb 처리
-        if (thumb := root.findtext("thumb")):
+        # 한 번에 메타 적용
+        if edit_kwargs:
+            plex.fetchItem(ratingKey).edit(**edit_kwargs)
+
+        # thumb 처리 (poster 덮어쓰기)
+        thumb = root.findtext("thumb")
+        if thumb:
+            item = plex.fetchItem(ratingKey)
             thumb_path = Path(thumb)
-            if thumb.startswith("http"):
+            if thumb_path.exists():
+                try:
+                    item.uploadPoster(str(thumb_path.resolve()))
+                except Exception as e:
+                    logging.warning(f"[NFO] Failed to upload local thumb {thumb_path}: {e}")
+            elif thumb.startswith("http"):
                 try:
                     resp = requests.get(thumb, stream=True, timeout=10)
                     if resp.status_code == 200:
                         tmp_file = Path("/tmp/plex_thumb.jpg")
                         with open(tmp_file, "wb") as f:
-                            for chunk in resp.iter_content(1024): f.write(chunk)
-                        ep.uploadPoster(str(tmp_file))
+                            for chunk in resp.iter_content(1024):
+                                f.write(chunk)
+                        item.uploadPoster(str(tmp_file))
                         tmp_file.unlink()
                 except Exception as e:
                     logging.warning(f"[NFO] Failed to download/upload thumb {thumb}: {e}")
-            elif thumb_path.exists():
-                try:
-                    ep.uploadPoster(str(thumb_path.resolve()))
-                except Exception as e:
-                    logging.warning(f"[NFO] Failed to upload local thumb {thumb_path}: {e}")
 
         if DETAIL:
-            logging.debug(f"[NFO] Applied metadata to ratingKey={ep.ratingKey}")
+            logging.debug(f"[NFO] Applied metadata to ratingKey={ratingKey}: {edit_kwargs}, thumb={thumb}")
 
         return True
 
