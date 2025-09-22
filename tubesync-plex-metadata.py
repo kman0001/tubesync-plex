@@ -371,7 +371,7 @@ def process_nfo(nfo_file):
             return False
 
     # NFO 메타 적용
-    apply_nfo_metadata(plex_item, abs_path)
+    apply_nfo_metadata(plex_item.ratingKey, abs_path, str_video_path)
     update_cache(str_video_path, ratingKey=plex_item.ratingKey, nfo_hash=nfo_hash)
 
     # NFO 삭제 옵션
@@ -390,40 +390,27 @@ def apply_nfo_metadata(ratingKey, nfo_path, video_file):
         tree = ET.parse(nfo_path)
         root = tree.getroot()
 
-        # -----------------------------
-        # 메타데이터 추출
-        # -----------------------------
         edit_kwargs = {}
-
         if title := root.findtext("title"):
             edit_kwargs["title"] = title
-
         if plot := root.findtext("plot"):
             edit_kwargs["summary"] = plot
-
         if aired := root.findtext("aired") or root.findtext("released"):
             edit_kwargs["originallyAvailableAt"] = aired
-
         if titleSort := root.findtext("titleSort"):
-            edit_kwargs["titleSort"] = titleSort  # Plex API key 맞춤
+            edit_kwargs["titleSort"] = titleSort
 
-        # -----------------------------
         # 포스터 처리
-        # -----------------------------
-        from urllib.parse import quote
         if thumb := root.findtext("thumb"):
             thumb_path = Path(video_file).parent / thumb
             try:
                 if thumb_path.exists():
-                    ep.uploadPoster(f"file://{quote(str(thumb_path.resolve()))}")
+                    ep.uploadPoster(str(thumb_path.resolve()))
                 else:
-                    ep.uploadPoster(thumb)  # 인터넷 URL
+                    ep.uploadPoster(thumb)
             except Exception as e:
                 logging.error(f"[NFO] Failed to apply poster {thumb}: {e}")
 
-        # -----------------------------
-        # lockedFields와 함께 한 번에 적용
-        # -----------------------------
         lock_fields = list(edit_kwargs.keys())
         if edit_kwargs:
             ep.edit(**edit_kwargs, lockedFields=lock_fields)
