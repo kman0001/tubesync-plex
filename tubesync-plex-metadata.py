@@ -315,42 +315,35 @@ def find_plex_item(abs_path):
     return None
 
 # ==============================
-# NFO process (thumb 제거, 필드별 edit)
+# NFO Process (thumb 제거, 필드별 edit)
 # ==============================
 def compute_nfo_hash(nfo_path):
     try:
         with open(nfo_path, "rb") as f:
             data = f.read()
         h = hashlib.md5(data).hexdigest()
-        if DETAIL:
-            logging.debug(f"[NFO] compute_nfo_hash: {nfo_path} -> {h}")
+        if detail:
+            print(f"[-] compute_nfo_hash: {nfo_path} -> {h}")
         return h
     except Exception as e:
-        logging.error(f"[NFO] compute_nfo_hash failed: {nfo_path} - {e}")
+        print(f"[!] compute_nfo_hash failed: {nfo_path} - {e}")
         return None
 
-def process_nfo(nfo_file):
-    abs_path = Path(nfo_file).resolve()
-    if not abs_path.exists():
-        return False
-
-    # 대응 영상 찾기
-    video_path = abs_path.with_suffix(".mkv")
-    if not video_path.exists():
-        for ext in VIDEO_EXTS:
-            candidate = abs_path.with_suffix(ext)
-            if candidate.exists():
-                video_path = candidate
-                break
-    if not video_path.exists():
-        logging.warning(f"[NFO] Video not found for {nfo_file}")
+def process_nfo(file_path):
+    """
+    Process a single video file's NFO and apply to Plex.
+    """
+    video_path = Path(file_path).resolve()
+    nfo_path = video_path.with_suffix(".nfo")
+    if not nfo_path.exists() or nfo_path.stat().st_size == 0:
         return False
 
     str_video_path = str(video_path)
-    nfo_hash = compute_nfo_hash(abs_path)
+    nfo_hash = compute_nfo_hash(nfo_path)
     cached_hash = cache.get(str_video_path, {}).get("nfo_hash")
     if cached_hash == nfo_hash and not config.get("always_apply_nfo", True):
-        if DETAIL: logging.debug(f"[NFO] Skipped (unchanged): {nfo_file}")
+        if detail:
+            print(f"[-] Skipped (unchanged): {nfo_path}")
         return False
 
     # Plex 아이템 찾기
@@ -367,80 +360,61 @@ def process_nfo(nfo_file):
         if plex_item:
             update_cache(str_video_path, ratingKey=plex_item.ratingKey)
         else:
-            logging.warning(f"[NFO] Plex item not found for {str_video_path}")
+            print(f"[WARN] Plex item not found for {str_video_path}")
             return False
 
-    # NFO 메타 적용
-    success = apply_nfo_metadata(plex_item.ratingKey, abs_path)
+    # NFO 적용
+    success = apply_nfo(plex_item, str_video_path)
     if success:
         update_cache(str_video_path, ratingKey=plex_item.ratingKey, nfo_hash=nfo_hash)
 
         # NFO 삭제 옵션
         if delete_nfo_after_apply:
             try:
-                abs_path.unlink()
-                if DETAIL: logging.debug(f"[NFO] Deleted NFO: {abs_path}")
+                nfo_path.unlink()
+                if detail:
+                    print(f"[-] Deleted NFO: {nfo_path}")
             except Exception as e:
-                logging.warning(f"[NFO] Failed to delete {abs_path}: {e}")
+                print(f"[WARN] Failed to delete NFO file: {nfo_path} - {e}")
 
     return success
 
 
-def apply_nfo_metadata(ratingKey, nfo_path):
+def apply_nfo(ep, file_path):
+    """
+    Apply NFO metadata to a Plex episode item (thumb removed, field-by-field edit)
+    """
+    nfo_path = Path(file_path).with_suffix(".nfo")
+    if not nfo_path.exists() or nfo_path.stat().st_size == 0:
+        return False
+
     try:
-        item = plex.fetchItem(ratingKey)
-        tree = ET.parse(nfo_path)
+        tree = ET.parse(str(nfo_path), parser=ET.XMLParser(recover=True))
         root = tree.getroot()
+        title = root.findtext("title", "")
+        plot = root.findtext("plot", "")
+        aired = root.findtext("aired", "")
+
+        if detail:
+            print(f"[-] Applying NFO: {file_path} -> {title}")
 
         # -----------------------------
-        # NFO에서 실제 변경할 필드만 추출
+        # 필드별 적용 (안정적)
         # -----------------------------
-        edit_kwargs = {}
-        if title := root.findtext("title"):
-            edit_kwargs["title"] = title
-        if plot := root.findtext("plot"):
-            edit_kwargs["summary"] = plot
-        if aired := root.findtext("aired") or root.findtext("released"):
-            edit_kwargs["originallyAvailableAt"] = aired
-        if titleSort := root.findtext("titleSort"):
-            edit_kwargs["titleSort"] = titleSort
-
-        fields_to_modify = list(edit_kwargs.keys())
-
-        # -----------------------------
-        # 1. 적용 대상 필드만 잠금 해제
-        # -----------------------------
-        if fields_to_modify:
-            try:
-                item.edit(lockedFields=[])
-            except Exception as e:
-                logging.warning(f"[NFO] Failed to unlock fields: {e}")
-
-        # -----------------------------
-        # 2. 필드별 메타 적용
-        # -----------------------------
-        for field, value in edit_kwargs.items():
-            try:
-                item.edit(**{field: value})
-            except Exception as e:
-                logging.error(f"[NFO] Failed to apply {field}: {e}")
-
-        # -----------------------------
-        # 3. 적용한 필드만 잠금
-        # -----------------------------
-        if fields_to_modify:
-            try:
-                item.edit(lockedFields=fields_to_modify)
-            except Exception as e:
-                logging.warning(f"[NFO] Failed to lock fields: {e}")
-
-        if DETAIL:
-            logging.debug(f"[NFO] Applied metadata to ratingKey={ratingKey}: {edit_kwargs} with locks {fields_to_modify}")
+        if title:
+            ep.editTitle(title, locked=True)
+        if plot:
+            ep.editSummary(plot, locked=True)
+        if aired:
+            ep.editOriginallyAvailableAt(aired, locked=True)
+        title_sort = root.findtext("titleSort", "")
+        if title_sort:
+            ep.editSortTitle(title_sort, locked=True)
 
         return True
 
     except Exception as e:
-        logging.error(f"[NFO] Failed to apply NFO {nfo_path} - {e}", exc_info=True)
+        print(f"[!] Error applying NFO {nfo_path}: {e}")
         return False
 
 # ==============================
