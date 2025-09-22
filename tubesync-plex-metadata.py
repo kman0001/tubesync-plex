@@ -384,39 +384,44 @@ def process_nfo(nfo_file):
 
     return True
 
-def apply_nfo_metadata(ep, nfo_path):
+def apply_nfo_metadata(ratingKey, nfo_path):
     try:
+        ep = plex.fetchItem(ratingKey)
         tree = ET.parse(nfo_path)
         root = tree.getroot()
 
-        # 편집할 메타데이터
+        # -----------------------------
+        # 최소 항목 한 번에 적용
+        # -----------------------------
         edit_kwargs = {}
         locked_fields = []
 
-        if (title := root.findtext("title")):
+        if title := root.findtext("title"):
             edit_kwargs["title"] = title
             locked_fields.append("title")
-        if (plot := root.findtext("plot")):
+
+        if plot := root.findtext("plot"):
             edit_kwargs["summary"] = plot
             locked_fields.append("summary")
-        if (aired := root.findtext("aired") or root.findtext("released")):
+
+        if aired := root.findtext("aired") or root.findtext("released"):
             edit_kwargs["originallyAvailableAt"] = aired
             locked_fields.append("originallyAvailableAt")
-        if (titleSort := root.findtext("titleSort")):
-            edit_kwargs["titleSort"] = titleSort
+
+        if titleSort := root.findtext("titleSort"):
+            edit_kwargs["titleSort.value"] = titleSort  # 강제 덮어쓰기
             locked_fields.append("titleSort")
 
-        if locked_fields:
-            edit_kwargs["lockedFields"] = locked_fields
-            ep.edit(**edit_kwargs)  # 한 번에 잠그면서 적용
+        edit_kwargs["lockedFields"] = locked_fields
 
-        # Thumb 처리
-        if (thumb := root.findtext("thumb")):
+        # -----------------------------
+        # Poster (thumb) 처리
+        # -----------------------------
+        if thumb := root.findtext("thumb"):
             thumb_path = Path(thumb)
             try:
                 if thumb.startswith("http"):
-                    # URL poster
-                    resp = requests.get(thumb, stream=True)
+                    resp = requests.get(thumb, stream=True, timeout=10)
                     if resp.status_code == 200:
                         tmp_file = Path("/tmp/plex_thumb.jpg")
                         with open(tmp_file, "wb") as f:
@@ -424,15 +429,20 @@ def apply_nfo_metadata(ep, nfo_path):
                         ep.uploadPoster(str(tmp_file))
                         tmp_file.unlink()
                 elif thumb_path.exists():
-                    # 로컬 파일 poster
                     ep.uploadPoster(str(thumb_path.resolve()))
             except Exception as e:
-                logging.warning(f"[NFO] Failed to apply thumb {thumb}: {e}")
+                logging.warning(f"[NFO] Failed to upload thumb {thumb}: {e}")
 
-        if DETAIL:
-            logging.debug(f"[NFO] Applied metadata to {ep}: {edit_kwargs}")
+        # -----------------------------
+        # Plex에 메타 적용
+        # -----------------------------
+        if edit_kwargs:
+            ep.edit(**edit_kwargs)
+            if DETAIL:
+                logging.debug(f"[NFO] Applied metadata to ratingKey={ratingKey}: {edit_kwargs}")
 
         return True
+
     except Exception as e:
         logging.error(f"[NFO] Failed to apply NFO {nfo_path} - {e}", exc_info=True)
         return False
