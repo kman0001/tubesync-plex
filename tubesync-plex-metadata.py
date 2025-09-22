@@ -365,6 +365,13 @@ def process_nfo(nfo_file, media_type=None):
         except Exception as e: logging.warning(f"[NFO] Failed to delete {nfo_file}: {e}")
     return True
 
+    apply_nfo_metadata(ratingKey, abs_path)
+    update_cache(str_video_path, ratingKey=ratingKey, nfo_hash=nfo_hash)
+    if delete_nfo_after_apply:
+        try: abs_path.unlink()
+        except Exception as e: logging.warning(f"[NFO] Failed to delete {nfo_file}: {e}")
+    return True
+
 def apply_nfo_metadata(ratingKey, nfo_path):
     try:
         tree = ET.parse(nfo_path)
