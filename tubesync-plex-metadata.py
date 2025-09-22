@@ -90,7 +90,7 @@ default_config = {
     "threads": 8,
     "max_concurrent_requests": 4,
     "request_delay": 0.2,
-    "watch_folders": true,
+    "watch_folders": True,
     "watch_debounce_delay": 3,
     "delete_nfo_after_apply": True
 }
