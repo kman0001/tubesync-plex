@@ -385,7 +385,7 @@ def apply_nfo_metadata(ratingKey, nfo_path):
         # 최소 항목 적용
         if (title := root.findtext("title")): metadata["title"] = title
         if (plot := root.findtext("plot")): metadata["summary"] = plot
-        if (studio := root.findtext("studio")): metadata["studio"] = studio
+        #if (studio := root.findtext("studio")): metadata["studio"] = studio
         if (aired := root.findtext("aired") or root.findtext("released")):
             metadata["originallyAvailableAt"] = aired
         if (titleSort := root.findtext("titleSort")): metadata["titleSort"] = titleSort
