@@ -322,11 +322,11 @@ def compute_nfo_hash(nfo_path):
         with open(nfo_path, "rb") as f:
             data = f.read()
         h = hashlib.md5(data).hexdigest()
-        if detail:
-            print(f"[-] compute_nfo_hash: {nfo_path} -> {h}")
+        if DETAIL:
+            logging.debug(f"[NFO] compute_nfo_hash: {nfo_path} -> {h}")
         return h
     except Exception as e:
-        print(f"[!] compute_nfo_hash failed: {nfo_path} - {e}")
+        logging.error(f"[NFO] compute_nfo_hash failed: {nfo_path} - {e}")
         return None
 
 def process_nfo(file_path):
