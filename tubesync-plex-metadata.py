@@ -391,7 +391,7 @@ def apply_nfo_metadata(ratingKey, nfo_path, video_file):
         root = tree.getroot()
 
         # -----------------------------
-        # 메타데이터 추출
+        # NFO에서 실제 변경할 필드만 추출
         # -----------------------------
         edit_kwargs = {}
         if title := root.findtext("title"):
@@ -403,20 +403,26 @@ def apply_nfo_metadata(ratingKey, nfo_path, video_file):
         if titleSort := root.findtext("titleSort"):
             edit_kwargs["titleSort"] = titleSort
 
-        fields_to_lock = list(edit_kwargs.keys())
+        fields_to_modify = list(edit_kwargs.keys())
 
-        # 1. 잠금 해제 (lockedFields 비우기)
-        if fields_to_lock:
+        # -----------------------------
+        # 1. 적용 대상 필드만 잠금 해제
+        # -----------------------------
+        if fields_to_modify:
             try:
                 ep.edit(lockedFields=[])
             except Exception as e:
                 logging.warning(f"[NFO] Failed to unlock fields: {e}")
 
+        # -----------------------------
         # 2. 메타 적용
+        # -----------------------------
         if edit_kwargs:
             ep.edit(**edit_kwargs)
 
+        # -----------------------------
         # 3. 포스터 적용
+        # -----------------------------
         if thumb := root.findtext("thumb"):
             thumb_path = (Path(video_file).parent / thumb).resolve()
             try:
@@ -429,15 +435,17 @@ def apply_nfo_metadata(ratingKey, nfo_path, video_file):
             except Exception as e:
                 logging.error(f"[NFO] Failed to apply poster {thumb}: {e}")
 
-        # 4. 필드 잠금 적용
-        if fields_to_lock:
+        # -----------------------------
+        # 4. 적용한 필드만 잠금
+        # -----------------------------
+        if fields_to_modify:
             try:
-                ep.edit(lockedFields=fields_to_lock)
+                ep.edit(lockedFields=fields_to_modify)
             except Exception as e:
                 logging.warning(f"[NFO] Failed to lock fields: {e}")
 
         if DETAIL:
-            logging.debug(f"[NFO] Applied metadata to ratingKey={ratingKey}: {edit_kwargs} with locks {fields_to_lock}")
+            logging.debug(f"[NFO] Applied metadata to ratingKey={ratingKey}: {edit_kwargs} with locks {fields_to_modify}")
 
         return True
 
