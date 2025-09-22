@@ -42,28 +42,7 @@ FFMPEG_SHA_FILE = BASE_DIR / ".ffmpeg_md5"
 VIDEO_EXTS = (".mkv", ".mp4", ".avi", ".mov", ".wmv", ".flv", ".m4v")
 cache_lock = threading.Lock()
 
-with CONFIG_FILE.open("r", encoding="utf-8") as f:
-    config = json.load(f)
-
-api_semaphore = threading.Semaphore(config.get("max_concurrent_requests", 2))
-request_delay = config.get("request_delay", 0.1)
-threads = config.get("threads", 4)
-
-processed_files = set()
-watch_debounce_delay = config.get("watch_debounce_delay", 2)
-cache_modified = False
-file_queue = queue.Queue()
-
-delete_nfo_after_apply = config.get("delete_nfo_after_apply", True)
-subtitles_enabled = config.get("subtitles", False)
-
-LANG_MAP = {"eng":"en","jpn":"ja","kor":"ko","fre":"fr","fra":"fr","spa":"es",
-            "ger":"de","deu":"de","ita":"it","chi":"zh","und":"und"}
-def map_lang(code): return LANG_MAP.get(code.lower(),"und")
-
-# ==============================
-# Default config
-# ==============================
+# Load minimal config skeleton if missing
 default_config = {
     "_comment": {
         "plex_base_url": "Base URL of your Plex server (e.g., http://localhost:32400).",
@@ -113,6 +92,10 @@ if DISABLE_WATCHDOG:
 
 delete_nfo_after_apply = config.get("delete_nfo_after_apply", True)
 subtitles_enabled = config.get("subtitles", False)
+request_delay = config.get("request_delay", 0.1)
+threads = config.get("threads", 4)
+
+api_semaphore = threading.Semaphore(config.get("max_concurrent_requests", 2))
 
 # ==============================
 # Logging setup
@@ -175,7 +158,7 @@ try:
     plex = PlexServerWithHTTPDebug(
         config["plex_base_url"],
         config["plex_token"],
-        debug_http=DEBUG_HTTP  # 여기서 독립 옵션 적용
+        debug_http=DEBUG_HTTP
     )
 except Exception as e:
     logging.error(f"Failed to connect to Plex: {e}")
@@ -189,6 +172,8 @@ if CACHE_FILE.exists():
         cache = json.load(f)
 else:
     cache = {}
+
+cache_modified = False
 
 def save_cache():
     global cache_modified
@@ -223,7 +208,7 @@ def setup_ffmpeg():
         url = "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-arm64-static.tar.xz"
     else:
         logging.error(f"Unsupported arch: {arch}")
-        sys.exit(1)
+        return  # 더 이상 강제 종료하지 않음
 
     md5_url = url + ".md5"
     tmp_dir = Path("/tmp/ffmpeg_dl")
@@ -249,14 +234,14 @@ def setup_ffmpeg():
 
     logging.info("Downloading FFmpeg...")
     try:
-        r = requests.get(url, stream=True)
+        r = requests.get(url, stream=True, timeout=60)
         r.raise_for_status()
         with open(tar_path, "wb") as f:
             for chunk in r.iter_content(chunk_size=8192):
                 f.write(chunk)
     except Exception as e:
         logging.error(f"Failed to download FFmpeg: {e}")
-        sys.exit(1)
+        return
 
     if remote_md5:
         h = hashlib.md5()
@@ -265,7 +250,7 @@ def setup_ffmpeg():
                 h.update(chunk)
         if h.hexdigest() != remote_md5:
             logging.error("Downloaded FFmpeg MD5 mismatch, aborting")
-            sys.exit(1)
+            return
 
     try:
         extract_dir = tmp_dir / "extract"
@@ -281,14 +266,12 @@ def setup_ffmpeg():
         if remote_md5: FFMPEG_SHA_FILE.write_text(remote_md5)
     except Exception as e:
         logging.error(f"FFmpeg extraction/move failed: {e}")
-        sys.exit(1)
+        return
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
     env = os.environ.copy()
     env["PATH"] = f"{FFMPEG_BIN.parent}:{env.get('PATH','')}"
-    # 예: subprocess.run([...], env=env)
-
     if DETAIL: logging.info("FFmpeg installed/updated successfully")
 
 # ==============================
@@ -296,27 +279,49 @@ def setup_ffmpeg():
 # ==============================
 def find_plex_item(abs_path):
     abs_path = os.path.abspath(abs_path)
-    for lib_id in config["plex_library_ids"]:
+    for lib_id in config.get("plex_library_ids", []):
         try:
             section = plex.library.sectionByID(lib_id)
-        except Exception: continue
+        except Exception:
+            continue
 
-        section_type = getattr(section, "TYPE", "").lower()
-        if section_type == "show": results = section.search(libtype="episode")
-        elif section_type in ("movie", "video"): results = section.search(libtype="movie")
-        else: continue
+        # section.TYPE may not exist; use section.TYPE or section.type if present
+        section_type = getattr(section, "TYPE", None) or getattr(section, "type", "")
+        section_type = str(section_type).lower()
+        if section_type == "show":
+            results = section.search(libtype="episode")
+        elif section_type in ("movie", "video"):
+            results = section.search(libtype="movie")
+        else:
+            # try a broad search fallback
+            results = section.search()
 
         for item in results:
-            for part in getattr(item, "iterParts", lambda: [])():
+            # parts: try several access patterns
+            parts_iter = []
+            try:
+                parts_iter = item.iterParts()
+            except Exception:
+                try:
+                    parts_iter = getattr(item, "parts", []) or []
+                except Exception:
+                    parts_iter = []
+
+            for part in parts_iter:
                 try:
                     if os.path.abspath(part.file) == abs_path:
                         return item
-                except Exception: continue
+                except Exception:
+                    continue
     return None
 
 # ==============================
 # NFO Process (thumb 제거, 필드별 edit)
 # ==============================
+LANG_MAP = {"eng":"en","jpn":"ja","kor":"ko","fre":"fr","fra":"fr","spa":"es",
+            "ger":"de","deu":"de","ita":"it","chi":"zh","und":"und"}
+def map_lang(code): return LANG_MAP.get(code.lower(),"und")
+
 def compute_nfo_hash(nfo_path):
     try:
         with open(nfo_path, "rb") as f:
@@ -329,21 +334,95 @@ def compute_nfo_hash(nfo_path):
         logging.error(f"[NFO] compute_nfo_hash failed: {nfo_path} - {e}")
         return None
 
+def safe_edit(ep, title=None, summary=None, aired=None, sort_title=None):
+    """
+    Plex 메타데이터 항목에 대해 가능한 편집 함수를 시도한다.
+    plexapi의 메서드가 환경마다 다를 수 있어 여러 가지를 시도.
+    """
+    try:
+        # 최신 plexapi: metadata.edit(**kwargs)
+        kwargs = {}
+        if title is not None: kwargs['title'] = title
+        if summary is not None: kwargs['summary'] = summary
+        if aired is not None: kwargs['originallyAvailableAt'] = aired
+        if sort_title is not None: kwargs['titleSort'] = sort_title
+        if kwargs:
+            try:
+                ep.edit(**kwargs)
+                return True
+            except Exception:
+                # fallback: individual helper methods (if 존재하면)
+                if title:
+                    try:
+                        if hasattr(ep, "editTitle"):
+                            ep.editTitle(title, locked=True)
+                        elif hasattr(ep, "edit"):
+                            ep.edit(title=title, locked=True)
+                    except Exception:
+                        pass
+                if summary:
+                    try:
+                        if hasattr(ep, "editSummary"):
+                            ep.editSummary(summary, locked=True)
+                        elif hasattr(ep, "edit"):
+                            ep.edit(summary=summary, locked=True)
+                    except Exception:
+                        pass
+                if aired:
+                    try:
+                        if hasattr(ep, "editOriginallyAvailableAt"):
+                            ep.editOriginallyAvailableAt(aired, locked=True)
+                        elif hasattr(ep, "edit"):
+                            ep.edit(originallyAvailableAt=aired, locked=True)
+                    except Exception:
+                        pass
+                if sort_title:
+                    try:
+                        if hasattr(ep, "editSortTitle"):
+                            ep.editSortTitle(sort_title, locked=True)
+                        elif hasattr(ep, "edit"):
+                            ep.edit(titleSort=sort_title, locked=True)
+                    except Exception:
+                        pass
+                return True
+        return False
+    except Exception as e:
+        logging.error(f"[SAFE_EDIT] Failed to edit item: {e}", exc_info=True)
+        return False
+
 def process_nfo(file_path):
     """
     Process a single video file's NFO and apply to Plex.
+    file_path may be either the video path or the .nfo path
     """
-    video_path = Path(file_path).resolve()
-    nfo_path = video_path.with_suffix(".nfo")
+    # if given nfo path -> get video path
+    p = Path(file_path)
+    if p.suffix.lower() == ".nfo":
+        nfo_path = p
+        video_path = p.with_suffix("")  # best-effort: remove .nfo to get video base
+        # If video doesn't exist, attempt to find a video sibling (same base + known ext)
+        if not video_path.exists():
+            found = None
+            for ext in VIDEO_EXTS:
+                candidate = p.with_suffix(ext)
+                if candidate.exists():
+                    found = candidate
+                    break
+            if found:
+                video_path = found
+    else:
+        video_path = p
+        nfo_path = p.with_suffix(".nfo")
+
     if not nfo_path.exists() or nfo_path.stat().st_size == 0:
         return False
 
-    str_video_path = str(video_path)
+    str_video_path = str(video_path.resolve())
     nfo_hash = compute_nfo_hash(nfo_path)
     cached_hash = cache.get(str_video_path, {}).get("nfo_hash")
     if cached_hash == nfo_hash and not config.get("always_apply_nfo", True):
-        if detail:
-            print(f"[-] Skipped (unchanged): {nfo_path}")
+        if DETAIL:
+            logging.debug(f"[-] Skipped (unchanged): {nfo_path}")
         return False
 
     # Plex 아이템 찾기
@@ -360,7 +439,7 @@ def process_nfo(file_path):
         if plex_item:
             update_cache(str_video_path, ratingKey=plex_item.ratingKey)
         else:
-            print(f"[WARN] Plex item not found for {str_video_path}")
+            logging.warning(f"[WARN] Plex item not found for {str_video_path}")
             return False
 
     # NFO 적용
@@ -372,17 +451,16 @@ def process_nfo(file_path):
         if delete_nfo_after_apply:
             try:
                 nfo_path.unlink()
-                if detail:
-                    print(f"[-] Deleted NFO: {nfo_path}")
+                if DETAIL:
+                    logging.debug(f"[-] Deleted NFO: {nfo_path}")
             except Exception as e:
-                print(f"[WARN] Failed to delete NFO file: {nfo_path} - {e}")
+                logging.warning(f"[WARN] Failed to delete NFO file: {nfo_path} - {e}")
 
     return success
 
-
 def apply_nfo(ep, file_path):
     """
-    Apply NFO metadata to a Plex episode item (thumb removed, field-by-field edit)
+    Apply NFO metadata to a Plex item (thumb removed, field-by-field edit)
     """
     nfo_path = Path(file_path).with_suffix(".nfo")
     if not nfo_path.exists() or nfo_path.stat().st_size == 0:
@@ -391,35 +469,32 @@ def apply_nfo(ep, file_path):
     try:
         tree = ET.parse(str(nfo_path), parser=ET.XMLParser(recover=True))
         root = tree.getroot()
-        title = root.findtext("title", "")
-        plot = root.findtext("plot", "")
-        aired = root.findtext("aired", "")
+        title = root.findtext("title", "").strip() or None
+        plot = root.findtext("plot", "").strip() or None
+        aired = root.findtext("aired", "").strip() or None
+        title_sort = root.findtext("titleSort", "").strip() or None
 
-        if detail:
-            print(f"[-] Applying NFO: {file_path} -> {title}")
+        if DETAIL:
+            logging.debug(f"[-] Applying NFO: {file_path} -> {title}")
 
         # -----------------------------
         # 필드별 적용 (안정적)
         # -----------------------------
-        if title:
-            ep.editTitle(title, locked=True)
-        if plot:
-            ep.editSummary(plot, locked=True)
-        if aired:
-            ep.editOriginallyAvailableAt(aired, locked=True)
-        title_sort = root.findtext("titleSort", "")
-        if title_sort:
-            ep.editSortTitle(title_sort, locked=True)
+        safe_edit(ep, title=title, summary=plot, aired=aired, sort_title=title_sort)
 
         return True
 
     except Exception as e:
-        print(f"[!] Error applying NFO {nfo_path}: {e}")
+        logging.error(f"[!] Error applying NFO {nfo_path}: {e}", exc_info=True)
         return False
 
 # ==============================
 # 파일 처리 통합 (영상 + NFO)
 # ==============================
+processed_files = set()
+watch_debounce_delay = config.get("watch_debounce_delay", 2)
+file_queue = queue.Queue()
+
 def process_file(file_path):
     abs_path = Path(file_path).resolve()
     str_path = str(abs_path)
@@ -490,7 +565,17 @@ def upload_subtitles(ep,srt_files):
         while retries>0:
             try:
                 with api_semaphore:
-                    ep.uploadSubtitles(srt,language=lang)
+                    # plexapi may provide different method names; try common ones
+                    if hasattr(ep, "uploadSubtitles"):
+                        ep.uploadSubtitles(srt,language=lang)
+                    elif hasattr(ep, "addSubtitles"):
+                        ep.addSubtitles(srt, language=lang)
+                    else:
+                        # fallback: try library-level upload (not ideal)
+                        try:
+                            ep.uploadSubtitles(srt, language=lang)
+                        except Exception:
+                            raise
                     time.sleep(request_delay)
                 break
             except Exception as e:
@@ -524,17 +609,17 @@ def enqueue_with_debounce(path, delay=watch_debounce_delay):
 
 class WatchHandler(FileSystemEventHandler):
     def on_created(self, event):
-        if event.is_directory: 
+        if event.is_directory:
             return
         enqueue_with_debounce(str(Path(event.src_path).resolve()))
 
     def on_modified(self, event):
-        if event.is_directory: 
+        if event.is_directory:
             return
         enqueue_with_debounce(str(Path(event.src_path).resolve()))
 
     def on_deleted(self, event):
-        if event.is_directory: 
+        if event.is_directory:
             return
         abs_path = str(Path(event.src_path).resolve())
         with cache_lock:
@@ -630,10 +715,11 @@ def main():
     setup_ffmpeg()
 
     base_dirs = []
-    for lib_id in config["plex_library_ids"]:
+    for lib_id in config.get("plex_library_ids", []):
         try:
             section = plex.library.sectionByID(lib_id)
-        except Exception: continue
+        except Exception:
+            continue
         base_dirs.extend(getattr(section, "locations", []))
 
     if DISABLE_WATCHDOG:
@@ -642,11 +728,14 @@ def main():
         nfo_files = scan_nfo_files(base_dirs)
 
         with ThreadPoolExecutor(max_workers=threads) as executor:
-            for nfo in nfo_files: executor.submit(process_nfo, nfo)
+            for nfo in nfo_files:
+                executor.submit(process_nfo, nfo)
             futures = {executor.submit(process_file, f): f for f in video_files}
             for fut in as_completed(futures):
-                try: fut.result()
-                except Exception as e: logging.error(f"[MAIN] Failed: {futures[fut]} - {e}")
+                try:
+                    fut.result()
+                except Exception as e:
+                    logging.error(f"[MAIN] Failed: {futures[fut]} - {e}")
 
         save_cache()
 
@@ -659,7 +748,8 @@ def main():
         watch_thread = threading.Thread(target=watch_worker, args=(stop_event,))
         watch_thread.start()
         try:
-            while True: time.sleep(1)
+            while True:
+                time.sleep(1)
         except KeyboardInterrupt:
             stop_event.set()
             observer.stop()
