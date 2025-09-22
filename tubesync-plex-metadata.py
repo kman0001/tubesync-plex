@@ -329,17 +329,21 @@ def compute_nfo_hash(nfo_path):
         logging.error(f"[NFO] compute_nfo_hash failed: {nfo_path} - {e}")
         return None
 
-def process_nfo(nfo_file, media_type=None):
+def process_nfo(nfo_file):
     abs_path = Path(nfo_file).resolve()
-    if not abs_path.exists(): return False
+    if not abs_path.exists(): 
+        return False
 
     # 대응 영상 찾기
     video_path = abs_path.with_suffix(".mkv")
     if not video_path.exists():
         for ext in VIDEO_EXTS:
             candidate = abs_path.with_suffix(ext)
-            if candidate.exists(): video_path = candidate; break
-    if not video_path.exists(): return False
+            if candidate.exists(): 
+                video_path = candidate
+                break
+    if not video_path.exists(): 
+        return False
 
     str_video_path = str(video_path)
     nfo_hash = compute_nfo_hash(abs_path)
@@ -358,19 +362,19 @@ def process_nfo(nfo_file, media_type=None):
             logging.warning(f"[NFO] Plex item not found for {str_video_path}")
             return False
 
+    # 메타데이터 적용
     apply_nfo_metadata(ratingKey, abs_path)
     update_cache(str_video_path, ratingKey=ratingKey, nfo_hash=nfo_hash)
+
+    # NFO 삭제 옵션
     if delete_nfo_after_apply:
-        try: abs_path.unlink()
-        except Exception as e: logging.warning(f"[NFO] Failed to delete {nfo_file}: {e}")
+        try: 
+            abs_path.unlink()
+        except Exception as e: 
+            logging.warning(f"[NFO] Failed to delete {nfo_file}: {e}")
+
     return True
 
-    apply_nfo_metadata(ratingKey, abs_path)
-    update_cache(str_video_path, ratingKey=ratingKey, nfo_hash=nfo_hash)
-    if delete_nfo_after_apply:
-        try: abs_path.unlink()
-        except Exception as e: logging.warning(f"[NFO] Failed to delete {nfo_file}: {e}")
-    return True
 
 def apply_nfo_metadata(ratingKey, nfo_path):
     try:
@@ -378,40 +382,40 @@ def apply_nfo_metadata(ratingKey, nfo_path):
         root = tree.getroot()
         metadata = {}
 
-        # 공통
+        # 최소 항목 적용
         if (title := root.findtext("title")): metadata["title"] = title
         if (plot := root.findtext("plot")): metadata["summary"] = plot
-        if (runtime := root.findtext("runtime")):
-            try: metadata["duration"] = int(runtime) * 1000
-            except ValueError: pass
         if (studio := root.findtext("studio")): metadata["studio"] = studio
         if (aired := root.findtext("aired") or root.findtext("released")):
             metadata["originallyAvailableAt"] = aired
-        if (uniqueid := root.findtext("uniqueid")): metadata["guid"] = uniqueid
-
-        # TV용
-        if (season := root.findtext("season")): metadata["parentIndex"] = int(season)
-        if (episode := root.findtext("episode")): metadata["index"] = int(episode)
+        if (titleSort := root.findtext("titleSort")): metadata["titleSort"] = titleSort
 
         # Thumb 처리
         if (thumb := root.findtext("thumb")):
             item = plex.fetchItem(ratingKey)
             thumb_path = Path(thumb)
             if thumb.startswith("http"):
-                resp = requests.get(thumb, stream=True)
-                if resp.status_code == 200:
-                    tmp_file = Path("/tmp/plex_thumb.jpg")
-                    with open(tmp_file, "wb") as f:
-                        for chunk in resp.iter_content(1024): f.write(chunk)
-                    item.uploadPoster(str(tmp_file))
-                    tmp_file.unlink()
+                try:
+                    resp = requests.get(thumb, stream=True)
+                    if resp.status_code == 200:
+                        tmp_file = Path("/tmp/plex_thumb.jpg")
+                        with open(tmp_file, "wb") as f:
+                            for chunk in resp.iter_content(1024): f.write(chunk)
+                        item.uploadPoster(str(tmp_file))
+                        tmp_file.unlink()
+                except Exception as e:
+                    logging.warning(f"[NFO] Failed to download/upload thumb {thumb}: {e}")
             elif thumb_path.exists():
-                item.uploadPoster(str(thumb_path.resolve()))
+                try:
+                    item.uploadPoster(str(thumb_path.resolve()))
+                except Exception as e:
+                    logging.warning(f"[NFO] Failed to upload local thumb {thumb_path}: {e}")
 
         # Plex 적용
         if metadata:
             plex.fetchItem(ratingKey).edit(**metadata)
-            if DETAIL: logging.debug(f"[NFO] Applied metadata to ratingKey={ratingKey}: {metadata}")
+            if DETAIL:
+                logging.debug(f"[NFO] Applied metadata to ratingKey={ratingKey}: {metadata}")
 
         return True
 
