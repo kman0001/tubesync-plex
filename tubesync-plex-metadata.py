@@ -177,7 +177,7 @@ LANG_MAP = {"eng":"en","jpn":"ja","kor":"ko","fre":"fr","fra":"fr","spa":"es",
 def map_lang(code): return LANG_MAP.get(code.lower(),"und")
 
 # ==============================
-# Cache handling (updated)
+# Cache handling (영상 기준으로 통합)
 # ==============================
 if CACHE_FILE.exists():
     with CACHE_FILE.open("r", encoding="utf-8") as f:
@@ -198,11 +198,23 @@ def save_cache():
             logging.info(f"[CACHE] Saved to {CACHE_FILE}")
             cache_modified = False
 
-def update_cache(path, ratingKey=None, nfo_hash=None):
+def update_cache(video_path, ratingKey=None, nfo_hash=None):
+    """
+    캐시는 항상 '영상 파일' 경로를 키로 사용.
+    ratingKey, nfo_hash를 같은 객체 안에 저장.
+    """
     global cache_modified
-    path = str(path)
-    if DETAIL:
-        logging.debug(f"[CACHE] update_cache: path={path}, ratingKey={ratingKey}, nfo_hash={nfo_hash}")
+    path = str(video_path)
+    with cache_lock:
+        current = cache.get(path, {})
+        if ratingKey:
+            current["ratingKey"] = ratingKey
+        if nfo_hash:
+            current["nfo_hash"] = nfo_hash
+        cache[path] = current
+        cache_modified = True
+        if DETAIL:
+            logging.debug(f"[CACHE] update_cache: {path} => {current}")
     with cache_lock:
         current = cache.get(path, {})
         if ratingKey: current["ratingKey"] = ratingKey
@@ -342,82 +354,54 @@ def compute_nfo_hash(nfo_path):
         return None
 
 # ==============================
-# NFO 처리 (리팩토링 수정)
+# NFO 파일 처리
 # ==============================
-def process_nfo(file_path):
+def process_nfo(nfo_path):
     """
-    주어진 영상에 대응하는 NFO 파일 처리.
-    캐시에 없는 경우, 해시가 다르면 적용 후 캐시 갱신.
+    NFO 파일을 읽어 Plex metadata에 적용하고 캐시에 반영
     """
-    abs_path = Path(file_path).resolve()
-    str_path = str(abs_path)
-    nfo_path = abs_path.with_suffix(".nfo")
-    
-    if DETAIL:
-        logging.debug(f"[NFO] Start processing: {str_path}")
-        logging.debug(f"[NFO] NFO path: {nfo_path} exists={nfo_path.exists()}")
-
-    if not nfo_path.exists() or nfo_path.stat().st_size == 0:
-        if DETAIL:
-            logging.debug(f"[NFO] No NFO or empty file: {nfo_path}")
-        return False
-
-    # 해시 계산
-    nfo_hash = compute_nfo_hash(nfo_path)
-    if not nfo_hash:
-        return False
-
-    cached_hash = cache.get(str_path, {}).get("nfo_hash")
-    if DETAIL:
-        logging.debug(f"[NFO] Cached hash: {cached_hash}")
-
-    if cached_hash == nfo_hash and not config.get("always_apply_nfo", True):
-        logging.debug(f"[NFO] Skipped (unchanged): {nfo_path}")
-        return False
-
-    # Plex item 가져오기
-    plex_item = None
-    ratingKey = cache.get(str_path, {}).get("ratingKey")
-    if DETAIL:
-        logging.debug(f"[NFO] Cached ratingKey: {ratingKey}")
-    if ratingKey:
-        try:
-            plex_item = plex.fetchItem(ratingKey)
-            if DETAIL and plex_item:
-                logging.debug(f"[NFO] Fetched Plex item via ratingKey: {plex_item.title}")
-        except Exception as e:
-            if DETAIL:
-                logging.debug(f"[NFO] fetchItem failed: {e}")
-    if not plex_item:
-        plex_item = find_plex_item(str_path)
-        if plex_item:
-            update_cache(str_path, plex_item.ratingKey, nfo_hash)
-        else:
-            logging.warning(f"[NFO] Plex item not found for {str_path}")
-            update_cache(str_path, None, nfo_hash)
-            return False
-
-    # NFO 적용
     try:
-        tree = ET.parse(str(nfo_path), parser=ET.XMLParser(recover=True))
-        root = tree.getroot()
-        plex_item.editTitle(root.findtext("title",""), locked=True)
-        plex_item.editSummary(root.findtext("plot",""), locked=True)
-        plex_item.editSortTitle(root.findtext("aired",""), locked=True)
-        update_cache(str_path, plex_item.ratingKey, nfo_hash)
-        if DETAIL:
-            logging.debug(
-                f"[NFO] update_cache called with ratingKey={plex_item.ratingKey}, nfo_hash={nfo_hash}"
-            )
+        logging.debug(f"[NFO] Start processing: {nfo_path}")
+        nfo_file = Path(nfo_path)
+        if not nfo_file.exists():
+            logging.warning(f"[NFO] File not found: {nfo_path}")
+            return
 
-        if delete_nfo_after_apply:
-            try: nfo_path.unlink()
-            except Exception as e: logging.warning(f"[NFO] Failed to delete {nfo_path}: {e}")
+        # 매칭되는 영상 파일 찾기
+        video_file = nfo_file.with_suffix(".mkv")
+        if not video_file.exists():
+            logging.warning(f"[NFO] No matching video for: {nfo_path}")
+            return
 
-        logging.info(f"[NFO] Applied: {nfo_path}")
-        return True
+        # 캐시된 Plex ratingKey 확인
+        plex_info = cache.get(str(video_file), {})
+        ratingKey = plex_info.get("ratingKey")
+        if not ratingKey:
+            plex_item = find_plex_item(str(video_file))
+            if not plex_item:
+                logging.warning(f"[NFO] Plex item not found for video: {video_file}")
+                return
+            ratingKey = plex_item.ratingKey
+            update_cache(str(video_file), ratingKey=ratingKey)
+
+        # NFO 해시 계산
+        with open(nfo_file, "rb") as f:
+            nfo_hash = hashlib.md5(f.read()).hexdigest()
+
+        # 이전 해시와 비교
+        if plex_info.get("nfo_hash") == nfo_hash:
+            logging.debug(f"[NFO] Hash unchanged, skip update: {nfo_path}")
+            return
+
+        # Plex 메타데이터 갱신
+        apply_nfo_metadata(ratingKey, nfo_file)
+
+        # 캐시 갱신 (영상 키에 함께 저장)
+        update_cache(str(video_file), nfo_hash=nfo_hash)
+        logging.info(f"[NFO] Updated metadata for {video_file}")
+
     except Exception as e:
-        logging.error(f"[NFO] Failed to apply {nfo_path}: {e}")
+        logging.error(f"[NFO] Error processing {nfo_path}: {e}", exc_info=DETAIL)
         return False
 
 # ==============================
@@ -486,7 +470,7 @@ def process_file(file_path):
         if not plex_item:
             plex_item = find_plex_item(str_path)
             if plex_item:
-                update_cache(str_path, plex_item.ratingKey)
+                update_cache(str_path, plex_item.ratingKey, nfo_hash)
             else:
                 logging.warning(f"[PROCESS_FILE] Plex item not found: {str_path}")
 
@@ -571,12 +555,13 @@ def scan_nfo_files(base_dirs):
     return nfo_files
 
 # ==============================
-# Scan and update cache (updated)
+# Scan and update cache (final)
 # ==============================
 def scan_and_update_cache(base_dirs):
     """
     1) 영상 파일 스캔
-    2) 캐시와 비교하여 누락/삭제 반영
+    2) Plex 아이템 찾아 캐시에 ratingKey 등록
+    3) 캐시에만 있고 실제 파일이 없는 항목 제거
     """
     global cache
     existing_files = set(cache.keys())
@@ -584,9 +569,9 @@ def scan_and_update_cache(base_dirs):
 
     total_files = 0
     for base_dir in base_dirs:
-        for root, dirs, files in os.walk(base_dir):
+        for root, _, files in os.walk(base_dir):
             for f in files:
-                abs_path = os.path.abspath(os.path.join(root,f))
+                abs_path = os.path.abspath(os.path.join(root, f))
                 if not abs_path.lower().endswith(VIDEO_EXTS):
                     continue
                 total_files += 1
@@ -596,14 +581,12 @@ def scan_and_update_cache(base_dirs):
                 if abs_path not in cache or cache.get(abs_path) is None:
                     plex_item = find_plex_item(abs_path)
                     if plex_item:
-                        update_cache(abs_path, plex_item.ratingKey)
-                        processed_files.add(abs_path)  # 스캔 시 processed_files에 추가
+                        update_cache(abs_path, ratingKey=plex_item.ratingKey)
 
     # 삭제된 파일 캐시에서 제거
     removed = existing_files - current_files
     for f in removed:
         cache.pop(f, None)
-        if f in processed_files: processed_files.remove(f)
 
     logging.info(f"[SCAN] Completed scan. Total video files found: {total_files}")
     save_cache()
