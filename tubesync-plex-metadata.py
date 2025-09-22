@@ -69,30 +69,30 @@ default_config = {
         "plex_base_url": "Base URL of your Plex server (e.g., http://localhost:32400).",
         "plex_token": "Your Plex authentication token.",
         "plex_library_ids": "List of Plex library IDs to sync (e.g., [10,21,35]).",
-        "silent": "True = only summary logs, False = detailed logs",
-        "detail": "True = verbose mode (debug output)",
-        "subtitles": "True = extract and upload subtitles",
-        "always_apply_nfo": "True = always apply NFO metadata regardless of hash",
+        "silent": "true = only summary logs, False = detailed logs",
+        "detail": "true = verbose mode (debug output)",
+        "subtitles": "true = extract and upload subtitles",
+        "always_apply_nfo": "true = always apply NFO metadata regardless of hash",
         "threads": "Number of worker threads for initial scanning",
         "max_concurrent_requests": "Max concurrent Plex API requests",
         "request_delay": "Delay between Plex API requests (sec)",
-        "watch_folders": "True = enable real-time folder monitoring",
+        "watch_folders": "true = enable real-time folder monitoring",
         "watch_debounce_delay": "Debounce time (sec) before processing events",
-        "delete_nfo_after_apply": "True = remove NFO file after applying"
+        "delete_nfo_after_apply": "true = remove NFO file after applying"
     },
     "plex_base_url": "",
     "plex_token": "",
     "plex_library_ids": [],
-    "silent": False,
-    "detail": False,
-    "subtitles": False,
-    "always_apply_nfo": True,
+    "silent": false,
+    "detail": false,
+    "subtitles": false,
+    "always_apply_nfo": true,
     "threads": 8,
     "max_concurrent_requests": 4,
     "request_delay": 0.2,
-    "watch_folders": True,
+    "watch_folders": true,
     "watch_debounce_delay": 3,
-    "delete_nfo_after_apply": True
+    "delete_nfo_after_apply": true
 }
 
 # ==============================
@@ -384,58 +384,55 @@ def process_nfo(nfo_file):
 
     return True
 
-def apply_nfo_metadata(ratingKey, nfo_path):
+def apply_nfo_metadata(ep, nfo_path):
     try:
         tree = ET.parse(nfo_path)
         root = tree.getroot()
-        edit_kwargs = {"lockedFields": []}
 
-        # 기본 메타 적용
+        # 편집할 메타데이터
+        edit_kwargs = {}
+        locked_fields = []
+
         if (title := root.findtext("title")):
             edit_kwargs["title"] = title
-            edit_kwargs["lockedFields"].append("title")
+            locked_fields.append("title")
         if (plot := root.findtext("plot")):
             edit_kwargs["summary"] = plot
-            edit_kwargs["lockedFields"].append("summary")
+            locked_fields.append("summary")
         if (aired := root.findtext("aired") or root.findtext("released")):
             edit_kwargs["originallyAvailableAt"] = aired
-            edit_kwargs["lockedFields"].append("originallyAvailableAt")
+            locked_fields.append("originallyAvailableAt")
         if (titleSort := root.findtext("titleSort")):
             edit_kwargs["titleSort"] = titleSort
-            edit_kwargs["lockedFields"].append("titleSort")
+            locked_fields.append("titleSort")
 
-        # 한 번에 메타 적용
-        if edit_kwargs:
-            plex.fetchItem(ratingKey).edit(**edit_kwargs)
+        if locked_fields:
+            edit_kwargs["lockedFields"] = locked_fields
+            ep.edit(**edit_kwargs)  # 한 번에 잠그면서 적용
 
-        # thumb 처리 (poster 덮어쓰기)
-        thumb = root.findtext("thumb")
-        if thumb:
-            item = plex.fetchItem(ratingKey)
+        # Thumb 처리
+        if (thumb := root.findtext("thumb")):
             thumb_path = Path(thumb)
-            if thumb_path.exists():
-                try:
-                    item.uploadPoster(str(thumb_path.resolve()))
-                except Exception as e:
-                    logging.warning(f"[NFO] Failed to upload local thumb {thumb_path}: {e}")
-            elif thumb.startswith("http"):
-                try:
-                    resp = requests.get(thumb, stream=True, timeout=10)
+            try:
+                if thumb.startswith("http"):
+                    # URL poster
+                    resp = requests.get(thumb, stream=True)
                     if resp.status_code == 200:
                         tmp_file = Path("/tmp/plex_thumb.jpg")
                         with open(tmp_file, "wb") as f:
-                            for chunk in resp.iter_content(1024):
-                                f.write(chunk)
-                        item.uploadPoster(str(tmp_file))
+                            for chunk in resp.iter_content(1024): f.write(chunk)
+                        ep.uploadPoster(str(tmp_file))
                         tmp_file.unlink()
-                except Exception as e:
-                    logging.warning(f"[NFO] Failed to download/upload thumb {thumb}: {e}")
+                elif thumb_path.exists():
+                    # 로컬 파일 poster
+                    ep.uploadPoster(str(thumb_path.resolve()))
+            except Exception as e:
+                logging.warning(f"[NFO] Failed to apply thumb {thumb}: {e}")
 
         if DETAIL:
-            logging.debug(f"[NFO] Applied metadata to ratingKey={ratingKey}: {edit_kwargs}, thumb={thumb}")
+            logging.debug(f"[NFO] Applied metadata to {ep}: {edit_kwargs}")
 
         return True
-
     except Exception as e:
         logging.error(f"[NFO] Failed to apply NFO {nfo_path} - {e}", exc_info=True)
         return False
