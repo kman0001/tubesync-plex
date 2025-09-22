@@ -390,6 +390,9 @@ def apply_nfo_metadata(ratingKey, nfo_path, video_file):
         tree = ET.parse(nfo_path)
         root = tree.getroot()
 
+        # -----------------------------
+        # 메타데이터 추출
+        # -----------------------------
         edit_kwargs = {}
         if title := root.findtext("title"):
             edit_kwargs["title"] = title
@@ -400,22 +403,37 @@ def apply_nfo_metadata(ratingKey, nfo_path, video_file):
         if titleSort := root.findtext("titleSort"):
             edit_kwargs["titleSort"] = titleSort
 
-        # 포스터 처리
+        fields_to_lock = list(edit_kwargs.keys())
+
+        # 1. 기존 잠금 해제
+        if fields_to_lock:
+            ep.lockedFields = []
+            ep.save()
+
+        # 2. 메타 적용
+        if edit_kwargs:
+            ep.edit(**edit_kwargs)
+
+        # 3. 포스터 적용
         if thumb := root.findtext("thumb"):
-            thumb_path = Path(video_file).parent / thumb
+            thumb_path = (Path(video_file).parent / thumb).resolve()
             try:
                 if thumb_path.exists():
-                    ep.uploadPoster(str(thumb_path.resolve()))
-                else:
+                    ep.uploadPoster(str(thumb_path))
+                elif thumb.startswith("http"):
                     ep.uploadPoster(thumb)
+                else:
+                    logging.warning(f"[NFO] Poster not found: {thumb}")
             except Exception as e:
                 logging.error(f"[NFO] Failed to apply poster {thumb}: {e}")
 
-        lock_fields = list(edit_kwargs.keys())
-        if edit_kwargs:
-            ep.edit(**edit_kwargs, lockedFields=lock_fields)
-            if DETAIL:
-                logging.debug(f"[NFO] Applied metadata to ratingKey={ratingKey}: {edit_kwargs} with locks {lock_fields}")
+        # 4. 필드 잠금 적용
+        if fields_to_lock:
+            ep.lockedFields = fields_to_lock
+            ep.save()
+
+        if DETAIL:
+            logging.debug(f"[NFO] Applied metadata to ratingKey={ratingKey}: {edit_kwargs} with locks {fields_to_lock}")
 
         return True
 
