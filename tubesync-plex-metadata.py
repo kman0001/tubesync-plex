@@ -345,6 +345,11 @@ def compute_nfo_hash(nfo_path):
 
 def process_nfo(nfo_file):
     abs_path = Path(nfo_file).resolve()
+    if not abs_path.exists():
+        logging.debug(f"[NFO] File does not exist, skipping: {abs_path}")
+        return False
+
+    # 대응 영상 찾기
     video_path = abs_path.with_suffix(".mkv")
     if not video_path.exists():
         for ext in VIDEO_EXTS:
