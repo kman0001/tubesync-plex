@@ -384,9 +384,12 @@ def process_nfo(nfo_file):
 
     return True
 
-def apply_nfo_metadata(ratingKey, nfo_path, video_file):
+def apply_nfo_metadata(plex_item, nfo_path):
+    """
+    plex_item: PlexAPI item 객체 (이미 fetch 완료)
+    nfo_path: NFO 파일 경로
+    """
     try:
-        ep = plex.fetchItem(ratingKey)
         tree = ET.parse(nfo_path)
         root = tree.getroot()
 
@@ -395,19 +398,15 @@ def apply_nfo_metadata(ratingKey, nfo_path, video_file):
         # -----------------------------
         edit_kwargs = {}
 
-        # Title
         if title := root.findtext("title"):
             edit_kwargs["title"] = title
 
-        # Summary / Plot
         if plot := root.findtext("plot"):
             edit_kwargs["summary"] = plot
 
-        # OriginallyAvailableAt
         if aired := root.findtext("aired") or root.findtext("released"):
             edit_kwargs["originallyAvailableAt"] = aired
 
-        # TitleSort (강제 덮어쓰기)
         if titleSort := root.findtext("titleSort"):
             edit_kwargs["titleSort.value"] = titleSort
 
@@ -415,12 +414,12 @@ def apply_nfo_metadata(ratingKey, nfo_path, video_file):
         # Poster (thumb) 처리
         # -----------------------------
         if thumb := root.findtext("thumb"):
-            thumb_path = Path(video_file).parent / thumb  # 영상 파일 기준 상대 경로
+            thumb_path = Path(plex_item.media[0].parts[0].file).parent / thumb
             try:
                 if thumb_path.exists():
-                    ep.uploadPoster(str(thumb_path.resolve()))
+                    plex_item.uploadPoster(str(thumb_path.resolve()))
                 else:
-                    ep.uploadPoster(thumb)  # 인터넷 URL
+                    plex_item.uploadPoster(thumb)  # 인터넷 URL
             except Exception as e:
                 logging.error(f"[NFO] Failed to apply poster {thumb}: {e}")
 
@@ -428,9 +427,9 @@ def apply_nfo_metadata(ratingKey, nfo_path, video_file):
         # 1차 적용: lockedFields 무시하고 덮어쓰기
         # -----------------------------
         if edit_kwargs:
-            ep.edit(**edit_kwargs)
+            plex_item.edit(**edit_kwargs)
             if DETAIL:
-                logging.debug(f"[NFO] Applied metadata to ratingKey={ratingKey}: {edit_kwargs}")
+                logging.debug(f"[NFO] Applied metadata to ratingKey={plex_item.ratingKey}: {edit_kwargs}")
 
         # -----------------------------
         # 2차 적용: 적용 후 lockedFields에 추가
@@ -446,7 +445,7 @@ def apply_nfo_metadata(ratingKey, nfo_path, video_file):
             lock_fields.append("titleSort")
 
         if lock_fields:
-            ep.edit(lockedFields=lock_fields)
+            plex_item.edit(lockedFields=lock_fields)
 
         return True
 
