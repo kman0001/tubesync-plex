@@ -315,7 +315,7 @@ def find_plex_item(abs_path):
     return None
 
 # ==============================
-# NFO process (thumb 제거)
+# NFO process (thumb 제거, 필드별 edit)
 # ==============================
 def compute_nfo_hash(nfo_path):
     try:
@@ -417,10 +417,13 @@ def apply_nfo_metadata(ratingKey, nfo_path):
                 logging.warning(f"[NFO] Failed to unlock fields: {e}")
 
         # -----------------------------
-        # 2. 메타 적용
+        # 2. 필드별 메타 적용
         # -----------------------------
-        if edit_kwargs:
-            item.edit(**edit_kwargs)
+        for field, value in edit_kwargs.items():
+            try:
+                item.edit(**{field: value})
+            except Exception as e:
+                logging.error(f"[NFO] Failed to apply {field}: {e}")
 
         # -----------------------------
         # 3. 적용한 필드만 잠금
