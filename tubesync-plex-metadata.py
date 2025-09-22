@@ -295,37 +295,23 @@ def setup_ffmpeg():
 # Plex helpers
 # ==============================
 def find_plex_item(abs_path):
-    """
-    주어진 파일 절대경로에 대응되는 Plex 아이템을 반환.
-    Plex 라이브러리 타입(tvshow/movie/video)에 모두 대응.
-    """
     abs_path = os.path.abspath(abs_path)
     for lib_id in config["plex_library_ids"]:
         try:
             section = plex.library.sectionByID(lib_id)
-        except Exception as e:
-            logging.warning(f"[FIND_PLEX_ITEM] Failed to access library ID {lib_id}: {e}")
-            continue
+        except Exception: continue
 
         section_type = getattr(section, "TYPE", "").lower()
-        if section_type == "show":
-            results = section.search(libtype="episode")
-        elif section_type in ("movie", "video"):
-            results = section.search(libtype="movie")
-        else:
-            continue
+        if section_type == "show": results = section.search(libtype="episode")
+        elif section_type in ("movie", "video"): results = section.search(libtype="movie")
+        else: continue
 
         for item in results:
-            # episode 객체는 iterParts() 존재
             for part in getattr(item, "iterParts", lambda: [])():
                 try:
                     if os.path.abspath(part.file) == abs_path:
-                        logging.debug(f"[FIND_PLEX_ITEM] Found item: {item.title} (ratingKey={item.ratingKey})")
                         return item
-                except Exception:
-                    continue
-
-    logging.warning(f"[FIND_PLEX_ITEM] No Plex item found for: {abs_path}")
+                except Exception: continue
     return None
 
 # ==============================
@@ -343,23 +329,17 @@ def compute_nfo_hash(nfo_path):
         logging.error(f"[NFO] compute_nfo_hash failed: {nfo_path} - {e}")
         return None
 
-def process_nfo(nfo_file):
+def process_nfo(nfo_file, media_type=None):
     abs_path = Path(nfo_file).resolve()
-    if not abs_path.exists():
-        logging.debug(f"[NFO] File does not exist, skipping: {abs_path}")
-        return False
+    if not abs_path.exists(): return False
 
     # 대응 영상 찾기
     video_path = abs_path.with_suffix(".mkv")
     if not video_path.exists():
         for ext in VIDEO_EXTS:
             candidate = abs_path.with_suffix(ext)
-            if candidate.exists():
-                video_path = candidate
-                break
-    if not video_path.exists():
-        logging.warning(f"[NFO] No matching video file for {nfo_file}")
-        return False
+            if candidate.exists(): video_path = candidate; break
+    if not video_path.exists(): return False
 
     str_video_path = str(video_path)
     nfo_hash = compute_nfo_hash(abs_path)
@@ -378,71 +358,53 @@ def process_nfo(nfo_file):
             logging.warning(f"[NFO] Plex item not found for {str_video_path}")
             return False
 
-    if apply_nfo_metadata(ratingKey, abs_path):
-        update_cache(str_video_path, ratingKey=ratingKey, nfo_hash=nfo_hash)
-        if delete_nfo_after_apply:
-            try: abs_path.unlink()
-            except Exception as e: logging.warning(f"[NFO] Failed to delete {nfo_file}: {e}")
+    apply_nfo_metadata(ratingKey, abs_path)
+    update_cache(str_video_path, ratingKey=ratingKey, nfo_hash=nfo_hash)
+    if delete_nfo_after_apply:
+        try: abs_path.unlink()
+        except Exception as e: logging.warning(f"[NFO] Failed to delete {nfo_file}: {e}")
     return True
 
 def apply_nfo_metadata(ratingKey, nfo_path):
-    """
-    Plex 서버에 에피소드용 NFO 메타데이터 적용
-    ratingKey: Plex 에피소드 ID
-    nfo_path: NFO 파일 경로
-    """
     try:
-        import lxml.etree as ET
-
-        # XML 파싱
         tree = ET.parse(nfo_path)
         root = tree.getroot()
-
         metadata = {}
 
-        # title
-        title = root.findtext("title")
-        if title:
-            metadata["title"] = title
-
-        # plot
-        plot = root.findtext("plot")
-        if plot:
-            metadata["summary"] = plot
-
-        # thumb (포스터/섬네일)
-        thumb = root.findtext("thumb")
-        if thumb:
-            metadata["thumb"] = thumb  # Plex API에서 thumb 업로드용으로 경로 변환 필요
-
-        # runtime
-        runtime = root.findtext("runtime")
-        if runtime:
-            try:
-                metadata["duration"] = int(runtime) * 1000  # Plex는 ms 단위
-            except ValueError:
-                pass
-
-        # studio
-        studio = root.findtext("studio")
-        if studio:
-            metadata["studio"] = studio
-
-        # aired
-        aired = root.findtext("aired")
-        if aired:
+        # 공통
+        if (title := root.findtext("title")): metadata["title"] = title
+        if (plot := root.findtext("plot")): metadata["summary"] = plot
+        if (runtime := root.findtext("runtime")):
+            try: metadata["duration"] = int(runtime) * 1000
+            except ValueError: pass
+        if (studio := root.findtext("studio")): metadata["studio"] = studio
+        if (aired := root.findtext("aired") or root.findtext("released")):
             metadata["originallyAvailableAt"] = aired
+        if (uniqueid := root.findtext("uniqueid")): metadata["guid"] = uniqueid
 
-        # uniqueid
-        uniqueid = root.findtext("uniqueid")
-        if uniqueid:
-            metadata["guid"] = uniqueid
+        # TV용
+        if (season := root.findtext("season")): metadata["parentIndex"] = int(season)
+        if (episode := root.findtext("episode")): metadata["index"] = int(episode)
+
+        # Thumb 처리
+        if (thumb := root.findtext("thumb")):
+            item = plex.fetchItem(ratingKey)
+            thumb_path = Path(thumb)
+            if thumb.startswith("http"):
+                resp = requests.get(thumb, stream=True)
+                if resp.status_code == 200:
+                    tmp_file = Path("/tmp/plex_thumb.jpg")
+                    with open(tmp_file, "wb") as f:
+                        for chunk in resp.iter_content(1024): f.write(chunk)
+                    item.uploadPoster(str(tmp_file))
+                    tmp_file.unlink()
+            elif thumb_path.exists():
+                item.uploadPoster(str(thumb_path.resolve()))
 
         # Plex 적용
         if metadata:
             plex.fetchItem(ratingKey).edit(**metadata)
-            if DETAIL:
-                logging.debug(f"[NFO] Applied metadata to ratingKey={ratingKey}: {metadata}")
+            if DETAIL: logging.debug(f"[NFO] Applied metadata to ratingKey={ratingKey}: {metadata}")
 
         return True
 
