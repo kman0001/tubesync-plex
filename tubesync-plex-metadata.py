@@ -24,7 +24,7 @@ parser.add_argument("--base-dir", help="Base directory override", default=os.env
 args = parser.parse_args()
 
 # ==============================
-# Global flags
+# Globals
 # ==============================
 BASE_DIR = Path(args.base_dir).resolve()
 DISABLE_WATCHDOG = args.disable_watchdog
@@ -38,6 +38,28 @@ VENVDIR = BASE_DIR / "venv"
 FFMPEG_BIN = VENVDIR / "bin/ffmpeg"
 FFPROBE_BIN = VENVDIR / "bin/ffprobe"
 FFMPEG_SHA_FILE = BASE_DIR / ".ffmpeg_md5"
+
+VIDEO_EXTS = (".mkv", ".mp4", ".avi", ".mov", ".wmv", ".flv", ".m4v")
+cache_lock = threading.Lock()
+
+with CONFIG_FILE.open("r", encoding="utf-8") as f:
+    config = json.load(f)
+
+api_semaphore = threading.Semaphore(config.get("max_concurrent_requests", 2))
+request_delay = config.get("request_delay", 0.1)
+threads = config.get("threads", 4)
+
+processed_files = set()
+watch_debounce_delay = config.get("watch_debounce_delay", 2)
+cache_modified = False
+file_queue = queue.Queue()
+
+delete_nfo_after_apply = config.get("delete_nfo_after_apply", True)
+subtitles_enabled = config.get("subtitles", False)
+
+LANG_MAP = {"eng":"en","jpn":"ja","kor":"ko","fre":"fr","fra":"fr","spa":"es",
+            "ger":"de","deu":"de","ita":"it","chi":"zh","und":"und"}
+def map_lang(code): return LANG_MAP.get(code.lower(),"und")
 
 # ==============================
 # Default config
@@ -160,23 +182,6 @@ except Exception as e:
     sys.exit(1)
 
 # ==============================
-# Globals
-# ==============================
-VIDEO_EXTS = (".mkv", ".mp4", ".avi", ".mov", ".wmv", ".flv", ".m4v")
-cache_lock = threading.Lock()
-api_semaphore = threading.Semaphore(config.get("max_concurrent_requests", 2))
-request_delay = config.get("request_delay", 0.1)
-threads = config.get("threads", 4)
-processed_files = set()
-watch_debounce_delay = config.get("watch_debounce_delay", 2)
-cache_modified = False
-file_queue = queue.Queue()
-
-LANG_MAP = {"eng":"en","jpn":"ja","kor":"ko","fre":"fr","fra":"fr","spa":"es",
-            "ger":"de","deu":"de","ita":"it","chi":"zh","und":"und"}
-def map_lang(code): return LANG_MAP.get(code.lower(),"und")
-
-# ==============================
 # Cache handling (영상 기준으로 통합)
 # ==============================
 if CACHE_FILE.exists():
@@ -184,9 +189,6 @@ if CACHE_FILE.exists():
         cache = json.load(f)
 else:
     cache = {}
-
-cache_lock = threading.Lock()
-cache_modified = False
 
 def save_cache():
     global cache_modified
@@ -199,28 +201,16 @@ def save_cache():
             cache_modified = False
 
 def update_cache(video_path, ratingKey=None, nfo_hash=None):
-    """
-    캐시는 항상 '영상 파일' 경로를 키로 사용.
-    ratingKey, nfo_hash를 같은 객체 안에 저장.
-    """
     global cache_modified
     path = str(video_path)
-    with cache_lock:
-        current = cache.get(path, {})
-        if ratingKey:
-            current["ratingKey"] = ratingKey
-        if nfo_hash:
-            current["nfo_hash"] = nfo_hash
-        cache[path] = current
-        cache_modified = True
-        if DETAIL:
-            logging.debug(f"[CACHE] update_cache: {path} => {current}")
     with cache_lock:
         current = cache.get(path, {})
         if ratingKey: current["ratingKey"] = ratingKey
         if nfo_hash: current["nfo_hash"] = nfo_hash
         cache[path] = current
         cache_modified = True
+        if DETAIL:
+            logging.debug(f"[CACHE] update_cache: {path} => {current}")
 
 # ==============================
 # FFmpeg setup
@@ -295,7 +285,10 @@ def setup_ffmpeg():
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
-    os.environ["PATH"] = f"{FFMPEG_BIN.parent}:{os.environ.get('PATH','')}"
+    env = os.environ.copy()
+    env["PATH"] = f"{FFMPEG_BIN.parent}:{env.get('PATH','')}"
+    # 예: subprocess.run([...], env=env)
+
     if DETAIL: logging.info("FFmpeg installed/updated successfully")
 
 # ==============================
@@ -336,12 +329,9 @@ def find_plex_item(abs_path):
     return None
 
 # ==============================
-# NFO 해시 계산 함수 (신규 추가)
+# NFO process
 # ==============================
 def compute_nfo_hash(nfo_path):
-    """
-    주어진 NFO 파일을 MD5 해시로 계산
-    """
     try:
         with open(nfo_path, "rb") as f:
             data = f.read()
@@ -353,55 +343,56 @@ def compute_nfo_hash(nfo_path):
         logging.error(f"[NFO] compute_nfo_hash failed: {nfo_path} - {e}")
         return None
 
-# ==============================
-# NFO 파일 처리
-# ==============================
-def process_nfo(nfo_path):
+def process_nfo(nfo_file):
+    abs_path = Path(nfo_file).resolve()
+    video_path = abs_path.with_suffix(".mkv")
+    if not video_path.exists():
+        for ext in VIDEO_EXTS:
+            candidate = abs_path.with_suffix(ext)
+            if candidate.exists():
+                video_path = candidate
+                break
+    if not video_path.exists():
+        logging.warning(f"[NFO] No matching video file for {nfo_file}")
+        return False
+
+    str_video_path = str(video_path)
+    nfo_hash = compute_nfo_hash(abs_path)
+    cached_hash = cache.get(str_video_path, {}).get("nfo_hash")
+    if cached_hash == nfo_hash and not config.get("always_apply_nfo", True):
+        if DETAIL: logging.debug(f"[NFO] Skipped (unchanged): {nfo_file}")
+        return False
+
+    ratingKey = cache.get(str_video_path, {}).get("ratingKey")
+    if not ratingKey:
+        plex_item = find_plex_item(str_video_path)
+        if plex_item:
+            ratingKey = plex_item.ratingKey
+            update_cache(str_video_path, ratingKey=ratingKey)
+        else:
+            logging.warning(f"[NFO] Plex item not found for {str_video_path}")
+            return False
+
+    if apply_nfo_metadata(ratingKey, abs_path):
+        update_cache(str_video_path, ratingKey=ratingKey, nfo_hash=nfo_hash)
+        if delete_nfo_after_apply:
+            try: abs_path.unlink()
+            except Exception as e: logging.warning(f"[NFO] Failed to delete {nfo_file}: {e}")
+    return True
+
+def apply_nfo_metadata(ratingKey, nfo_path):
     """
-    NFO 파일을 읽어 Plex metadata에 적용하고 캐시에 반영
+    Plex 서버에 NFO 메타데이터 적용
+    ratingKey: Plex 아이템 ID
+    nfo_path: NFO 파일 경로
     """
     try:
-        logging.debug(f"[NFO] Start processing: {nfo_path}")
-        nfo_file = Path(nfo_path)
-        if not nfo_file.exists():
-            logging.warning(f"[NFO] File not found: {nfo_path}")
-            return
-
-        # 매칭되는 영상 파일 찾기
-        video_file = nfo_file.with_suffix(".mkv")
-        if not video_file.exists():
-            logging.warning(f"[NFO] No matching video for: {nfo_path}")
-            return
-
-        # 캐시된 Plex ratingKey 확인
-        plex_info = cache.get(str(video_file), {})
-        ratingKey = plex_info.get("ratingKey")
-        if not ratingKey:
-            plex_item = find_plex_item(str(video_file))
-            if not plex_item:
-                logging.warning(f"[NFO] Plex item not found for video: {video_file}")
-                return
-            ratingKey = plex_item.ratingKey
-            update_cache(str(video_file), ratingKey=ratingKey)
-
-        # NFO 해시 계산
-        with open(nfo_file, "rb") as f:
-            nfo_hash = hashlib.md5(f.read()).hexdigest()
-
-        # 이전 해시와 비교
-        if plex_info.get("nfo_hash") == nfo_hash:
-            logging.debug(f"[NFO] Hash unchanged, skip update: {nfo_path}")
-            return
-
-        # Plex 메타데이터 갱신
-        apply_nfo_metadata(ratingKey, nfo_file)
-
-        # 캐시 갱신 (영상 키에 함께 저장)
-        update_cache(str(video_file), nfo_hash=nfo_hash)
-        logging.info(f"[NFO] Updated metadata for {video_file}")
-
+        with open(nfo_path, "r", encoding="utf-8") as f:
+            xml_data = f.read()
+        plex.fetchItem(ratingKey).edit(**{"metadata": xml_data})
+        return True
     except Exception as e:
-        logging.error(f"[NFO] Error processing {nfo_path}: {e}", exc_info=DETAIL)
+        logging.error(f"[NFO] Failed to apply NFO {nfo_path} - {e}")
         return False
 
 # ==============================
@@ -411,7 +402,7 @@ def extract_subtitles(video_path):
     base, _ = os.path.splitext(video_path)
     srt_files=[]
     try:
-        result=subprocess.run([str(FFMPEG_BIN.parent/"ffprobe"),"-v","error","-select_streams","s",
+        result=subprocess.run([str(FFPROBE_BIN),"-v","error","-select_streams","s",
                                "-show_entries","stream=index:stream_tags=language,codec_name",
                                "-of","json",video_path],
                               capture_output=True,text=True,check=True)
@@ -425,14 +416,11 @@ def extract_subtitles(video_path):
             lang=map_lang(s.get("tags",{}).get("language","und"))
             srt=f"{base}.{lang}.srt"
             if os.path.exists(srt): continue
-            try:
-                subprocess.run([str(FFMPEG_BIN),"-y","-i",video_path,"-map",f"0:s:{idx}",srt],
-                               stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,check=True)
-                srt_files.append((srt,lang))
-            except Exception as e:
-                logging.error(f"[ERROR] Subtitle extraction failed for stream {idx} in {video_path} - {e}")
+            subprocess.run([str(FFMPEG_BIN),"-y","-i",video_path,"-map",f"0:s:{idx}",srt],
+                           stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,check=True)
+            srt_files.append((srt,lang))
     except Exception as e:
-        logging.error(f"[ERROR] ffprobe failed: {video_path} - {e}")
+        logging.error(f"[ERROR] Subtitle extraction failed: {video_path} - {e}")
     return srt_files
 
 def upload_subtitles(ep,srt_files):
@@ -454,37 +442,27 @@ def upload_subtitles(ep,srt_files):
 def process_file(file_path):
     abs_path = Path(file_path).resolve()
     str_path = str(abs_path)
-
-    if str_path in processed_files:
-        return False
+    if str_path in processed_files: return False
     processed_files.add(str_path)
 
-    # 영상 파일 처리
+    # 영상 파일
+    plex_item = None
     if abs_path.suffix.lower() in VIDEO_EXTS:
-        # Plex 아이템 캐시 등록
         ratingKey = cache.get(str_path, {}).get("ratingKey")
-        plex_item = None
         if ratingKey:
             try: plex_item = plex.fetchItem(ratingKey)
             except Exception: pass
         if not plex_item:
             plex_item = find_plex_item(str_path)
-            if plex_item:
-                update_cache(str_path, plex_item.ratingKey, nfo_hash)
-            else:
-                logging.warning(f"[PROCESS_FILE] Plex item not found: {str_path}")
+            if plex_item: update_cache(str_path, ratingKey=plex_item.ratingKey)
 
-    # NFO 처리
+    # NFO
     process_nfo(str_path)
 
-    # 자막 처리
-    if subtitles_enabled and abs_path.suffix.lower() in VIDEO_EXTS:
-        try:
-            srt_files = extract_subtitles(str_path)
-            if srt_files and plex_item:
-                upload_subtitles(plex_item, srt_files)
-        except Exception as e:
-            logging.error(f"[PROCESS_FILE] Subtitle processing failed: {str_path} - {e}")
+    # 자막
+    if subtitles_enabled and abs_path.suffix.lower() in VIDEO_EXTS and plex_item:
+        srt_files = extract_subtitles(str_path)
+        if srt_files: upload_subtitles(plex_item, srt_files)
 
     return True
 
@@ -502,18 +480,27 @@ def prune_processed_files(max_size=10000):
         logging.debug(f"[PRUNE] processed_files pruned {len(to_remove)} entries")
 
 # ==============================
-# Watchdog 이벤트 처리 (통합 개선)
+# Watchdog 이벤트 처리 (통합 개선 + debounce)
 # ==============================
+last_event_times = {}  # 경로별 마지막 이벤트 시간
+
+def enqueue_with_debounce(path, delay=watch_debounce_delay):
+    now = time.time()
+    last_time = last_event_times.get(path, 0)
+    if now - last_time > delay:
+        file_queue.put(path)
+    last_event_times[path] = now
+
 class WatchHandler(FileSystemEventHandler):
     def on_created(self, event):
         if event.is_directory: 
             return
-        file_queue.put(str(Path(event.src_path).resolve()))
+        enqueue_with_debounce(str(Path(event.src_path).resolve()))
 
     def on_modified(self, event):
         if event.is_directory: 
             return
-        file_queue.put(str(Path(event.src_path).resolve()))
+        enqueue_with_debounce(str(Path(event.src_path).resolve()))
 
     def on_deleted(self, event):
         if event.is_directory: 
@@ -521,13 +508,9 @@ class WatchHandler(FileSystemEventHandler):
         abs_path = str(Path(event.src_path).resolve())
         with cache_lock:
             cache.pop(abs_path, None)
-        if abs_path in processed_files:
-            processed_files.remove(abs_path)
+        processed_files.discard(abs_path)
         logging.info(f"[WATCHDOG] File deleted: {abs_path}")
 
-# ==============================
-# Watchdog 처리 루프
-# ==============================
 def watch_worker(stop_event):
     while not stop_event.is_set():
         try:
@@ -541,27 +524,22 @@ def watch_worker(stop_event):
 # Scan: NFO 전용 (신규)
 # ==============================
 def scan_nfo_files(base_dirs):
-    """
-    base_dirs 내 모든 .nfo 파일 경로 수집
-    """
     nfo_files = []
     for base_dir in base_dirs:
         for root, _, files in os.walk(base_dir):
             for f in files:
                 if f.lower().endswith(".nfo"):
                     nfo_files.append(os.path.abspath(os.path.join(root, f)))
-    if DETAIL:
-        logging.debug(f"[SCAN] Found {len(nfo_files)} NFO files")
+    if DETAIL: logging.debug(f"[SCAN] Found {len(nfo_files)} NFO files")
     return nfo_files
 
 # ==============================
-# Scan and update cache (final)
+# Scan and update cache
 # ==============================
 def scan_and_update_cache(base_dirs):
     """
     1) 영상 파일 스캔
-    2) Plex 아이템 찾아 캐시에 ratingKey 등록
-    3) 캐시에만 있고 실제 파일이 없는 항목 제거
+    2) 캐시와 비교하여 누락/삭제 반영
     """
     global cache
     existing_files = set(cache.keys())
@@ -569,7 +547,7 @@ def scan_and_update_cache(base_dirs):
 
     total_files = 0
     for base_dir in base_dirs:
-        for root, _, files in os.walk(base_dir):
+        for root, dirs, files in os.walk(base_dir):
             for f in files:
                 abs_path = os.path.abspath(os.path.join(root, f))
                 if not abs_path.lower().endswith(VIDEO_EXTS):
@@ -592,12 +570,34 @@ def scan_and_update_cache(base_dirs):
     save_cache()
 
 # ==============================
+# Main NFO 처리 루프
+# ==============================
+def process_all_nfo(base_dirs):
+    """
+    base_dirs 내 모든 NFO 처리
+    """
+    nfo_files = []
+    for base_dir in base_dirs:
+        for root, dirs, files in os.walk(base_dir):
+            for f in files:
+                if f.lower().endswith(".nfo"):
+                    nfo_files.append(os.path.abspath(os.path.join(root, f)))
+
+    if DETAIL:
+        logging.debug(f"[SCAN] Found {len(nfo_files)} NFO files")
+
+    for nfo_file in nfo_files:
+        try:
+            process_nfo(nfo_file)
+        except Exception as e:
+            logging.error(f"[NFO] Error processing {nfo_file}: {e}", exc_info=True)
+
+# ==============================
 # 메인 실행
 # ==============================
 def main():
     setup_ffmpeg()
 
-    # base_dirs 준비
     base_dirs = []
     for lib_id in config["plex_library_ids"]:
         try:
@@ -605,30 +605,20 @@ def main():
         except Exception: continue
         base_dirs.extend(getattr(section, "locations", []))
 
-    # --disable-watchdog: 초기 전체 스캔 & 캐시 갱신
     if DISABLE_WATCHDOG:
         scan_and_update_cache(base_dirs)
-        logging.info(f"[MAIN] Processing NFO/Video files...")
-
-        # 기존: video_files = list(processed_files)
-        video_files = list(processed_files)
+        video_files = [f for f in cache.keys() if Path(f).suffix.lower() in VIDEO_EXTS]
         nfo_files = scan_nfo_files(base_dirs)
 
         with ThreadPoolExecutor(max_workers=threads) as executor:
-            # NFO 파일 처리
-            for nfo in nfo_files:
-                executor.submit(process_nfo, nfo)
-            # 영상 파일 처리
+            for nfo in nfo_files: executor.submit(process_nfo, nfo)
             futures = {executor.submit(process_file, f): f for f in video_files}
             for fut in as_completed(futures):
-                try:
-                    fut.result()
-                except Exception as e:
-                    logging.error(f"[MAIN] Failed: {futures[fut]} - {e}")
+                try: fut.result()
+                except Exception as e: logging.error(f"[MAIN] Failed: {futures[fut]} - {e}")
 
         save_cache()
 
-    # Watchdog 활성화: 실시간 이벤트 처리
     elif config.get("watch_folders", False):
         stop_event = threading.Event()
         observer = Observer()
