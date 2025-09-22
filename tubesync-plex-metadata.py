@@ -324,7 +324,25 @@ def find_plex_item(abs_path):
     return None
 
 # ==============================
-# NFO 처리 (리팩토링)
+# NFO 해시 계산 함수 (신규 추가)
+# ==============================
+def compute_nfo_hash(nfo_path):
+    """
+    주어진 NFO 파일을 MD5 해시로 계산
+    """
+    try:
+        with open(nfo_path, "rb") as f:
+            data = f.read()
+        h = hashlib.md5(data).hexdigest()
+        if DETAIL:
+            logging.debug(f"[NFO] compute_nfo_hash: {nfo_path} -> {h}")
+        return h
+    except Exception as e:
+        logging.error(f"[NFO] compute_nfo_hash failed: {nfo_path} - {e}")
+        return None
+
+# ==============================
+# NFO 처리 (리팩토링 수정)
 # ==============================
 def process_nfo(file_path):
     """
@@ -338,36 +356,21 @@ def process_nfo(file_path):
     if DETAIL:
         logging.debug(f"[NFO] Start processing: {str_path}")
         logging.debug(f"[NFO] NFO path: {nfo_path} exists={nfo_path.exists()}")
-    
-    if nfo_path.exists() and nfo_path.stat().st_size > 0:
-        nfo_hash = compute_nfo_hash(nfo_path)
-        if DETAIL:
-            logging.debug(f"[NFO] Computed hash: {nfo_hash}")
-    else:
+
+    if not nfo_path.exists() or nfo_path.stat().st_size == 0:
         if DETAIL:
             logging.debug(f"[NFO] No NFO or empty file: {nfo_path}")
         return False
 
-    cached_hash = cache.get(str_path, {}).get("nfo_hash")
-    if DETAIL:
-        logging.debug(f"[NFO] Cached hash: {cached_hash}")
-
-    if cached_hash == nfo_hash and not config.get("always_apply_nfo", True):
-        if DETAIL:
-            logging.debug(f"[NFO] Skipped (unchanged): {nfo_path}")
-        return False
-
+    # 해시 계산
     nfo_hash = compute_nfo_hash(nfo_path)
+    if not nfo_hash:
+        return False
+
     cached_hash = cache.get(str_path, {}).get("nfo_hash")
     if DETAIL:
         logging.debug(f"[NFO] Cached hash: {cached_hash}")
 
-    if cached_hash == nfo_hash and not config.get("always_apply_nfo", True):
-        if DETAIL:
-            logging.debug(f"[NFO] Skipped (unchanged): {nfo_path}")
-        return False
-
-    # 캐시와 비교 후 적용 여부 결정
     if cached_hash == nfo_hash and not config.get("always_apply_nfo", True):
         logging.debug(f"[NFO] Skipped (unchanged): {nfo_path}")
         return False
@@ -380,7 +383,7 @@ def process_nfo(file_path):
     if ratingKey:
         try:
             plex_item = plex.fetchItem(ratingKey)
-            if DETAIL:
+            if DETAIL and plex_item:
                 logging.debug(f"[NFO] Fetched Plex item via ratingKey: {plex_item.title}")
         except Exception as e:
             if DETAIL:
@@ -388,13 +391,12 @@ def process_nfo(file_path):
     if not plex_item:
         plex_item = find_plex_item(str_path)
         if plex_item:
-            update_cache(str_path, plex_item.ratingKey, nfo_hash)  # ✅ hash 같이 저장
+            update_cache(str_path, plex_item.ratingKey, nfo_hash)
         else:
             logging.warning(f"[NFO] Plex item not found for {str_path}")
-            # ⚠️ 여기서도 캐시에 nfo_hash만이라도 기록 (선택)
             update_cache(str_path, None, nfo_hash)
             return False
-            
+
     # NFO 적용
     try:
         tree = ET.parse(str(nfo_path), parser=ET.XMLParser(recover=True))
