@@ -401,6 +401,50 @@ def apply_nfo_metadata(ratingKey, nfo_path):
         return False
 
 # ==============================
+# 파일 처리 통합 (영상 + NFO)
+# ==============================
+def process_file(file_path):
+    """
+    단일 파일 처리: 영상 + NFO + 자막
+    """
+    abs_path = Path(file_path).resolve()
+    str_path = str(abs_path)
+
+    # 이미 처리된 파일이면 skip
+    if str_path in processed_files:
+        return False
+    processed_files.add(str_path)
+
+    plex_item = None
+
+    # 영상 파일 처리
+    if abs_path.suffix.lower() in VIDEO_EXTS:
+        # 캐시에서 ratingKey 조회
+        ratingKey = cache.get(str_path, {}).get("ratingKey")
+        if ratingKey:
+            try:
+                plex_item = plex.fetchItem(ratingKey)
+            except Exception:
+                pass
+        # 캐시에 없으면 Plex에서 찾기
+        if not plex_item:
+            plex_item = find_plex_item(str_path)
+            if plex_item:
+                update_cache(str_path, ratingKey=plex_item.ratingKey)
+
+    # NFO 파일 처리 → 확실히 .nfo만
+    if abs_path.suffix.lower() == ".nfo":
+        process_nfo(str_path)
+
+    # 자막 처리
+    if subtitles_enabled and abs_path.suffix.lower() in VIDEO_EXTS and plex_item:
+        srt_files = extract_subtitles(str_path)
+        if srt_files:
+            upload_subtitles(plex_item, srt_files)
+
+    return True
+
+# ==============================
 # Subtitle extraction & upload
 # ==============================
 def extract_subtitles(video_path):
@@ -440,36 +484,6 @@ def upload_subtitles(ep,srt_files):
             except Exception as e:
                 retries-=1
                 logging.error(f"[ERROR] Subtitle upload failed: {srt} - {e}, retries left: {retries}")
-
-# ==============================
-# 파일 처리 통합 (영상 + NFO)
-# ==============================
-def process_file(file_path):
-    abs_path = Path(file_path).resolve()
-    str_path = str(abs_path)
-    if str_path in processed_files: return False
-    processed_files.add(str_path)
-
-    # 영상 파일
-    plex_item = None
-    if abs_path.suffix.lower() in VIDEO_EXTS:
-        ratingKey = cache.get(str_path, {}).get("ratingKey")
-        if ratingKey:
-            try: plex_item = plex.fetchItem(ratingKey)
-            except Exception: pass
-        if not plex_item:
-            plex_item = find_plex_item(str_path)
-            if plex_item: update_cache(str_path, ratingKey=plex_item.ratingKey)
-
-    # NFO
-    process_nfo(str_path)
-
-    # 자막
-    if subtitles_enabled and abs_path.suffix.lower() in VIDEO_EXTS and plex_item:
-        srt_files = extract_subtitles(str_path)
-        if srt_files: upload_subtitles(plex_item, srt_files)
-
-    return True
 
 # ==============================
 # processed_files prune 기능
