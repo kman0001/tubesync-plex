@@ -384,17 +384,14 @@ def process_nfo(nfo_file):
 
     return True
 
-def apply_nfo_metadata(plex_item, nfo_path):
-    """
-    plex_item: PlexAPI item 객체 (이미 fetch 완료)
-    nfo_path: NFO 파일 경로
-    """
+def apply_nfo_metadata(ratingKey, nfo_path, video_file):
     try:
+        ep = plex.fetchItem(ratingKey)
         tree = ET.parse(nfo_path)
         root = tree.getroot()
 
         # -----------------------------
-        # NFO 메타 한 번에 적용
+        # 메타데이터 추출
         # -----------------------------
         edit_kwargs = {}
 
@@ -408,44 +405,30 @@ def apply_nfo_metadata(plex_item, nfo_path):
             edit_kwargs["originallyAvailableAt"] = aired
 
         if titleSort := root.findtext("titleSort"):
-            edit_kwargs["titleSort.value"] = titleSort
+            edit_kwargs["titleSort"] = titleSort  # Plex API key 맞춤
 
         # -----------------------------
-        # Poster (thumb) 처리
+        # 포스터 처리
         # -----------------------------
+        from urllib.parse import quote
         if thumb := root.findtext("thumb"):
-            thumb_path = Path(plex_item.media[0].parts[0].file).parent / thumb
+            thumb_path = Path(video_file).parent / thumb
             try:
                 if thumb_path.exists():
-                    plex_item.uploadPoster(str(thumb_path.resolve()))
+                    ep.uploadPoster(f"file://{quote(str(thumb_path.resolve()))}")
                 else:
-                    plex_item.uploadPoster(thumb)  # 인터넷 URL
+                    ep.uploadPoster(thumb)  # 인터넷 URL
             except Exception as e:
                 logging.error(f"[NFO] Failed to apply poster {thumb}: {e}")
 
         # -----------------------------
-        # 1차 적용: lockedFields 무시하고 덮어쓰기
+        # lockedFields와 함께 한 번에 적용
         # -----------------------------
+        lock_fields = list(edit_kwargs.keys())
         if edit_kwargs:
-            plex_item.edit(**edit_kwargs)
+            ep.edit(**edit_kwargs, lockedFields=lock_fields)
             if DETAIL:
-                logging.debug(f"[NFO] Applied metadata to ratingKey={plex_item.ratingKey}: {edit_kwargs}")
-
-        # -----------------------------
-        # 2차 적용: 적용 후 lockedFields에 추가
-        # -----------------------------
-        lock_fields = []
-        if "title" in edit_kwargs:
-            lock_fields.append("title")
-        if "summary" in edit_kwargs:
-            lock_fields.append("summary")
-        if "originallyAvailableAt" in edit_kwargs:
-            lock_fields.append("originallyAvailableAt")
-        if "titleSort.value" in edit_kwargs:
-            lock_fields.append("titleSort")
-
-        if lock_fields:
-            plex_item.edit(lockedFields=lock_fields)
+                logging.debug(f"[NFO] Applied metadata to ratingKey={ratingKey}: {edit_kwargs} with locks {lock_fields}")
 
         return True
 
