@@ -417,21 +417,16 @@ def apply_nfo_metadata(ratingKey, nfo_path):
         # -----------------------------
         # Poster (thumb) 처리
         # -----------------------------
-        if thumb := root.findtext("thumb"):
-            thumb_path = Path(thumb)
+        thumb = nfo_data.get("thumb")
+        if thumb:
+            thumb_path = Path(video_file).parent / thumb  # 영상 파일 기준 상대 경로
             try:
-                if thumb.startswith("http"):
-                    resp = requests.get(thumb, stream=True, timeout=10)
-                    if resp.status_code == 200:
-                        tmp_file = Path("/tmp/plex_thumb.jpg")
-                        with open(tmp_file, "wb") as f:
-                            for chunk in resp.iter_content(1024): f.write(chunk)
-                        ep.uploadPoster(str(tmp_file))
-                        tmp_file.unlink()
-                elif thumb_path.exists():
+                if thumb_path.exists():
                     ep.uploadPoster(str(thumb_path.resolve()))
+                else:
+                    ep.uploadPoster(thumb)  # 인터넷 URL
             except Exception as e:
-                logging.warning(f"[NFO] Failed to upload thumb {thumb}: {e}")
+                log(f"[ERROR] Failed to apply poster {thumb}: {e}")
 
         # -----------------------------
         # Plex에 메타 적용
