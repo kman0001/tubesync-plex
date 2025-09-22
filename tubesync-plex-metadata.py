@@ -405,10 +405,12 @@ def apply_nfo_metadata(ratingKey, nfo_path, video_file):
 
         fields_to_lock = list(edit_kwargs.keys())
 
-        # 1. 기존 잠금 해제
+        # 1. 잠금 해제 (lockedFields 비우기)
         if fields_to_lock:
-            ep.lockedFields = []
-            ep.save()
+            try:
+                ep.edit(lockedFields=[])
+            except Exception as e:
+                logging.warning(f"[NFO] Failed to unlock fields: {e}")
 
         # 2. 메타 적용
         if edit_kwargs:
@@ -429,8 +431,10 @@ def apply_nfo_metadata(ratingKey, nfo_path, video_file):
 
         # 4. 필드 잠금 적용
         if fields_to_lock:
-            ep.lockedFields = fields_to_lock
-            ep.save()
+            try:
+                ep.edit(lockedFields=fields_to_lock)
+            except Exception as e:
+                logging.warning(f"[NFO] Failed to lock fields: {e}")
 
         if DETAIL:
             logging.debug(f"[NFO] Applied metadata to ratingKey={ratingKey}: {edit_kwargs} with locks {fields_to_lock}")
