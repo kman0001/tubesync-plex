@@ -404,9 +404,6 @@ def apply_nfo_metadata(ratingKey, nfo_path):
 # 파일 처리 통합 (영상 + NFO)
 # ==============================
 def process_file(file_path):
-    """
-    단일 파일 처리: 영상 + NFO + 자막
-    """
     abs_path = Path(file_path).resolve()
     str_path = str(abs_path)
 
@@ -419,14 +416,12 @@ def process_file(file_path):
 
     # 영상 파일 처리
     if abs_path.suffix.lower() in VIDEO_EXTS:
-        # 캐시에서 ratingKey 조회
         ratingKey = cache.get(str_path, {}).get("ratingKey")
         if ratingKey:
             try:
                 plex_item = plex.fetchItem(ratingKey)
             except Exception:
                 pass
-        # 캐시에 없으면 Plex에서 찾기
         if not plex_item:
             plex_item = find_plex_item(str_path)
             if plex_item:
