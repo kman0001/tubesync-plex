@@ -362,7 +362,7 @@ def process_nfo(nfo_file):
             logging.warning(f"[NFO] Plex item not found for {str_video_path}")
             return False
 
-    # 메타데이터 적용
+    # Plex 아이템 찾아서 ratingKey 가져오기 후 메타 적용
     apply_nfo_metadata(ratingKey, abs_path)
     update_cache(str_video_path, ratingKey=ratingKey, nfo_hash=nfo_hash)
 
@@ -382,15 +382,14 @@ def apply_nfo_metadata(ratingKey, nfo_path):
         root = tree.getroot()
         metadata = {}
 
-        # 최소 항목 적용
+        # 최소 항목만 적용
         if (title := root.findtext("title")): metadata["title"] = title
         if (plot := root.findtext("plot")): metadata["summary"] = plot
-        #if (studio := root.findtext("studio")): metadata["studio"] = studio
         if (aired := root.findtext("aired") or root.findtext("released")):
             metadata["originallyAvailableAt"] = aired
         if (titleSort := root.findtext("titleSort")): metadata["titleSort"] = titleSort
 
-        # Thumb 처리
+        # Thumb는 기존 방식 그대로 업로드
         if (thumb := root.findtext("thumb")):
             item = plex.fetchItem(ratingKey)
             thumb_path = Path(thumb)
@@ -411,7 +410,7 @@ def apply_nfo_metadata(ratingKey, nfo_path):
                 except Exception as e:
                     logging.warning(f"[NFO] Failed to upload local thumb {thumb_path}: {e}")
 
-        # Plex 적용
+        # Plex 메타 적용
         if metadata:
             plex.fetchItem(ratingKey).edit(**metadata)
             if DETAIL:
