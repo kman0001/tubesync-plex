@@ -429,34 +429,29 @@ def process_nfo(file_path):
 
 
 def apply_nfo(ep, nfo_path):
-    """
-    Apply NFO metadata to a Plex item, with titleSort fallback to title
-    """
     try:
         tree = ET.parse(str(nfo_path), parser=ET.XMLParser(recover=True))
         root = tree.getroot()
-        title = root.findtext("title", "").strip() or None
-        plot = root.findtext("plot", "").strip() or None
-        aired = root.findtext("aired", "").strip() or None
-        title_sort = root.findtext("titleSort")
-        if not title_sort and title:
-            title_sort = title  # titleSort 없으면 title 사용
 
-        if title_sort:
-            title_sort = str(title_sort)
+        title = root.findtext("title") or None
+        plot = root.findtext("plot") or None
+        aired = root.findtext("aired") or None
+        title_sort = root.findtext("titleSort") or title
 
         if DETAIL:
             logging.debug(f"[-] Applying NFO: {nfo_path} -> {title}")
 
-        # 필드별 적용
+        # 일반 필드 적용
         safe_edit(ep, title=title, summary=plot, aired=aired)
 
-        # locked titleSort 강제 적용
+        # titleSort 강제 적용 (잠긴 경우 포함)
         if title_sort:
             try:
+                # UTF-8 그대로 전달
                 ep._editField("titleSort", title_sort, locked=True)
-            except Exception:
-                logging.warning(f"[WARN] Failed to force-update titleSort for {ep.title}")
+                ep.reload()
+            except Exception as e:
+                logging.warning(f"[WARN] Failed to force-update titleSort: {ep.title} - {e}")
 
         return True
 
