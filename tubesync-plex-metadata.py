@@ -42,7 +42,18 @@ FFMPEG_SHA_FILE = BASE_DIR / ".ffmpeg_md5"
 VIDEO_EXTS = (".mkv", ".mp4", ".avi", ".mov", ".wmv", ".flv", ".m4v")
 cache_lock = threading.Lock()
 
-# Load minimal config skeleton if missing
+# Language mapping for subtitles
+LANG_MAP = {
+    "eng": "en", "jpn": "ja", "kor": "ko", "fre": "fr", "fra": "fr",
+    "spa": "es", "ger": "de", "deu": "de", "ita": "it", "chi": "zh", "und": "und"
+}
+
+def map_lang(code):
+    return LANG_MAP.get(code.lower(), "und")
+
+# ==============================
+# Default config skeleton
+# ==============================
 default_config = {
     "_comment": {
         "plex_base_url": "Base URL of your Plex server (e.g., http://localhost:32400).",
@@ -72,11 +83,10 @@ default_config = {
     "watch_folders": True,
     "watch_debounce_delay": 3,
     "delete_nfo_after_apply": True,
-    "always_apply_titlesort": True
 }
 
 # ==============================
-# Load config
+# Load config (create if missing)
 # ==============================
 if not CONFIG_FILE.exists():
     CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -88,6 +98,7 @@ if not CONFIG_FILE.exists():
 with CONFIG_FILE.open("r", encoding="utf-8") as f:
     config = json.load(f)
 
+# Apply overrides
 if DISABLE_WATCHDOG:
     config["watch_folders"] = False
 
@@ -95,7 +106,6 @@ delete_nfo_after_apply = config.get("delete_nfo_after_apply", True)
 subtitles_enabled = config.get("subtitles", False)
 request_delay = config.get("request_delay", 0.1)
 threads = config.get("threads", 4)
-
 api_semaphore = threading.Semaphore(config.get("max_concurrent_requests", 2))
 
 # ==============================
