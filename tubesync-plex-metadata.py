@@ -277,13 +277,21 @@ def setup_ffmpeg():
 # ==============================
 # Plex helpers
 # ==============================
-def find_plex_item(abs_path):
-    abs_path = os.path.abspath(abs_path)
+def find_plex_item(video_path):
+    """
+    영상 파일 경로 기준으로 Plex 아이템 탐색.
+    - fetchItem 실패 시 fallback으로 사용
+    - NFO와 이름 일치 여부 확인
+    """
+    abs_path = os.path.abspath(video_path)
     for lib_id in config.get("plex_library_ids", []):
-        try: section = plex.library.sectionByID(lib_id)
-        except: continue
+        try:
+            section = plex.library.sectionByID(lib_id)
+        except Exception:
+            continue
 
-        section_type = getattr(section,"TYPE",None) or getattr(section,"type","")
+        # Section type에 따라 검색
+        section_type = getattr(section, "TYPE", None) or getattr(section, "type", "")
         section_type = str(section_type).lower()
         if section_type == "show":
             results = section.search(libtype="episode")
@@ -293,15 +301,25 @@ def find_plex_item(abs_path):
             results = section.search()
 
         for item in results:
+            # parts 접근 (환경마다 다를 수 있음)
             parts_iter = []
-            try: parts_iter = item.iterParts()
-            except: parts_iter = getattr(item,"parts",[]) or []
+            try:
+                parts_iter = item.iterParts()
+            except Exception:
+                try:
+                    parts_iter = getattr(item, "parts", []) or []
+                except Exception:
+                    parts_iter = []
 
             for part in parts_iter:
                 try:
-                    if os.path.abspath(part.file) == abs_path:
+                    # 이름 기준 매칭 (확장자 제외)
+                    item_name = os.path.splitext(os.path.basename(part.file))[0]
+                    target_name = os.path.splitext(os.path.basename(abs_path))[0]
+                    if item_name == target_name:
                         return item
-                except: continue
+                except Exception:
+                    continue
     return None
 
 # ==============================
@@ -390,8 +408,8 @@ def safe_edit(ep, title=None, summary=None, aired=None, sort_title=None):
         return False
 
 def process_nfo(file_path):
-    video_path = Path(file_path).resolve()
-    nfo_path = video_path.with_suffix(".nfo")
+    video_path = Path(file_path).with_suffix("")  # 확장자 제거
+    nfo_path = Path(file_path)
     if not nfo_path.exists() or nfo_path.stat().st_size == 0:
         logging.debug(f"[NFO] No NFO found: {nfo_path}")
         return False
@@ -400,21 +418,21 @@ def process_nfo(file_path):
     nfo_hash = compute_nfo_hash(nfo_path)
     cached_entry = cache.get(str_video_path, {})
     cached_hash = cached_entry.get("nfo_hash")
-    
+
     if cached_hash == nfo_hash and not config.get("always_apply_nfo", True):
         logging.debug(f"[-] Skipped (unchanged): {nfo_path}")
         return False
 
+    # 캐시에서 ratingKey 사용
     ratingKey = cached_entry.get("ratingKey")
     plex_item = None
     if ratingKey:
         try:
             plex_item = plex.fetchItem(ratingKey)
-            logging.debug(f"[NFO] fetchItem succeeded for ratingKey {ratingKey}")
-        except Exception as e:
-            logging.error(f"[NFO] fetchItem failed for ratingKey {ratingKey} - {e}")
+        except Exception:
             plex_item = None
 
+    # fetchItem 실패 시 원래 find_plex_item로 fallback
     if not plex_item:
         plex_item = find_plex_item(str_video_path)
         if plex_item:
@@ -428,8 +446,12 @@ def process_nfo(file_path):
     if success:
         update_cache(str_video_path, ratingKey=plex_item.ratingKey, nfo_hash=nfo_hash)
         if delete_nfo_after_apply:
-            try: nfo_path.unlink()
-            except Exception as e: logging.warning(f"[NFO] Failed to delete NFO: {e}")
+            try:
+                nfo_path.unlink()
+                logging.debug(f"[-] Deleted NFO: {nfo_path}")
+            except Exception as e:
+                logging.warning(f"[NFO] Failed to delete NFO file: {nfo_path} - {e}")
+
     return success
 
 def apply_nfo(ep, file_path):
