@@ -474,6 +474,7 @@ watch_debounce_delay = config.get("watch_debounce_delay", 2)
 file_queue = queue.Queue()
 
 def process_file(file_path):
+    logging.debug(f"[PROCESS_FILE] Start: {file_path}")
     abs_path = Path(file_path).resolve()
     str_path = str(abs_path)
 
@@ -618,6 +619,11 @@ def watch_worker(stop_event):
             path = file_queue.get(timeout=0.5)
         except queue.Empty:
             path = None
+
+        if path:
+            logging.debug(f"[WATCHDOG] Dequeued file: {path}, processing...")
+            success = process_file(path)
+            logging.debug(f"[WATCHDOG] process_file({path}) returned {success}")
 
         now = time.time()
 
