@@ -586,7 +586,7 @@ class VideoEventHandler(FileSystemEventHandler):
         self.nfo_wait = nfo_wait
         self.video_wait = video_wait
         self.lock = threading.Lock()
-        self.retry_queue = {}
+        self.retry_queue = {}  # {nfo_path: [next_retry_time, retry_count]}
         self.last_event_times = {}
         self.debounce_delay = debounce_delay
 
@@ -634,35 +634,10 @@ class VideoEventHandler(FileSystemEventHandler):
             nfo_files = list(self.nfo_queue)
             self.nfo_queue.clear()
             self.nfo_timer = None
-
         for nfo_path in nfo_files:
-            nfo_path = str(nfo_path)
-            video_path = Path(nfo_path).with_suffix(".mkv")
-            if not video_path.exists():
-                for e in VIDEO_EXTS:
-                    candidate = Path(nfo_path).with_suffix(e)
-                    if candidate.exists():
-                        video_path = candidate
-                        break
-
-            if video_path.exists():
-                # NFO 적용
-                success = process_nfo(nfo_path, str(video_path))
-                if success:
-                    # 적용 후 NFO 삭제
-                    if delete_nfo_after_apply:
-                        try:
-                            Path(nfo_path).unlink()
-                            logging.debug(f"[WATCHDOG] Deleted NFO: {nfo_path}")
-                        except Exception as e:
-                            logging.warning(f"[WATCHDOG] Failed to delete NFO: {nfo_path} - {e}")
-                else:
-                    # 실패 시 재시도
-                    self.retry_queue[str(video_path)] = [time.time() + 5, 1]
-            else:
-                logging.warning(f"[WATCHDOG] Video not found for NFO: {nfo_path}")
-
-        # Retry 처리
+            success = process_nfo(nfo_path)  # ← NFO 경로만 전달
+            if not success:
+                self.retry_queue[str(nfo_path)] = [time.time() + 5, 1]
         self._process_retry_queue()
 
     def process_video_timer_queue(self):
@@ -671,25 +646,28 @@ class VideoEventHandler(FileSystemEventHandler):
             self.video_queue.clear()
             self.video_timer = None
         for video_path in video_files:
-            success = process_file(video_path)
+            # 영상 파일만 처리할 경우, 내부에서 NFO 찾도록 process_nfo 호출
+            success = process_nfo(Path(video_path).with_suffix(".nfo"))
             if not success:
-                self.retry_queue[video_path] = [time.time()+5,1]
+                nfo_path = str(Path(video_path).with_suffix(".nfo"))
+                self.retry_queue[nfo_path] = [time.time() + 5, 1]
+        self._process_retry_queue()
 
     # -----------------------------
     # Retry 처리
     # -----------------------------
     def _process_retry_queue(self):
         now = time.time()
-        for path, (retry_time, count) in list(self.retry_queue.items()):
+        for nfo_path, (retry_time, count) in list(self.retry_queue.items()):
             if now >= retry_time:
-                success = process_file(path)
+                success = process_nfo(nfo_path)
                 if success:
-                    del self.retry_queue[path]
+                    del self.retry_queue[nfo_path]
                 elif count < 3:
-                    self.retry_queue[path] = [now + 5, count + 1]
+                    self.retry_queue[nfo_path] = [now + 5, count + 1]
                 else:
-                    logging.warning(f"[WATCHDOG] Failed 3 times: {path}")
-                    del self.retry_queue[path]
+                    logging.warning(f"[WATCHDOG] Failed 3 times: {nfo_path}")
+                    del self.retry_queue[nfo_path]
 
 # ==============================
 # Scan: NFO 전용 (신규)
