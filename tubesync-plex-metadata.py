@@ -359,7 +359,10 @@ def safe_edit(ep, title=None, summary=None, aired=None, sort_title=None):
         if kwargs:
             try:
                 ep.edit(**kwargs)
-                ep.reload()   # 캐시 갱신
+                try:
+                    ep.reload()   # 캐시 갱신
+                except Exception:
+                    pass
                 return True
             except Exception:
                 # fallback: 개별 메서드 사용
@@ -387,7 +390,10 @@ def safe_edit(ep, title=None, summary=None, aired=None, sort_title=None):
                             ep.editSortTitle(sort_title, locked=True)
                     except Exception:
                         pass
-                ep.reload()
+                try:
+                    ep.reload()
+                except Exception:
+                    pass
                 return True
         return False
     except Exception as e:
@@ -403,12 +409,12 @@ def process_nfo(file_path):
     if not nfo_path.exists() or nfo_path.stat().st_size == 0:
         return False
 
-    str_video_path = str(video_path)
+    str_video_path = str(video_path.resolve())
     nfo_hash = compute_nfo_hash(nfo_path)
     cached_hash = cache.get(str_video_path, {}).get("nfo_hash")
     if cached_hash == nfo_hash and not config.get("always_apply_nfo", True):
-        if detail:
-            print(f"[-] Skipped (unchanged): {nfo_path}")
+        if DETAIL:
+            logging.debug(f"[-] Skipped (unchanged): {nfo_path}")
         return False
 
     # Plex 아이템 찾기
@@ -425,7 +431,7 @@ def process_nfo(file_path):
         if plex_item:
             update_cache(str_video_path, ratingKey=plex_item.ratingKey)
         else:
-            print(f"[WARN] Plex item not found for {str_video_path}")
+            logging.warning(f"[WARN] Plex item not found for {str_video_path}")
             return False
 
     # NFO 적용 (모든 필드 안전하게 locked 적용)
@@ -437,10 +443,10 @@ def process_nfo(file_path):
         if delete_nfo_after_apply:
             try:
                 nfo_path.unlink()
-                if detail:
-                    print(f"[-] Deleted NFO: {nfo_path}")
+                if DETAIL:
+                    logging.debug(f"[-] Deleted NFO: {nfo_path}")
             except Exception as e:
-                print(f"[WARN] Failed to delete NFO file: {nfo_path} - {e}")
+                logging.warning(f"[WARN] Failed to delete NFO file: {nfo_path} - {e}")
 
     return success
 
@@ -462,32 +468,69 @@ def apply_nfo(ep, file_path):
         aired = root.findtext("aired", "")
         title_sort = root.findtext("titleSort", "")
 
-        if detail:
-            print(f"[-] Applying NFO: {file_path} -> {title}")
+        if DETAIL:
+            logging.debug(f"[-] Applying NFO: {file_path} -> {title}")
 
         # -----------------------------
         # 안정적 필드 적용: 먼저 unlocked → 값 적용 → 다시 locked
         # -----------------------------
         if title:
-            ep.editTitle(title, locked=False)
-            ep.editTitle(title, locked=True)
+            try:
+                if hasattr(ep, "editTitle"):
+                    ep.editTitle(title, locked=False)
+            except Exception:
+                pass
+            try:
+                if hasattr(ep, "editTitle"):
+                    ep.editTitle(title, locked=True)
+            except Exception:
+                pass
 
         if plot:
-            ep.editSummary(plot, locked=False)
-            ep.editSummary(plot, locked=True)
+            try:
+                if hasattr(ep, "editSummary"):
+                    ep.editSummary(plot, locked=False)
+            except Exception:
+                pass
+            try:
+                if hasattr(ep, "editSummary"):
+                    ep.editSummary(plot, locked=True)
+            except Exception:
+                pass
 
         if aired:
-            ep.editOriginallyAvailableAt(aired, locked=False)
-            ep.editOriginallyAvailableAt(aired, locked=True)
+            try:
+                if hasattr(ep, "editOriginallyAvailableAt"):
+                    ep.editOriginallyAvailableAt(aired, locked=False)
+            except Exception:
+                pass
+            try:
+                if hasattr(ep, "editOriginallyAvailableAt"):
+                    ep.editOriginallyAvailableAt(aired, locked=True)
+            except Exception:
+                pass
 
         if title_sort:
-            ep.editSortTitle(title_sort, locked=False)
-            ep.editSortTitle(title_sort, locked=True)
+            try:
+                if hasattr(ep, "editSortTitle"):
+                    ep.editSortTitle(title_sort, locked=False)
+            except Exception:
+                pass
+            try:
+                if hasattr(ep, "editSortTitle"):
+                    ep.editSortTitle(title_sort, locked=True)
+            except Exception:
+                pass
+
+        try:
+            ep.reload()
+        except Exception:
+            pass
 
         return True
 
     except Exception as e:
-        print(f"[!] Error applying NFO {nfo_path}: {e}")
+        logging.error(f"[!] Error applying NFO {nfo_path}: {e}")
         return False
 
 # ==============================
