@@ -575,118 +575,106 @@ def prune_processed_files(max_size=10000):
         logging.debug(f"[PRUNE] processed_files pruned {len(to_remove)} entries")
 
 # ==============================
-# Watchdog 이벤트 처리 (통합 개선 + debounce + retry)
+# Watchdog 이벤트 처리 (통합 + debounce + retry)
 # ==============================
-last_event_times = {}  # 경로별 마지막 이벤트 시간
-retry_queue = {}       # { path: [next_retry_time, attempt_count] }
+class VideoEventHandler(FileSystemEventHandler):
+    def __init__(self, nfo_wait=10, video_wait=2, debounce_delay=2):
+        self.nfo_queue = set()
+        self.video_queue = set()
+        self.nfo_timer = None
+        self.video_timer = None
+        self.nfo_wait = nfo_wait
+        self.video_wait = video_wait
+        self.lock = threading.Lock()
+        self.retry_queue = {}
+        self.last_event_times = {}
+        self.debounce_delay = debounce_delay
 
-def enqueue_with_debounce(path, delay=watch_debounce_delay):
-    now = time.time()
-    last_time = last_event_times.get(path, 0)
-    if now - last_time > delay:
-        logging.debug(f"[WATCHDOG] Enqueue file: {path}")
-        file_queue.put(path)
-    last_event_times[path] = now
-
-    # 확장자 필터링
-    ext = Path(path).suffix.lower()
-    if ext not in VIDEO_EXTS + (".nfo",):
-        logging.debug(f"[WATCHDOG] Skipped non-target file: {path}")
-        return
-
-    # DSM @eaDir, 숨김 파일 등 제외
-    if "/@eaDir/" in path or "/.DS_Store" in path or path.startswith("."):
-        logging.debug(f"[WATCHDOG] Skipped system/hidden file: {path}")
-        return
-
-    now = time.time()
-    last_time = last_event_times.get(path, 0)
-    if now - last_time > delay:
-        file_queue.put(path)
-    last_event_times[path] = now
-
-class WatchHandler(FileSystemEventHandler):
-    def on_modified(self, event):
-        if event.is_directory:
-            return
-        path = str(Path(event.src_path).resolve())
-        if path.lower().endswith(".nfo"):
-            logging.debug(f"[WATCHDOG] Modified detected: {path}")
-            enqueue_with_debounce(path)
-
-    def on_modified(self, event):
-        if event.is_directory:
-            return
-        path = str(Path(event.src_path).resolve())
-        if path.lower().endswith(".nfo"):
-            enqueue_with_debounce(path)
-
-    def on_deleted(self, event):
-        if event.is_directory:
-            return
-        path = str(Path(event.src_path).resolve())
-        if path.lower().endswith(VIDEO_EXTS):
-            with cache_lock:
-                cache.pop(path, None)
-            processed_files.discard(path)
-            logging.info(f"[WATCHDOG] Video deleted: {path}")
-        # NFO 삭제는 무시 → pass
-
-def watch_worker(stop_event):
-    while not stop_event.is_set():
-        try:
-            path = file_queue.get(timeout=0.5)
-        except queue.Empty:
-            continue
-        logging.debug(f"[WATCHDOG] Dequeued file: {path}, calling process_file()")
-        process_file(path)
-
-        if path:
-            logging.debug(f"[WATCHDOG] Dequeued file: {path}, processing...")
-            success = process_file(path)
-            logging.debug(f"[WATCHDOG] process_file({path}) returned {success}")
-
-        now = time.time()
-
-        # retry_queue 처리
-        for retry_path, (retry_time, count) in list(retry_queue.items()):
-            if now >= retry_time:
-                success = process_file(retry_path)
-                if success:
-                    del retry_queue[retry_path]
-                elif count < 3:
-                    retry_queue[retry_path] = [now + 5, count + 1]
-                else:
-                    logging.warning(f"[WATCHDOG] Failed 3 times: {retry_path}")
-                    del retry_queue[retry_path]
-
-        if not path:
-            continue
-
+    def _should_process(self, path):
         ext = Path(path).suffix.lower()
+        if ext not in VIDEO_EXTS + (".nfo",):
+            return False
+        if "/@eaDir/" in path or "/.DS_Store" in path or Path(path).name.startswith("."):
+            return False
+        return True
 
+    def _enqueue_with_debounce(self, path, queue_set, timer_attr, wait_time):
+        now = time.time()
+        last_time = self.last_event_times.get(path, 0)
+        if now - last_time < self.debounce_delay:
+            return
+        self.last_event_times[path] = now
+
+        with self.lock:
+            queue_set.add(path)
+            if getattr(self, timer_attr) is None:
+                t = threading.Timer(wait_time, getattr(self, f"process_{timer_attr}_queue"))
+                setattr(self, timer_attr, t)
+                t.start()
+            logging.debug(f"[WATCHDOG] Scheduled processing: {path}")
+
+    def on_any_event(self, event):
+        if event.is_directory:
+            return
+        path = str(Path(event.src_path).resolve())
+        if not self._should_process(path):
+            logging.debug(f"[WATCHDOG] Skipped non-target/system file: {path}")
+            return
+        ext = Path(path).suffix.lower()
         if ext == ".nfo":
-            video_path = Path(path).with_suffix(".mkv")
+            self._enqueue_with_debounce(path, self.nfo_queue, "nfo_timer", self.nfo_wait)
+        elif ext in VIDEO_EXTS:
+            self._enqueue_with_debounce(path, self.video_queue, "video_timer", self.video_wait)
+
+    # -----------------------------
+    # Queue 처리
+    # -----------------------------
+    def process_nfo_timer_queue(self):
+        with self.lock:
+            nfo_files = list(self.nfo_queue)
+            self.nfo_queue.clear()
+            self.nfo_timer = None
+        for nfo_path in nfo_files:
+            video_path = Path(nfo_path).with_suffix(".mkv")
             if not video_path.exists():
                 for e in VIDEO_EXTS:
-                    candidate = Path(path).with_suffix(e)
+                    candidate = Path(nfo_path).with_suffix(e)
                     if candidate.exists():
                         video_path = candidate
                         break
-            if not video_path.exists():
-                logging.warning(f"[WATCHDOG] Corresponding video not found: {path}")
-                continue
-            success = process_file(str(video_path))
-            if not success:
-                retry_queue[str(video_path)] = [now + 5, 1]
+            if video_path.exists():
+                success = process_file(str(video_path))
+                if not success:
+                    self.retry_queue[str(video_path)] = [time.time()+5,1]
+            else:
+                logging.warning(f"[WATCHDOG] Video not found for NFO: {nfo_path}")
+        self._process_retry_queue()
 
-        elif ext in VIDEO_EXTS:
-            success = process_file(path)
+    def process_video_timer_queue(self):
+        with self.lock:
+            video_files = list(self.video_queue)
+            self.video_queue.clear()
+            self.video_timer = None
+        for video_path in video_files:
+            success = process_file(video_path)
             if not success:
-                retry_queue[path] = [now + 5, 1]
+                self.retry_queue[video_path] = [time.time()+5,1]
 
-        processed_files.add(path)
-        prune_processed_files()
+    # -----------------------------
+    # Retry 처리
+    # -----------------------------
+    def _process_retry_queue(self):
+        now = time.time()
+        for path, (retry_time, count) in list(self.retry_queue.items()):
+            if now >= retry_time:
+                success = process_file(path)
+                if success:
+                    del self.retry_queue[path]
+                elif count < 3:
+                    self.retry_queue[path] = [now + 5, count + 1]
+                else:
+                    logging.warning(f"[WATCHDOG] Failed 3 times: {path}")
+                    del self.retry_queue[path]
 
 # ==============================
 # Scan: NFO 전용 (신규)
@@ -792,21 +780,17 @@ def main():
         save_cache()
 
     elif config.get("watch_folders", False):
-        stop_event = threading.Event()
-        observer = Observer()
-        for d in base_dirs:
-            observer.schedule(WatchHandler(), d, recursive=True)
-        observer.start()
-        watch_thread = threading.Thread(target=watch_worker, args=(stop_event,))
-        watch_thread.start()
-        try:
-            while True:
-                time.sleep(1)
-        except KeyboardInterrupt:
-            stop_event.set()
-            observer.stop()
-        observer.join()
-        watch_thread.join()
+    observer = Observer()
+    handler = VideoEventHandler(debounce_delay=watch_debounce_delay)
+    for d in base_dirs:
+        observer.schedule(handler, d, recursive=True)
+    observer.start()
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        observer.stop()
+    observer.join()
 
     logging.info("END")
 
