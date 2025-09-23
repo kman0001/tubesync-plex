@@ -590,21 +590,27 @@ class WatchHandler(FileSystemEventHandler):
     def on_created(self, event):
         if event.is_directory:
             return
-        enqueue_with_debounce(str(Path(event.src_path).resolve()))
+        path = str(Path(event.src_path).resolve())
+        if path.lower().endswith(VIDEO_EXTS) or path.lower().endswith(".nfo"):
+            enqueue_with_debounce(path)
 
     def on_modified(self, event):
         if event.is_directory:
             return
-        enqueue_with_debounce(str(Path(event.src_path).resolve()))
+        path = str(Path(event.src_path).resolve())
+        if path.lower().endswith(VIDEO_EXTS) or path.lower().endswith(".nfo"):
+            enqueue_with_debounce(path)
 
     def on_deleted(self, event):
         if event.is_directory:
             return
-        abs_path = str(Path(event.src_path).resolve())
-        with cache_lock:
-            cache.pop(abs_path, None)
-        processed_files.discard(abs_path)
-        logging.info(f"[WATCHDOG] File deleted: {abs_path}")
+        path = str(Path(event.src_path).resolve())
+        if path.lower().endswith(VIDEO_EXTS):
+            with cache_lock:
+                cache.pop(path, None)
+            processed_files.discard(path)
+            logging.info(f"[WATCHDOG] Video deleted: {path}")
+        # .nfo 삭제는 감지 필요 없음 → 그냥 패스
 
 def watch_worker(stop_event):
     while not stop_event.is_set():
