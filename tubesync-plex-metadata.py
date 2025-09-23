@@ -384,19 +384,23 @@ def safe_edit(ep, title=None, summary=None, aired=None, sort_title=None):
 
 def process_nfo(file_path):
     """
-    Process a single video's NFO and apply to Plex.
-    Handles both video path or .nfo path.
+    Process a single video file's NFO and apply to Plex.
+    file_path may be either the video path or the .nfo path
     """
     p = Path(file_path)
     if p.suffix.lower() == ".nfo":
         nfo_path = p
-        video_path = p.with_suffix("")
+        video_path = p.with_suffix("")  # best-effort: remove .nfo to get video base
+        # If video doesn't exist, attempt to find a video sibling (same base + known ext)
         if not video_path.exists():
+            found = None
             for ext in VIDEO_EXTS:
                 candidate = p.with_suffix(ext)
                 if candidate.exists():
-                    video_path = candidate
+                    found = candidate
                     break
+            if found:
+                video_path = found
     else:
         video_path = p
         nfo_path = p.with_suffix(".nfo")
@@ -441,11 +445,15 @@ def process_nfo(file_path):
         if DETAIL:
             logging.debug(f"[-] Applying NFO: {file_path} -> {title}")
 
-        # safe_edit 호출
-        safe_edit(plex_item, title=title, summary=plot, aired=aired,
-                  sort_title=title_sort, force_titlesort=True)
+        # safe_edit 호출 시 force_titlesort 제거, sort_title만 전달
+        safe_edit(
+            plex_item,
+            title=title,
+            summary=plot,
+            aired=aired,
+            sort_title=title_sort
+        )
 
-        # 캐시 업데이트
         update_cache(str_video_path, ratingKey=plex_item.ratingKey, nfo_hash=nfo_hash)
 
         # NFO 삭제 옵션
@@ -458,6 +466,7 @@ def process_nfo(file_path):
                 logging.warning(f"[WARN] Failed to delete NFO file: {nfo_path} - {e}")
 
         return True
+
     except Exception as e:
         logging.error(f"[!] Error applying NFO {nfo_path}: {e}", exc_info=True)
         return False
