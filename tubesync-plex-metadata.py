@@ -397,36 +397,18 @@ def safe_edit(ep, title=None, summary=None, aired=None, sort_title=None):
 def process_nfo(file_path):
     """
     Process a single video file's NFO and apply to Plex.
-    file_path may be either the video path or the .nfo path
     """
-    # if given nfo path -> get video path
-    p = Path(file_path)
-    if p.suffix.lower() == ".nfo":
-        nfo_path = p
-        video_path = p.with_suffix("")  # best-effort: remove .nfo to get video base
-        # If video doesn't exist, attempt to find a video sibling (same base + known ext)
-        if not video_path.exists():
-            found = None
-            for ext in VIDEO_EXTS:
-                candidate = p.with_suffix(ext)
-                if candidate.exists():
-                    found = candidate
-                    break
-            if found:
-                video_path = found
-    else:
-        video_path = p
-        nfo_path = p.with_suffix(".nfo")
-
+    video_path = Path(file_path).resolve()
+    nfo_path = video_path.with_suffix(".nfo")
     if not nfo_path.exists() or nfo_path.stat().st_size == 0:
         return False
 
-    str_video_path = str(video_path.resolve())
+    str_video_path = str(video_path)
     nfo_hash = compute_nfo_hash(nfo_path)
     cached_hash = cache.get(str_video_path, {}).get("nfo_hash")
     if cached_hash == nfo_hash and not config.get("always_apply_nfo", True):
-        if DETAIL:
-            logging.debug(f"[-] Skipped (unchanged): {nfo_path}")
+        if detail:
+            print(f"[-] Skipped (unchanged): {nfo_path}")
         return False
 
     # Plex 아이템 찾기
@@ -443,10 +425,10 @@ def process_nfo(file_path):
         if plex_item:
             update_cache(str_video_path, ratingKey=plex_item.ratingKey)
         else:
-            logging.warning(f"[WARN] Plex item not found for {str_video_path}")
+            print(f"[WARN] Plex item not found for {str_video_path}")
             return False
 
-    # NFO 적용
+    # NFO 적용 (모든 필드 안전하게 locked 적용)
     success = apply_nfo(plex_item, str_video_path)
     if success:
         update_cache(str_video_path, ratingKey=plex_item.ratingKey, nfo_hash=nfo_hash)
@@ -455,16 +437,18 @@ def process_nfo(file_path):
         if delete_nfo_after_apply:
             try:
                 nfo_path.unlink()
-                if DETAIL:
-                    logging.debug(f"[-] Deleted NFO: {nfo_path}")
+                if detail:
+                    print(f"[-] Deleted NFO: {nfo_path}")
             except Exception as e:
-                logging.warning(f"[WARN] Failed to delete NFO file: {nfo_path} - {e}")
+                print(f"[WARN] Failed to delete NFO file: {nfo_path} - {e}")
 
     return success
 
+
 def apply_nfo(ep, file_path):
     """
-    Apply NFO metadata to a Plex item (thumb removed, field-by-field edit)
+    Apply NFO metadata to a Plex episode item (thumb 제거, field-by-field edit)
+    모든 필드를 locked 상태에서도 안정적으로 적용
     """
     nfo_path = Path(file_path).with_suffix(".nfo")
     if not nfo_path.exists() or nfo_path.stat().st_size == 0:
@@ -473,23 +457,37 @@ def apply_nfo(ep, file_path):
     try:
         tree = ET.parse(str(nfo_path), parser=ET.XMLParser(recover=True))
         root = tree.getroot()
-        title = root.findtext("title", "").strip() or None
-        plot = root.findtext("plot", "").strip() or None
-        aired = root.findtext("aired", "").strip() or None
-        title_sort = root.findtext("titleSort", "").strip() or None
+        title = root.findtext("title", "")
+        plot = root.findtext("plot", "")
+        aired = root.findtext("aired", "")
+        title_sort = root.findtext("titleSort", "")
 
-        if DETAIL:
-            logging.debug(f"[-] Applying NFO: {file_path} -> {title}")
+        if detail:
+            print(f"[-] Applying NFO: {file_path} -> {title}")
 
         # -----------------------------
-        # 필드별 적용 (안정적)
+        # 안정적 필드 적용: 먼저 unlocked → 값 적용 → 다시 locked
         # -----------------------------
-        safe_edit(ep, title=title, summary=plot, aired=aired, sort_title=title_sort)
+        if title:
+            ep.editTitle(title, locked=False)
+            ep.editTitle(title, locked=True)
+
+        if plot:
+            ep.editSummary(plot, locked=False)
+            ep.editSummary(plot, locked=True)
+
+        if aired:
+            ep.editOriginallyAvailableAt(aired, locked=False)
+            ep.editOriginallyAvailableAt(aired, locked=True)
+
+        if title_sort:
+            ep.editSortTitle(title_sort, locked=False)
+            ep.editSortTitle(title_sort, locked=True)
 
         return True
 
     except Exception as e:
-        logging.error(f"[!] Error applying NFO {nfo_path}: {e}", exc_info=True)
+        print(f"[!] Error applying NFO {nfo_path}: {e}")
         return False
 
 # ==============================
