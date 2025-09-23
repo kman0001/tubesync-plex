@@ -584,7 +584,7 @@ def enqueue_with_debounce(path, delay=watch_debounce_delay):
     last_time = last_event_times.get(path, 0)
     if now - last_time > delay:
         file_queue.put(path)
-        last_event_times[path] = now  # 이벤트 기록 갱신 위치 수정
+    last_event_times[path] = now  # 이벤트 기록 갱신 위치 수정
 
 class WatchHandler(FileSystemEventHandler):
     def on_created(self, event):
@@ -633,7 +633,6 @@ def watch_worker(stop_event):
         ext = Path(path).suffix.lower()
 
         if ext == ".nfo":
-            # NFO 전용 처리
             video_path = Path(path).with_suffix(".mkv")
             if not video_path.exists():
                 for e in VIDEO_EXTS:
@@ -649,7 +648,6 @@ def watch_worker(stop_event):
                 retry_queue[str(video_path)] = [now + 5, 1]
 
         elif ext in VIDEO_EXTS:
-            # Video 전용 처리
             success = process_file(path)
             if not success:
                 retry_queue[path] = [now + 5, 1]
