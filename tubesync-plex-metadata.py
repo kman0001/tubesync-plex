@@ -317,12 +317,8 @@ def find_plex_item(abs_path):
     return None
 
 # ==============================
-# NFO Process (thumb 제거, 필드별 edit)
+# NFO Process (titleSort 안전 적용)
 # ==============================
-LANG_MAP = {"eng":"en","jpn":"ja","kor":"ko","fre":"fr","fra":"fr","spa":"es",
-            "ger":"de","deu":"de","ita":"it","chi":"zh","und":"und"}
-def map_lang(code): return LANG_MAP.get(code.lower(),"und")
-
 def compute_nfo_hash(nfo_path):
     try:
         with open(nfo_path, "rb") as f:
@@ -335,26 +331,21 @@ def compute_nfo_hash(nfo_path):
         logging.error(f"[NFO] compute_nfo_hash failed: {nfo_path} - {e}")
         return None
 
-def safe_edit(ep, title=None, summary=None, aired=None, sort_title=None):
+def safe_edit(ep, title=None, summary=None, aired=None):
     """
-    모든 필드를 안전하게 편집.
-    titleSort 잠긴 필드도 강제 적용 가능.
-    문자열은 strip 처리하여 첫 글자 손실 방지.
+    일반 필드(title, summary, aired) 편집
     """
     try:
         kwargs = {}
         if title is not None:
-            kwargs['title.value'] = str(title).strip()
+            kwargs['title.value'] = title
             kwargs['title.locked'] = 1
         if summary is not None:
-            kwargs['summary.value'] = str(summary).strip()
+            kwargs['summary.value'] = summary
             kwargs['summary.locked'] = 1
         if aired is not None:
-            kwargs['originallyAvailableAt.value'] = str(aired).strip()
+            kwargs['originallyAvailableAt.value'] = aired
             kwargs['originallyAvailableAt.locked'] = 1
-        if sort_title is not None:
-            kwargs['titleSort.value'] = str(sort_title).strip()
-            kwargs['titleSort.locked'] = 1  # 잠긴 상태도 강제 적용
 
         if kwargs:
             ep.edit(**kwargs)
@@ -364,15 +355,53 @@ def safe_edit(ep, title=None, summary=None, aired=None, sort_title=None):
         logging.error(f"[SAFE_EDIT] Failed to edit item: {e}", exc_info=True)
         return False
 
+def apply_nfo(ep, file_path):
+    """
+    NFO를 Plex 아이템에 적용
+    - titleSort가 없으면 title로 대체
+    - editSortTitle 사용으로 첫 글자 손실 방지
+    """
+    nfo_path = Path(file_path).with_suffix(".nfo")
+    if not nfo_path.exists() or nfo_path.stat().st_size == 0:
+        return False
+
+    try:
+        tree = ET.parse(str(nfo_path), parser=ET.XMLParser(recover=True))
+        root = tree.getroot()
+        title = root.findtext("title", "").strip() or None
+        plot = root.findtext("plot", "").strip() or None
+        aired = root.findtext("aired", "").strip() or None
+        title_sort = root.findtext("titleSort", "").strip() or title  # NFO 없으면 title 사용
+
+        if DETAIL:
+            logging.debug(f"[-] Applying NFO: {file_path} -> {title}")
+
+        # 일반 필드 적용
+        safe_edit(ep, title=title, summary=plot, aired=aired)
+
+        # titleSort는 editSortTitle로 적용
+        if title_sort:
+            try:
+                ep.editSortTitle(title_sort, locked=True)  # 첫 글자 손실 없음
+            except Exception:
+                # fallback: metadata.edit 사용
+                ep.edit(**{"titleSort.value": title_sort, "titleSort.locked": 1})
+            ep.reload()
+
+        return True
+
+    except Exception as e:
+        logging.error(f"[!] Error applying NFO {nfo_path}: {e}", exc_info=True)
+        return False
+
 def process_nfo(file_path):
     """
-    Process a single video file's NFO and apply to Plex.
-    file_path may be either the video path or the .nfo path
+    단일 NFO 처리
     """
     p = Path(file_path)
     if p.suffix.lower() == ".nfo":
         nfo_path = p
-        video_path = p.with_suffix("")
+        video_path = p.with_suffix("")  # video path 추정
         if not video_path.exists():
             for ext in VIDEO_EXTS:
                 candidate = p.with_suffix(ext)
@@ -394,7 +423,7 @@ def process_nfo(file_path):
             logging.debug(f"[-] Skipped (unchanged): {nfo_path}")
         return False
 
-    # Plex item 찾기
+    # Plex 아이템 찾기
     ratingKey = cache.get(str_video_path, {}).get("ratingKey")
     plex_item = None
     if ratingKey:
@@ -412,7 +441,7 @@ def process_nfo(file_path):
             return False
 
     # NFO 적용
-    success = apply_nfo(plex_item, nfo_path)
+    success = apply_nfo(plex_item, str_video_path)
     if success:
         update_cache(str_video_path, ratingKey=plex_item.ratingKey, nfo_hash=nfo_hash)
 
@@ -426,38 +455,6 @@ def process_nfo(file_path):
                 logging.warning(f"[WARN] Failed to delete NFO file: {nfo_path} - {e}")
 
     return success
-
-
-def apply_nfo(ep, nfo_path):
-    try:
-        tree = ET.parse(str(nfo_path), parser=ET.XMLParser(recover=True))
-        root = tree.getroot()
-
-        title = root.findtext("title") or None
-        plot = root.findtext("plot") or None
-        aired = root.findtext("aired") or None
-        title_sort = root.findtext("titleSort") or title
-
-        if DETAIL:
-            logging.debug(f"[-] Applying NFO: {nfo_path} -> {title}")
-
-        # 일반 필드 적용
-        safe_edit(ep, title=title, summary=plot, aired=aired)
-
-        # titleSort 강제 적용 (잠긴 경우 포함)
-        if title_sort:
-            try:
-                # UTF-8 그대로 전달
-                ep._editField("titleSort", title_sort, locked=True)
-                ep.reload()
-            except Exception as e:
-                logging.warning(f"[WARN] Failed to force-update titleSort: {ep.title} - {e}")
-
-        return True
-
-    except Exception as e:
-        logging.error(f"[!] Error applying NFO {nfo_path}: {e}", exc_info=True)
-        return False
 
 # ==============================
 # 파일 처리 통합 (영상 + NFO)
