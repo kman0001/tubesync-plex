@@ -403,38 +403,52 @@ def safe_edit(ep, title=None, summary=None, aired=None, sort_title=None):
 def process_nfo(file_path):
     """
     Process a single video file's NFO and apply to Plex.
+    캐시 사용, fetchItem 예외 처리, find_plex_item fallback,
+    디버그 로깅 강화
     """
     video_path = Path(file_path).resolve()
     nfo_path = video_path.with_suffix(".nfo")
     if not nfo_path.exists() or nfo_path.stat().st_size == 0:
+        logging.debug(f"[NFO] No NFO found: {nfo_path}")
         return False
 
-    str_video_path = str(video_path.resolve())
+    str_video_path = str(video_path)
     nfo_hash = compute_nfo_hash(nfo_path)
-    cached_hash = cache.get(str_video_path, {}).get("nfo_hash")
+    cached_entry = cache.get(str_video_path, {})
+    cached_hash = cached_entry.get("nfo_hash")
+    
     if cached_hash == nfo_hash and not config.get("always_apply_nfo", True):
-        if DETAIL:
-            logging.debug(f"[-] Skipped (unchanged): {nfo_path}")
+        logging.debug(f"[-] Skipped (unchanged): {nfo_path}")
         return False
 
-    # Plex 아이템 찾기
-    ratingKey = cache.get(str_video_path, {}).get("ratingKey")
+    # -----------------------------
+    # 캐시에서 ratingKey 가져오기
+    # -----------------------------
+    ratingKey = cached_entry.get("ratingKey")
     plex_item = None
     if ratingKey:
         try:
             plex_item = plex.fetchItem(ratingKey)
-        except Exception:
+            logging.debug(f"[NFO] fetchItem succeeded for ratingKey {ratingKey}")
+        except Exception as e:
+            logging.error(f"[NFO] fetchItem failed for ratingKey {ratingKey} - {e}")
             plex_item = None
 
+    # -----------------------------
+    # fetchItem 실패 시 fallback: find_plex_item
+    # -----------------------------
     if not plex_item:
         plex_item = find_plex_item(str_video_path)
         if plex_item:
+            logging.debug(f"[NFO] find_plex_item succeeded: {str_video_path} -> ratingKey {plex_item.ratingKey}")
             update_cache(str_video_path, ratingKey=plex_item.ratingKey)
         else:
-            logging.warning(f"[WARN] Plex item not found for {str_video_path}")
+            logging.warning(f"[NFO] Plex item not found for {str_video_path}")
             return False
 
-    # NFO 적용 (모든 필드 안전하게 locked 적용)
+    # -----------------------------
+    # NFO 적용
+    # -----------------------------
     success = apply_nfo(plex_item, str_video_path)
     if success:
         update_cache(str_video_path, ratingKey=plex_item.ratingKey, nfo_hash=nfo_hash)
@@ -443,13 +457,11 @@ def process_nfo(file_path):
         if delete_nfo_after_apply:
             try:
                 nfo_path.unlink()
-                if DETAIL:
-                    logging.debug(f"[-] Deleted NFO: {nfo_path}")
+                logging.debug(f"[-] Deleted NFO: {nfo_path}")
             except Exception as e:
-                logging.warning(f"[WARN] Failed to delete NFO file: {nfo_path} - {e}")
+                logging.warning(f"[NFO] Failed to delete NFO file: {nfo_path} - {e}")
 
     return success
-
 
 def apply_nfo(ep, file_path):
     """
