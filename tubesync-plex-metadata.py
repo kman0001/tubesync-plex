@@ -584,15 +584,34 @@ def enqueue_with_debounce(path, delay=watch_debounce_delay):
     now = time.time()
     last_time = last_event_times.get(path, 0)
     if now - last_time > delay:
+        logging.debug(f"[WATCHDOG] Enqueue file: {path}")
         file_queue.put(path)
-    last_event_times[path] = now  # 이벤트 기록 갱신 위치 수정
+    last_event_times[path] = now
+
+    # 확장자 필터링
+    ext = Path(path).suffix.lower()
+    if ext not in VIDEO_EXTS + (".nfo",):
+        logging.debug(f"[WATCHDOG] Skipped non-target file: {path}")
+        return
+
+    # DSM @eaDir, 숨김 파일 등 제외
+    if "/@eaDir/" in path or "/.DS_Store" in path or path.startswith("."):
+        logging.debug(f"[WATCHDOG] Skipped system/hidden file: {path}")
+        return
+
+    now = time.time()
+    last_time = last_event_times.get(path, 0)
+    if now - last_time > delay:
+        file_queue.put(path)
+    last_event_times[path] = now
 
 class WatchHandler(FileSystemEventHandler):
-    def on_created(self, event):
+    def on_modified(self, event):
         if event.is_directory:
             return
         path = str(Path(event.src_path).resolve())
-        if path.lower().endswith(VIDEO_EXTS) or path.lower().endswith(".nfo"):
+        if path.lower().endswith(".nfo"):
+            logging.debug(f"[WATCHDOG] Modified detected: {path}")
             enqueue_with_debounce(path)
 
     def on_modified(self, event):
@@ -618,7 +637,9 @@ def watch_worker(stop_event):
         try:
             path = file_queue.get(timeout=0.5)
         except queue.Empty:
-            path = None
+            continue
+        logging.debug(f"[WATCHDOG] Dequeued file: {path}, calling process_file()")
+        process_file(path)
 
         if path:
             logging.debug(f"[WATCHDOG] Dequeued file: {path}, processing...")
