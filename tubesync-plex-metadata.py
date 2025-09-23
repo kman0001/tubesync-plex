@@ -366,8 +366,8 @@ def safe_edit(ep, title=None, summary=None, aired=None, sort_title=None):
 
 def process_nfo(file_path):
     """
-    단일 영상 NFO를 처리하고 Plex에 적용.
-    file_path는 영상 파일 또는 .nfo 경로일 수 있음.
+    Process a single video file's NFO and apply to Plex.
+    file_path may be either the video path or the .nfo path
     """
     p = Path(file_path)
     if p.suffix.lower() == ".nfo":
@@ -394,7 +394,7 @@ def process_nfo(file_path):
             logging.debug(f"[-] Skipped (unchanged): {nfo_path}")
         return False
 
-    # Plex 아이템 찾기
+    # Plex item 찾기
     ratingKey = cache.get(str_video_path, {}).get("ratingKey")
     plex_item = None
     if ratingKey:
@@ -408,64 +408,55 @@ def process_nfo(file_path):
         if plex_item:
             update_cache(str_video_path, ratingKey=plex_item.ratingKey)
         else:
-            logging.warning(f"[NFO] Plex item not found for {str_video_path}")
+            logging.warning(f"[WARN] Plex item not found for {str_video_path}")
             return False
 
     # NFO 적용
+    success = apply_nfo(plex_item, nfo_path)
+    if success:
+        update_cache(str_video_path, ratingKey=plex_item.ratingKey, nfo_hash=nfo_hash)
+
+        # NFO 삭제 옵션
+        if delete_nfo_after_apply:
+            try:
+                nfo_path.unlink()
+                if DETAIL:
+                    logging.debug(f"[-] Deleted NFO: {nfo_path}")
+            except Exception as e:
+                logging.warning(f"[WARN] Failed to delete NFO file: {nfo_path} - {e}")
+
+    return success
+
+
+def apply_nfo(ep, nfo_path):
+    """
+    Apply NFO metadata to a Plex item, with titleSort fallback to title
+    """
     try:
         tree = ET.parse(str(nfo_path), parser=ET.XMLParser(recover=True))
         root = tree.getroot()
         title = root.findtext("title", "").strip() or None
         plot = root.findtext("plot", "").strip() or None
         aired = root.findtext("aired", "").strip() or None
-        title_sort = root.findtext("titleSort", "").strip() or None
+        title_sort = root.findtext("titleSort")
+        if not title_sort and title:
+            title_sort = title  # titleSort 없으면 title 사용
+
+        if title_sort:
+            title_sort = str(title_sort)
 
         if DETAIL:
-            logging.debug(f"[-] Applying NFO: {file_path} -> {title}")
+            logging.debug(f"[-] Applying NFO: {nfo_path} -> {title}")
 
-        # safe_edit 호출: titlesort 포함 강제 적용
-        success = safe_edit(plex_item, title=title, summary=plot, aired=aired, sort_title=title_sort)
-        if success:
-            update_cache(str_video_path, ratingKey=plex_item.ratingKey, nfo_hash=nfo_hash)
+        # 필드별 적용
+        safe_edit(ep, title=title, summary=plot, aired=aired)
 
-            # NFO 삭제 옵션
-            if delete_nfo_after_apply:
-                try:
-                    nfo_path.unlink()
-                    if DETAIL:
-                        logging.debug(f"[-] Deleted NFO: {nfo_path}")
-                except Exception as e:
-                    logging.warning(f"[NFO] Failed to delete NFO: {nfo_path} - {e}")
-
-        return success
-
-    except Exception as e:
-        logging.error(f"[NFO] Error applying NFO {nfo_path}: {e}", exc_info=True)
-        return False
-
-def apply_nfo(ep, file_path):
-    """
-    Apply NFO metadata to a Plex item (thumb removed, field-by-field edit)
-    """
-    nfo_path = Path(file_path).with_suffix(".nfo")
-    if not nfo_path.exists() or nfo_path.stat().st_size == 0:
-        return False
-
-    try:
-        tree = ET.parse(str(nfo_path), parser=ET.XMLParser(recover=True))
-        root = tree.getroot()
-        title = root.findtext("title", "").strip() or None
-        plot = root.findtext("plot", "").strip() or None
-        aired = root.findtext("aired", "").strip() or None
-        title_sort = root.findtext("titleSort", "").strip() or None
-
-        if DETAIL:
-            logging.debug(f"[-] Applying NFO: {file_path} -> {title}")
-
-        # -----------------------------
-        # 필드별 적용 (안정적)
-        # -----------------------------
-        safe_edit(ep, title=title, summary=plot, aired=aired, sort_title=title_sort)
+        # locked titleSort 강제 적용
+        if title_sort:
+            try:
+                ep._editField("titleSort", title_sort, locked=True)
+            except Exception:
+                logging.warning(f"[WARN] Failed to force-update titleSort for {ep.title}")
 
         return True
 
