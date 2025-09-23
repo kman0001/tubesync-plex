@@ -337,10 +337,12 @@ def compute_nfo_hash(nfo_path):
 
 def safe_edit(ep, title=None, summary=None, aired=None, sort_title=None, force_titlesort=False):
     """
-    Plex 메타데이터 항목 편집
-    force_titlesort=True 시 titleSort는 locked 상태와 관계없이 적용
+    Plex 메타데이터 항목을 안정적으로 편집.
+    - 일반 필드(title, summary, aired)는 locked=True로 적용
+    - titleSort는 locked 상태와 상관없이 force_titlesort=True면 강제 적용
     """
     try:
+        # 일반 필드
         kwargs = {}
         if title is not None:
             kwargs['title.value'] = title
@@ -351,71 +353,52 @@ def safe_edit(ep, title=None, summary=None, aired=None, sort_title=None, force_t
         if aired is not None:
             kwargs['originallyAvailableAt.value'] = aired
             kwargs['originallyAvailableAt.locked'] = 1
-        if sort_title is not None:
-            if force_titlesort:
-                # locked 여부 무시
-                kwargs['titleSort.value'] = sort_title
-            else:
-                kwargs['titleSort.value'] = sort_title
-                kwargs['titleSort.locked'] = 1
 
         if kwargs:
             try:
                 ep.edit(**kwargs)
-                ep.reload()
-                return True
             except Exception:
                 # fallback: 개별 메서드
-                if title:
-                    try:
-                        if hasattr(ep, "editTitle"):
-                            ep.editTitle(title, locked=True)
-                    except Exception: pass
-                if summary:
-                    try:
-                        if hasattr(ep, "editSummary"):
-                            ep.editSummary(summary, locked=True)
-                    except Exception: pass
-                if aired:
-                    try:
-                        if hasattr(ep, "editOriginallyAvailableAt"):
-                            ep.editOriginallyAvailableAt(aired, locked=True)
-                    except Exception: pass
-                if sort_title:
-                    try:
-                        if hasattr(ep, "editSortTitle"):
-                            if force_titlesort:
-                                ep.editSortTitle(sort_title, locked=False)
-                            else:
-                                ep.editSortTitle(sort_title, locked=True)
-                    except Exception: pass
-                ep.reload()
-                return True
-        return False
+                if title and hasattr(ep, "editTitle"):
+                    try: ep.editTitle(title, locked=True)
+                    except: pass
+                if summary and hasattr(ep, "editSummary"):
+                    try: ep.editSummary(summary, locked=True)
+                    except: pass
+                if aired and hasattr(ep, "editOriginallyAvailableAt"):
+                    try: ep.editOriginallyAvailableAt(aired, locked=True)
+                    except: pass
+
+        # titleSort 별도 처리
+        if sort_title is not None:
+            try:
+                if hasattr(ep, "editSortTitle"):
+                    ep.editSortTitle(sort_title, locked=not force_titlesort)
+            except Exception:
+                pass
+
+        ep.reload()
+        return True
     except Exception as e:
         logging.error(f"[SAFE_EDIT] Failed to edit item: {e}", exc_info=True)
         return False
 
+
 def process_nfo(file_path):
     """
-    Process a single video file's NFO and apply to Plex.
-    file_path may be either the video path or the .nfo path
+    Process a single video's NFO and apply to Plex.
+    Handles both video path or .nfo path.
     """
-    # if given nfo path -> get video path
     p = Path(file_path)
     if p.suffix.lower() == ".nfo":
         nfo_path = p
-        video_path = p.with_suffix("")  # best-effort: remove .nfo to get video base
-        # If video doesn't exist, attempt to find a video sibling (same base + known ext)
+        video_path = p.with_suffix("")
         if not video_path.exists():
-            found = None
             for ext in VIDEO_EXTS:
                 candidate = p.with_suffix(ext)
                 if candidate.exists():
-                    found = candidate
+                    video_path = candidate
                     break
-            if found:
-                video_path = found
     else:
         video_path = p
         nfo_path = p.with_suffix(".nfo")
@@ -460,11 +443,9 @@ def process_nfo(file_path):
         if DETAIL:
             logging.debug(f"[-] Applying NFO: {file_path} -> {title}")
 
-        # -----------------------------
-        # 필드별 적용 (안정적)
-        # -----------------------------
-        force_sort = config.get("always_apply_titlesort", False)
-        safe_edit(plex_item, title=title, summary=plot, aired=aired, sort_title=title_sort, force_titlesort=force_sort)
+        # safe_edit 호출
+        safe_edit(plex_item, title=title, summary=plot, aired=aired,
+                  sort_title=title_sort, force_titlesort=True)
 
         # 캐시 업데이트
         update_cache(str_video_path, ratingKey=plex_item.ratingKey, nfo_hash=nfo_hash)
@@ -479,7 +460,6 @@ def process_nfo(file_path):
                 logging.warning(f"[WARN] Failed to delete NFO file: {nfo_path} - {e}")
 
         return True
-
     except Exception as e:
         logging.error(f"[!] Error applying NFO {nfo_path}: {e}", exc_info=True)
         return False
