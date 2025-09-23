@@ -634,7 +634,9 @@ class VideoEventHandler(FileSystemEventHandler):
             nfo_files = list(self.nfo_queue)
             self.nfo_queue.clear()
             self.nfo_timer = None
+
         for nfo_path in nfo_files:
+            nfo_path = str(nfo_path)
             video_path = Path(nfo_path).with_suffix(".mkv")
             if not video_path.exists():
                 for e in VIDEO_EXTS:
@@ -642,12 +644,25 @@ class VideoEventHandler(FileSystemEventHandler):
                     if candidate.exists():
                         video_path = candidate
                         break
+
             if video_path.exists():
-                success = process_file(str(video_path))
-                if not success:
-                    self.retry_queue[str(video_path)] = [time.time()+5,1]
+                # NFO 적용
+                success = process_nfo(nfo_path, str(video_path))
+                if success:
+                    # 적용 후 NFO 삭제
+                    if delete_nfo_after_apply:
+                        try:
+                            Path(nfo_path).unlink()
+                            logging.debug(f"[WATCHDOG] Deleted NFO: {nfo_path}")
+                        except Exception as e:
+                            logging.warning(f"[WATCHDOG] Failed to delete NFO: {nfo_path} - {e}")
+                else:
+                    # 실패 시 재시도
+                    self.retry_queue[str(video_path)] = [time.time() + 5, 1]
             else:
                 logging.warning(f"[WATCHDOG] Video not found for NFO: {nfo_path}")
+
+        # Retry 처리
         self._process_retry_queue()
 
     def process_video_timer_queue(self):
