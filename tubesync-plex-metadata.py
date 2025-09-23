@@ -337,70 +337,43 @@ def compute_nfo_hash(nfo_path):
 
 def safe_edit(ep, title=None, summary=None, aired=None, sort_title=None):
     """
-    Plex 메타데이터 편집 함수.
-    titleSort도 잠긴 필드라도 강제 적용.
+    모든 필드를 안전하게 편집.
+    titleSort 잠긴 필드도 강제 적용 가능.
+    문자열은 strip 처리하여 첫 글자 손실 방지.
     """
     try:
-        # 일반 필드 편집
         kwargs = {}
         if title is not None:
-            kwargs['title.value'] = title
+            kwargs['title.value'] = str(title).strip()
             kwargs['title.locked'] = 1
         if summary is not None:
-            kwargs['summary.value'] = summary
+            kwargs['summary.value'] = str(summary).strip()
             kwargs['summary.locked'] = 1
         if aired is not None:
-            kwargs['originallyAvailableAt.value'] = aired
+            kwargs['originallyAvailableAt.value'] = str(aired).strip()
             kwargs['originallyAvailableAt.locked'] = 1
+        if sort_title is not None:
+            kwargs['titleSort.value'] = str(sort_title).strip()
+            kwargs['titleSort.locked'] = 1  # 잠긴 상태도 강제 적용
 
         if kwargs:
-            try:
-                ep.edit(**kwargs)
-            except Exception:
-                # fallback: 개별 메서드
-                if title and hasattr(ep, "editTitle"):
-                    try: ep.editTitle(title, locked=True)
-                    except Exception: pass
-                if summary and hasattr(ep, "editSummary"):
-                    try: ep.editSummary(summary, locked=True)
-                    except Exception: pass
-                if aired and hasattr(ep, "editOriginallyAvailableAt"):
-                    try: ep.editOriginallyAvailableAt(aired, locked=True)
-                    except Exception: pass
-
-        # --------------------------
-        # titleSort 강제 적용
-        # --------------------------
-        if sort_title:
-            try:
-                sort_title_str = str(sort_title)  # 첫 글자 사라짐 방지
-                if hasattr(ep, "editSortTitle"):
-                    # locked 여부와 상관없이 적용
-                    ep.editSortTitle(sort_title_str)
-                    # 강제로 잠금
-                    if hasattr(ep, "lockSortTitle"):
-                        ep.lockSortTitle(True)
-            except Exception as e:
-                logging.warning(f"[SAFE_EDIT] Failed to forcibly edit titleSort: {e}")
-
-        ep.reload()
+            ep.edit(**kwargs)
+            ep.reload()
         return True
-
     except Exception as e:
         logging.error(f"[SAFE_EDIT] Failed to edit item: {e}", exc_info=True)
         return False
 
-
 def process_nfo(file_path):
     """
-    단일 NFO 처리 및 Plex 적용
+    단일 영상 NFO를 처리하고 Plex에 적용.
+    file_path는 영상 파일 또는 .nfo 경로일 수 있음.
     """
     p = Path(file_path)
     if p.suffix.lower() == ".nfo":
         nfo_path = p
         video_path = p.with_suffix("")
         if not video_path.exists():
-            # 동일한 이름 + 영상 확장자 탐색
             for ext in VIDEO_EXTS:
                 candidate = p.with_suffix(ext)
                 if candidate.exists():
@@ -435,7 +408,7 @@ def process_nfo(file_path):
         if plex_item:
             update_cache(str_video_path, ratingKey=plex_item.ratingKey)
         else:
-            logging.warning(f"[WARN] Plex item not found for {str_video_path}")
+            logging.warning(f"[NFO] Plex item not found for {str_video_path}")
             return False
 
     # NFO 적용
@@ -450,22 +423,24 @@ def process_nfo(file_path):
         if DETAIL:
             logging.debug(f"[-] Applying NFO: {file_path} -> {title}")
 
-        safe_edit(plex_item, title=title, summary=plot, aired=aired, sort_title=title_sort)
-        update_cache(str_video_path, ratingKey=plex_item.ratingKey, nfo_hash=nfo_hash)
+        # safe_edit 호출: titlesort 포함 강제 적용
+        success = safe_edit(plex_item, title=title, summary=plot, aired=aired, sort_title=title_sort)
+        if success:
+            update_cache(str_video_path, ratingKey=plex_item.ratingKey, nfo_hash=nfo_hash)
 
-        # NFO 삭제
-        if delete_nfo_after_apply:
-            try:
-                nfo_path.unlink()
-                if DETAIL:
-                    logging.debug(f"[-] Deleted NFO: {nfo_path}")
-            except Exception as e:
-                logging.warning(f"[WARN] Failed to delete NFO file: {nfo_path} - {e}")
+            # NFO 삭제 옵션
+            if delete_nfo_after_apply:
+                try:
+                    nfo_path.unlink()
+                    if DETAIL:
+                        logging.debug(f"[-] Deleted NFO: {nfo_path}")
+                except Exception as e:
+                    logging.warning(f"[NFO] Failed to delete NFO: {nfo_path} - {e}")
 
-        return True
+        return success
 
     except Exception as e:
-        logging.error(f"[!] Error applying NFO {nfo_path}: {e}", exc_info=True)
+        logging.error(f"[NFO] Error applying NFO {nfo_path}: {e}", exc_info=True)
         return False
 
 def apply_nfo(ep, file_path):
