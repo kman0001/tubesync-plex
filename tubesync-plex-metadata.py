@@ -338,52 +338,56 @@ def safe_edit(ep, title=None, summary=None, aired=None, sort_title=None):
     """
     Plex 메타데이터 항목에 대해 가능한 편집 함수를 시도한다.
     plexapi의 메서드가 환경마다 다를 수 있어 여러 가지를 시도.
+    모든 필드는 locked=True 로 저장하여 Agent 덮어쓰기 방지.
     """
     try:
         # 최신 plexapi: metadata.edit(**kwargs)
         kwargs = {}
-        if title is not None: kwargs['title'] = title
-        if summary is not None: kwargs['summary'] = summary
-        if aired is not None: kwargs['originallyAvailableAt'] = aired
-        if sort_title is not None: kwargs['titleSort'] = sort_title
+        if title is not None:
+            kwargs['title.value'] = title
+            kwargs['title.locked'] = 1
+        if summary is not None:
+            kwargs['summary.value'] = summary
+            kwargs['summary.locked'] = 1
+        if aired is not None:
+            kwargs['originallyAvailableAt.value'] = aired
+            kwargs['originallyAvailableAt.locked'] = 1
+        if sort_title is not None:
+            kwargs['titleSort.value'] = sort_title
+            kwargs['titleSort.locked'] = 1
+
         if kwargs:
             try:
                 ep.edit(**kwargs)
+                ep.reload()   # 캐시 갱신
                 return True
             except Exception:
-                # fallback: individual helper methods (if 존재하면)
+                # fallback: 개별 메서드 사용
                 if title:
                     try:
                         if hasattr(ep, "editTitle"):
                             ep.editTitle(title, locked=True)
-                        elif hasattr(ep, "edit"):
-                            ep.edit(title=title, locked=True)
                     except Exception:
                         pass
                 if summary:
                     try:
                         if hasattr(ep, "editSummary"):
                             ep.editSummary(summary, locked=True)
-                        elif hasattr(ep, "edit"):
-                            ep.edit(summary=summary, locked=True)
                     except Exception:
                         pass
                 if aired:
                     try:
                         if hasattr(ep, "editOriginallyAvailableAt"):
                             ep.editOriginallyAvailableAt(aired, locked=True)
-                        elif hasattr(ep, "edit"):
-                            ep.edit(originallyAvailableAt=aired, locked=True)
                     except Exception:
                         pass
                 if sort_title:
                     try:
                         if hasattr(ep, "editSortTitle"):
                             ep.editSortTitle(sort_title, locked=True)
-                        elif hasattr(ep, "edit"):
-                            ep.edit(titleSort=sort_title, locked=True)
                     except Exception:
                         pass
+                ep.reload()
                 return True
         return False
     except Exception as e:
