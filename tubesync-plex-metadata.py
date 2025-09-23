@@ -335,30 +335,29 @@ def compute_nfo_hash(nfo_path):
         logging.error(f"[NFO] compute_nfo_hash failed: {nfo_path} - {e}")
         return None
 
-def safe_edit(ep, title=None, summary=None, aired=None, sort_title=None, force_titlesort=False):
+def safe_edit(ep, title=None, summary=None, aired=None, sort_title=None):
     """
-    Plex 메타데이터 항목을 안정적으로 편집.
-    - 일반 필드(title, summary, aired)는 locked=True로 적용
-    - titleSort는 locked 상태와 상관없이 force_titlesort=True면 강제 적용
+    Plex 메타데이터 편집.
+    - title, summary, aired: locked=True로 안전하게 적용
+    - sort_title: locked 여부와 상관없이 항상 적용
     """
     try:
-        # 일반 필드
-        kwargs = {}
-        if title is not None:
-            kwargs['title.value'] = title
-            kwargs['title.locked'] = 1
-        if summary is not None:
-            kwargs['summary.value'] = summary
-            kwargs['summary.locked'] = 1
-        if aired is not None:
-            kwargs['originallyAvailableAt.value'] = aired
-            kwargs['originallyAvailableAt.locked'] = 1
-
-        if kwargs:
+        # 일반 필드 적용
+        if title or summary or aired:
+            kwargs = {}
+            if title:
+                kwargs["title.value"] = title
+                kwargs["title.locked"] = 1
+            if summary:
+                kwargs["summary.value"] = summary
+                kwargs["summary.locked"] = 1
+            if aired:
+                kwargs["originallyAvailableAt.value"] = aired
+                kwargs["originallyAvailableAt.locked"] = 1
             try:
                 ep.edit(**kwargs)
             except Exception:
-                # fallback: 개별 메서드
+                # 개별 메서드 fallback
                 if title and hasattr(ep, "editTitle"):
                     try: ep.editTitle(title, locked=True)
                     except: pass
@@ -369,11 +368,11 @@ def safe_edit(ep, title=None, summary=None, aired=None, sort_title=None, force_t
                     try: ep.editOriginallyAvailableAt(aired, locked=True)
                     except: pass
 
-        # titleSort 별도 처리
-        if sort_title is not None:
+        # titleSort는 별도 처리
+        if sort_title:
             try:
                 if hasattr(ep, "editSortTitle"):
-                    ep.editSortTitle(sort_title, locked=not force_titlesort)
+                    ep.editSortTitle(sort_title, locked=False)  # locked=False로 강제 적용
             except Exception:
                 pass
 
@@ -382,7 +381,6 @@ def safe_edit(ep, title=None, summary=None, aired=None, sort_title=None, force_t
     except Exception as e:
         logging.error(f"[SAFE_EDIT] Failed to edit item: {e}", exc_info=True)
         return False
-
 
 def process_nfo(file_path):
     """
