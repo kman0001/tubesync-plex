@@ -71,7 +71,8 @@ default_config = {
     "request_delay": 0.2,
     "watch_folders": True,
     "watch_debounce_delay": 3,
-    "delete_nfo_after_apply": True
+    "delete_nfo_after_apply": True,
+    "always_apply_titlesort": True
 }
 
 # ==============================
@@ -334,14 +335,12 @@ def compute_nfo_hash(nfo_path):
         logging.error(f"[NFO] compute_nfo_hash failed: {nfo_path} - {e}")
         return None
 
-def safe_edit(ep, title=None, summary=None, aired=None, sort_title=None):
+def safe_edit(ep, title=None, summary=None, aired=None, sort_title=None, force_titlesort=False):
     """
-    Plex 메타데이터 항목에 대해 가능한 편집 함수를 시도한다.
-    plexapi의 메서드가 환경마다 다를 수 있어 여러 가지를 시도.
-    모든 필드는 locked=True 로 저장하여 Agent 덮어쓰기 방지.
+    Plex 메타데이터 항목 편집
+    force_titlesort=True 시 titleSort는 locked 상태와 관계없이 적용
     """
     try:
-        # 최신 plexapi: metadata.edit(**kwargs)
         kwargs = {}
         if title is not None:
             kwargs['title.value'] = title
@@ -353,40 +352,43 @@ def safe_edit(ep, title=None, summary=None, aired=None, sort_title=None):
             kwargs['originallyAvailableAt.value'] = aired
             kwargs['originallyAvailableAt.locked'] = 1
         if sort_title is not None:
-            kwargs['titleSort.value'] = sort_title
-            kwargs['titleSort.locked'] = 1
+            if force_titlesort:
+                # locked 여부 무시
+                kwargs['titleSort.value'] = sort_title
+            else:
+                kwargs['titleSort.value'] = sort_title
+                kwargs['titleSort.locked'] = 1
 
         if kwargs:
             try:
                 ep.edit(**kwargs)
-                ep.reload()   # 캐시 갱신
+                ep.reload()
                 return True
             except Exception:
-                # fallback: 개별 메서드 사용
+                # fallback: 개별 메서드
                 if title:
                     try:
                         if hasattr(ep, "editTitle"):
                             ep.editTitle(title, locked=True)
-                    except Exception:
-                        pass
+                    except Exception: pass
                 if summary:
                     try:
                         if hasattr(ep, "editSummary"):
                             ep.editSummary(summary, locked=True)
-                    except Exception:
-                        pass
+                    except Exception: pass
                 if aired:
                     try:
                         if hasattr(ep, "editOriginallyAvailableAt"):
                             ep.editOriginallyAvailableAt(aired, locked=True)
-                    except Exception:
-                        pass
+                    except Exception: pass
                 if sort_title:
                     try:
                         if hasattr(ep, "editSortTitle"):
-                            ep.editSortTitle(sort_title, locked=True)
-                    except Exception:
-                        pass
+                            if force_titlesort:
+                                ep.editSortTitle(sort_title, locked=False)
+                            else:
+                                ep.editSortTitle(sort_title, locked=True)
+                    except Exception: pass
                 ep.reload()
                 return True
         return False
@@ -447,8 +449,24 @@ def process_nfo(file_path):
             return False
 
     # NFO 적용
-    success = apply_nfo(plex_item, str_video_path)
-    if success:
+    try:
+        tree = ET.parse(str(nfo_path), parser=ET.XMLParser(recover=True))
+        root = tree.getroot()
+        title = root.findtext("title", "").strip() or None
+        plot = root.findtext("plot", "").strip() or None
+        aired = root.findtext("aired", "").strip() or None
+        title_sort = root.findtext("titleSort", "").strip() or None
+
+        if DETAIL:
+            logging.debug(f"[-] Applying NFO: {file_path} -> {title}")
+
+        # -----------------------------
+        # 필드별 적용 (안정적)
+        # -----------------------------
+        force_sort = config.get("always_apply_titlesort", False)
+        safe_edit(plex_item, title=title, summary=plot, aired=aired, sort_title=title_sort, force_titlesort=force_sort)
+
+        # 캐시 업데이트
         update_cache(str_video_path, ratingKey=plex_item.ratingKey, nfo_hash=nfo_hash)
 
         # NFO 삭제 옵션
@@ -460,7 +478,11 @@ def process_nfo(file_path):
             except Exception as e:
                 logging.warning(f"[WARN] Failed to delete NFO file: {nfo_path} - {e}")
 
-    return success
+        return True
+
+    except Exception as e:
+        logging.error(f"[!] Error applying NFO {nfo_path}: {e}", exc_info=True)
+        return False
 
 def apply_nfo(ep, file_path):
     """
