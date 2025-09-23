@@ -598,7 +598,7 @@ class WatchHandler(FileSystemEventHandler):
         if event.is_directory:
             return
         path = str(Path(event.src_path).resolve())
-        if path.lower().endswith(VIDEO_EXTS) or path.lower().endswith(".nfo"):
+        if path.lower().endswith(".nfo"):
             enqueue_with_debounce(path)
 
     def on_deleted(self, event):
@@ -610,7 +610,7 @@ class WatchHandler(FileSystemEventHandler):
                 cache.pop(path, None)
             processed_files.discard(path)
             logging.info(f"[WATCHDOG] Video deleted: {path}")
-        # .nfo 삭제는 감지 필요 없음 → 그냥 패스
+        # NFO 삭제는 무시 → pass
 
 def watch_worker(stop_event):
     while not stop_event.is_set():
