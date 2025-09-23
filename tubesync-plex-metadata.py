@@ -280,39 +280,28 @@ def setup_ffmpeg():
 def find_plex_item(abs_path):
     abs_path = os.path.abspath(abs_path)
     for lib_id in config.get("plex_library_ids", []):
-        try:
-            section = plex.library.sectionByID(lib_id)
-        except Exception:
-            continue
+        try: section = plex.library.sectionByID(lib_id)
+        except: continue
 
-        # section.TYPE may not exist; use section.TYPE or section.type if present
-        section_type = getattr(section, "TYPE", None) or getattr(section, "type", "")
+        section_type = getattr(section,"TYPE",None) or getattr(section,"type","")
         section_type = str(section_type).lower()
         if section_type == "show":
             results = section.search(libtype="episode")
         elif section_type in ("movie", "video"):
             results = section.search(libtype="movie")
         else:
-            # try a broad search fallback
             results = section.search()
 
         for item in results:
-            # parts: try several access patterns
             parts_iter = []
-            try:
-                parts_iter = item.iterParts()
-            except Exception:
-                try:
-                    parts_iter = getattr(item, "parts", []) or []
-                except Exception:
-                    parts_iter = []
+            try: parts_iter = item.iterParts()
+            except: parts_iter = getattr(item,"parts",[]) or []
 
             for part in parts_iter:
                 try:
                     if os.path.abspath(part.file) == abs_path:
                         return item
-                except Exception:
-                    continue
+                except: continue
     return None
 
 # ==============================
@@ -401,11 +390,6 @@ def safe_edit(ep, title=None, summary=None, aired=None, sort_title=None):
         return False
 
 def process_nfo(file_path):
-    """
-    Process a single video file's NFO and apply to Plex.
-    캐시 사용, fetchItem 예외 처리, find_plex_item fallback,
-    디버그 로깅 강화
-    """
     video_path = Path(file_path).resolve()
     nfo_path = video_path.with_suffix(".nfo")
     if not nfo_path.exists() or nfo_path.stat().st_size == 0:
@@ -421,9 +405,6 @@ def process_nfo(file_path):
         logging.debug(f"[-] Skipped (unchanged): {nfo_path}")
         return False
 
-    # -----------------------------
-    # 캐시에서 ratingKey 가져오기
-    # -----------------------------
     ratingKey = cached_entry.get("ratingKey")
     plex_item = None
     if ratingKey:
@@ -434,9 +415,6 @@ def process_nfo(file_path):
             logging.error(f"[NFO] fetchItem failed for ratingKey {ratingKey} - {e}")
             plex_item = None
 
-    # -----------------------------
-    # fetchItem 실패 시 fallback: find_plex_item
-    # -----------------------------
     if not plex_item:
         plex_item = find_plex_item(str_video_path)
         if plex_item:
@@ -446,28 +424,15 @@ def process_nfo(file_path):
             logging.warning(f"[NFO] Plex item not found for {str_video_path}")
             return False
 
-    # -----------------------------
-    # NFO 적용
-    # -----------------------------
     success = apply_nfo(plex_item, str_video_path)
     if success:
         update_cache(str_video_path, ratingKey=plex_item.ratingKey, nfo_hash=nfo_hash)
-
-        # NFO 삭제 옵션
         if delete_nfo_after_apply:
-            try:
-                nfo_path.unlink()
-                logging.debug(f"[-] Deleted NFO: {nfo_path}")
-            except Exception as e:
-                logging.warning(f"[NFO] Failed to delete NFO file: {nfo_path} - {e}")
-
+            try: nfo_path.unlink()
+            except Exception as e: logging.warning(f"[NFO] Failed to delete NFO: {e}")
     return success
 
 def apply_nfo(ep, file_path):
-    """
-    Apply NFO metadata to a Plex episode item (thumb 제거, field-by-field edit)
-    모든 필드를 locked 상태에서도 안정적으로 적용
-    """
     nfo_path = Path(file_path).with_suffix(".nfo")
     if not nfo_path.exists() or nfo_path.stat().st_size == 0:
         return False
@@ -480,64 +445,20 @@ def apply_nfo(ep, file_path):
         aired = root.findtext("aired", "")
         title_sort = root.findtext("titleSort", "")
 
-        if DETAIL:
-            logging.debug(f"[-] Applying NFO: {file_path} -> {title}")
+        if DETAIL: logging.debug(f"[-] Applying NFO: {file_path} -> {title}")
 
-        # -----------------------------
-        # 안정적 필드 적용: 먼저 unlocked → 값 적용 → 다시 locked
-        # -----------------------------
-        if title:
-            try:
-                if hasattr(ep, "editTitle"):
-                    ep.editTitle(title, locked=False)
-            except Exception:
-                pass
-            try:
-                if hasattr(ep, "editTitle"):
-                    ep.editTitle(title, locked=True)
-            except Exception:
-                pass
+        for field, method in [("title", "editTitle"), ("summary", "editSummary"),
+                              ("originallyAvailableAt", "editOriginallyAvailableAt"),
+                              ("titleSort", "editSortTitle")]:
+            value = locals().get(field)
+            if not value: continue
+            try: getattr(ep, method)(value, locked=False)
+            except: pass
+            try: getattr(ep, method)(value, locked=True)
+            except: pass
 
-        if plot:
-            try:
-                if hasattr(ep, "editSummary"):
-                    ep.editSummary(plot, locked=False)
-            except Exception:
-                pass
-            try:
-                if hasattr(ep, "editSummary"):
-                    ep.editSummary(plot, locked=True)
-            except Exception:
-                pass
-
-        if aired:
-            try:
-                if hasattr(ep, "editOriginallyAvailableAt"):
-                    ep.editOriginallyAvailableAt(aired, locked=False)
-            except Exception:
-                pass
-            try:
-                if hasattr(ep, "editOriginallyAvailableAt"):
-                    ep.editOriginallyAvailableAt(aired, locked=True)
-            except Exception:
-                pass
-
-        if title_sort:
-            try:
-                if hasattr(ep, "editSortTitle"):
-                    ep.editSortTitle(title_sort, locked=False)
-            except Exception:
-                pass
-            try:
-                if hasattr(ep, "editSortTitle"):
-                    ep.editSortTitle(title_sort, locked=True)
-            except Exception:
-                pass
-
-        try:
-            ep.reload()
-        except Exception:
-            pass
+        try: ep.reload()
+        except: pass
 
         return True
 
@@ -655,7 +576,8 @@ def prune_processed_files(max_size=10000):
 # ==============================
 # Watchdog 이벤트 처리 (통합 개선 + debounce)
 # ==============================
-last_event_times = {}  # 경로별 마지막 이벤트 시간
+last_event_times = {}
+file_queue = queue.Queue()
 
 def enqueue_with_debounce(path, delay=watch_debounce_delay):
     now = time.time()
@@ -666,21 +588,15 @@ def enqueue_with_debounce(path, delay=watch_debounce_delay):
 
 class WatchHandler(FileSystemEventHandler):
     def on_created(self, event):
-        if event.is_directory:
-            return
+        if event.is_directory: return
         enqueue_with_debounce(str(Path(event.src_path).resolve()))
-
     def on_modified(self, event):
-        if event.is_directory:
-            return
+        if event.is_directory: return
         enqueue_with_debounce(str(Path(event.src_path).resolve()))
-
     def on_deleted(self, event):
-        if event.is_directory:
-            return
+        if event.is_directory: return
         abs_path = str(Path(event.src_path).resolve())
-        with cache_lock:
-            cache.pop(abs_path, None)
+        with cache_lock: cache.pop(abs_path, None)
         processed_files.discard(abs_path)
         logging.info(f"[WATCHDOG] File deleted: {abs_path}")
 
