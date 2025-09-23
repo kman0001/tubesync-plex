@@ -574,16 +574,17 @@ def prune_processed_files(max_size=10000):
         logging.debug(f"[PRUNE] processed_files pruned {len(to_remove)} entries")
 
 # ==============================
-# Watchdog 이벤트 처리 (통합 개선 + debounce)
+# Watchdog 이벤트 처리 (통합 개선 + debounce + retry)
 # ==============================
 last_event_times = {}  # 경로별 마지막 이벤트 시간
+retry_queue = {}       # { path: [next_retry_time, attempt_count] }
 
 def enqueue_with_debounce(path, delay=watch_debounce_delay):
     now = time.time()
     last_time = last_event_times.get(path, 0)
     if now - last_time > delay:
         file_queue.put(path)
-    last_event_times[path] = now
+        last_event_times[path] = now  # 이벤트 기록 갱신 위치 수정
 
 class WatchHandler(FileSystemEventHandler):
     def on_created(self, event):
@@ -609,10 +610,52 @@ def watch_worker(stop_event):
     while not stop_event.is_set():
         try:
             path = file_queue.get(timeout=0.5)
-            process_file(path)
-            prune_processed_files()
         except queue.Empty:
+            path = None
+
+        now = time.time()
+
+        # retry_queue 처리
+        for retry_path, (retry_time, count) in list(retry_queue.items()):
+            if now >= retry_time:
+                success = process_file(retry_path)
+                if success:
+                    del retry_queue[retry_path]
+                elif count < 3:
+                    retry_queue[retry_path] = [now + 5, count + 1]
+                else:
+                    logging.warning(f"[WATCHDOG] Failed 3 times: {retry_path}")
+                    del retry_queue[retry_path]
+
+        if not path:
             continue
+
+        ext = Path(path).suffix.lower()
+
+        if ext == ".nfo":
+            # NFO 전용 처리
+            video_path = Path(path).with_suffix(".mkv")
+            if not video_path.exists():
+                for e in VIDEO_EXTS:
+                    candidate = Path(path).with_suffix(e)
+                    if candidate.exists():
+                        video_path = candidate
+                        break
+            if not video_path.exists():
+                logging.warning(f"[WATCHDOG] Corresponding video not found: {path}")
+                continue
+            success = process_file(str(video_path))
+            if not success:
+                retry_queue[str(video_path)] = [now + 5, 1]
+
+        elif ext in VIDEO_EXTS:
+            # Video 전용 처리
+            success = process_file(path)
+            if not success:
+                retry_queue[path] = [now + 5, 1]
+
+        processed_files.add(path)
+        prune_processed_files()
 
 # ==============================
 # Scan: NFO 전용 (신규)
