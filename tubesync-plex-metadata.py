@@ -780,17 +780,17 @@ def main():
         save_cache()
 
     elif config.get("watch_folders", False):
-    observer = Observer()
-    handler = VideoEventHandler(debounce_delay=watch_debounce_delay)
-    for d in base_dirs:
-        observer.schedule(handler, d, recursive=True)
-    observer.start()
-    try:
-        while True:
-            time.sleep(1)
-    except KeyboardInterrupt:
-        observer.stop()
-    observer.join()
+        observer = Observer()
+        handler = VideoEventHandler(debounce_delay=watch_debounce_delay)
+        for d in base_dirs:
+            observer.schedule(handler, d, recursive=True)
+        observer.start()
+        try:
+            while True:
+                time.sleep(1)
+        except KeyboardInterrupt:
+            observer.stop()
+        observer.join()
 
     logging.info("END")
 
