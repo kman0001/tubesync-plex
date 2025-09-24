@@ -618,7 +618,11 @@ class VideoEventHandler(FileSystemEventHandler):
             return
         path = str(Path(event.src_path).resolve())
         if not self._should_process(path):
-            logging.debug(f"[WATCHDOG] Skipped non-target/system file: {path}")
+            # rename 후 .nfo인 경우 처리
+            if event.event_type == "moved" and path.lower().endswith(".nfo"):
+                self._enqueue_with_debounce(path, self.nfo_queue, "nfo_timer", self.nfo_wait)
+            else:
+                logging.debug(f"[WATCHDOG] Skipped non-target/system file: {path}")
             return
         ext = Path(path).suffix.lower()
         if ext == ".nfo":
