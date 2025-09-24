@@ -429,8 +429,16 @@ def process_nfo(file_path):
     nfo_hash = compute_nfo_hash(nfo_path)
     cached_hash = cache.get(str_video_path, {}).get("nfo_hash")
     if cached_hash == nfo_hash and not config.get("always_apply_nfo", True):
-        if DETAIL:
-            logging.debug(f"[-] Skipped (unchanged): {nfo_path}")
+        # NFO는 적용 안 함
+        logging.info(f"Skipped unchanged NFO: {nfo_path}")
+
+        # 삭제 옵션이 켜져 있으면 삭제
+        if delete_nfo_after_apply:
+            try:
+                nfo_path.unlink()
+                logging.info(f"Deleted unchanged NFO: {nfo_path}")
+            except Exception as e:
+                logging.warning(f"Failed to delete NFO file: {nfo_path} - {e}")
         return False
 
     # Plex 아이템 찾기
