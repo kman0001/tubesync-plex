@@ -535,7 +535,7 @@ def process_file(file_path):
         process_nfo(str_path)
 
     # 자막 처리
-    if subtitles_enabled and abs_path.suffix.lower() in VIDEO_EXTS and plex_item:
+    if SUBTITLES_ENABLED and abs_path.suffix.lower() in VIDEO_EXTS and plex_item:
         srt_files = extract_subtitles(str_path)
         if srt_files:
             upload_subtitles(plex_item, srt_files)
