@@ -138,7 +138,7 @@ logging.info(f"WATCH_DEBOUNCE_DELAY = {WATCH_DEBOUNCE_DELAY}")
 if not DEBUG_HTTP:
     logging.getLogger("urllib3").setLevel(logging.WARNING)
     logging.getLogger("requests").setLevel(logging.WARNING)
-log_level = logging.DEBUG if DETAIL else logging.INFO
+log_level = logging.debug if DETAIL else logging.INFO
 logging.basicConfig(level=log_level, format='[%(levelname)s] %(message)s')
 
 logging.info(f"BASE_DIR = {BASE_DIR}")
@@ -230,7 +230,7 @@ def update_cache(video_path, ratingKey=None, nfo_hash=None):
         cache[path] = current
         cache_modified = True
         if DETAIL:
-            logging.DEBUG(f"[CACHE] update_cache: {path} => {current}")
+            logging.debug(f"[CACHE] update_cache: {path} => {current}")
 
 # ==============================
 # FFmpeg setup
@@ -359,7 +359,7 @@ def compute_nfo_hash(nfo_path):
             data = f.read()
         h = hashlib.md5(data).hexdigest()
         if DETAIL:
-            logging.DEBUG(f"[NFO] compute_nfo_hash: {nfo_path} -> {h}")
+            logging.debug(f"[NFO] compute_nfo_hash: {nfo_path} -> {h}")
         return h
     except Exception as e:
         logging.error(f"[NFO] compute_nfo_hash failed: {nfo_path} - {e}")
@@ -408,7 +408,7 @@ def apply_nfo(ep, file_path):
         title_sort = root.findtext("titleSort", "").strip() or title  # NFO 없으면 title 사용
 
         if DETAIL:
-            logging.DEBUG(f"[-] Applying NFO: {file_path} -> {title}")
+            logging.debug(f"[-] Applying NFO: {file_path} -> {title}")
 
         # 일반 필드 적용
         safe_edit(ep, title=title, summary=plot, aired=aired)
@@ -492,7 +492,7 @@ def process_nfo(file_path):
             try:
                 nfo_path.unlink()
                 if DETAIL:
-                    logging.DEBUG(f"[-] Deleted NFO: {nfo_path}")
+                    logging.debug(f"[-] Deleted NFO: {nfo_path}")
             except Exception as e:
                 logging.warning(f"[WARN] Failed to delete NFO file: {nfo_path} - {e}")
 
@@ -506,7 +506,7 @@ WATCH_DEBOUNCE_DELAY = config.get("WATCH_DEBOUNCE_DELAY", 2)
 file_queue = queue.Queue()
 
 def process_file(file_path):
-    logging.DEBUG(f"[PROCESS_FILE] Start: {file_path}")
+    logging.debug(f"[PROCESS_FILE] Start: {file_path}")
     abs_path = Path(file_path).resolve()
     str_path = str(abs_path)
 
@@ -604,7 +604,7 @@ def prune_processed_files(max_size=10000):
         to_remove = list(processed_files)[:len(processed_files)-max_size]
         for f in to_remove:
             processed_files.remove(f)
-        logging.DEBUG(f"[PRUNE] processed_files pruned {len(to_remove)} entries")
+        logging.debug(f"[PRUNE] processed_files pruned {len(to_remove)} entries")
 
 # ==============================
 # Watchdog 이벤트 처리 (통합 + debounce + retry)
@@ -643,7 +643,7 @@ class VideoEventHandler(FileSystemEventHandler):
                 t = threading.Timer(wait_time, getattr(self, f"process_{timer_attr}_queue"))
                 setattr(self, timer_attr, t)
                 t.start()
-            logging.DEBUG(f"[WATCHDOG] Scheduled processing: {path}")
+            logging.debug(f"[WATCHDOG] Scheduled processing: {path}")
 
     def on_any_event(self, event):
         if event.is_directory:
@@ -654,7 +654,7 @@ class VideoEventHandler(FileSystemEventHandler):
             if event.event_type == "moved" and path.lower().endswith(".nfo"):
                 self._enqueue_with_debounce(path, self.nfo_queue, "nfo_timer", self.nfo_wait)
             else:
-                logging.DEBUG(f"[WATCHDOG] Skipped non-target/system file: {path}")
+                logging.debug(f"[WATCHDOG] Skipped non-target/system file: {path}")
             return
         ext = Path(path).suffix.lower()
         if ext == ".nfo":
@@ -715,7 +715,7 @@ def scan_nfo_files(base_dirs):
             for f in files:
                 if f.lower().endswith(".nfo"):
                     nfo_files.append(os.path.abspath(os.path.join(root, f)))
-    if DETAIL: logging.DEBUG(f"[SCAN] Found {len(nfo_files)} NFO files")
+    if DETAIL: logging.debug(f"[SCAN] Found {len(nfo_files)} NFO files")
     return nfo_files
 
 # ==============================
@@ -769,7 +769,7 @@ def process_all_nfo(base_dirs):
                     nfo_files.append(os.path.abspath(os.path.join(root, f)))
 
     if DETAIL:
-        logging.DEBUG(f"[SCAN] Found {len(nfo_files)} NFO files")
+        logging.debug(f"[SCAN] Found {len(nfo_files)} NFO files")
 
     for nfo_file in nfo_files:
         try:
@@ -794,7 +794,7 @@ def main():
     if DISABLE_WATCHDOG:
         scan_and_update_cache(base_dirs)
         video_files = [f for f in cache.keys() if Path(f).suffix.lower() in VIDEO_EXTS]
-        nfo_files = scan_nfo_files(base_dirs)
+        nfo_files = scan_nfo_files(BASE_DIR)
 
         with ThreadPoolExecutor(max_workers=THREADS) as executor:
             for nfo in nfo_files:
