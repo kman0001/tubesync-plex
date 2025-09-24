@@ -28,7 +28,7 @@ args = parser.parse_args()
 # ==============================
 BASE_DIR = Path(args.base_dir).resolve()
 DISABLE_WATCHDOG = args.disable_watchdog
-DETAIL = args.DETAIL or args.DEBUG
+DETAIL = args.DETAIL or args.debug
 DEBUG_HTTP = args.debug_http
 
 CONFIG_FILE = Path(args.config).resolve()
