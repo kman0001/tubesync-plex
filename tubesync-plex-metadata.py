@@ -794,7 +794,7 @@ def main():
     if DISABLE_WATCHDOG:
         scan_and_update_cache(base_dirs)
         video_files = [f for f in cache.keys() if Path(f).suffix.lower() in VIDEO_EXTS]
-        nfo_files = scan_nfo_files(BASE_DIR)
+        nfo_files = scan_nfo_files(base_dir)
 
         with ThreadPoolExecutor(max_workers=THREADS) as executor:
             for nfo in nfo_files:
