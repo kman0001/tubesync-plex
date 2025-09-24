@@ -98,15 +98,39 @@ if not CONFIG_FILE.exists():
 with CONFIG_FILE.open("r", encoding="utf-8") as f:
     config = json.load(f)
 
-# Apply overrides
+# ==============================
+# Apply config to globals
+# ==============================
 if DISABLE_WATCHDOG:
     config["watch_folders"] = False
 
-delete_nfo_after_apply = config.get("delete_nfo_after_apply", True)
-subtitles_enabled = config.get("subtitles", False)
-request_delay = config.get("request_delay", 0.1)
-threads = config.get("threads", 4)
-api_semaphore = threading.Semaphore(config.get("max_concurrent_requests", 2))
+# Config → 전역 변수
+DETAIL                 = DETAIL or config.get("detail", False)
+SILENT                 = config.get("silent", False)
+DELETE_NFO_AFTER_APPLY = config.get("delete_nfo_after_apply", True)
+SUBTITLES_ENABLED      = config.get("subtitles", False)
+ALWAYS_APPLY_NFO       = config.get("always_apply_nfo", True)
+THREADS                = config.get("threads", 8)
+MAX_CONCURRENT_REQUESTS= config.get("max_concurrent_requests", 2)
+REQUEST_DELAY          = config.get("request_delay", 0.1)
+WATCH_FOLDERS          = config.get("watch_folders", True)
+WATCH_DEBOUNCE_DELAY   = config.get("watch_debounce_delay", 2)
+
+api_semaphore = threading.Semaphore(MAX_CONCURRENT_REQUESTS)
+
+# ==============================
+# Initial logging of config
+# ==============================
+logging.info(f"SILENT = {SILENT}")
+logging.info(f"DETAIL = {DETAIL}")
+logging.info(f"DELETE_NFO_AFTER_APPLY = {DELETE_NFO_AFTER_APPLY}")
+logging.info(f"SUBTITLES_ENABLED = {SUBTITLES_ENABLED}")
+logging.info(f"ALWAYS_APPLY_NFO = {ALWAYS_APPLY_NFO}")
+logging.info(f"THREADS = {THREADS}")
+logging.info(f"MAX_CONCURRENT_REQUESTS = {MAX_CONCURRENT_REQUESTS}")
+logging.info(f"REQUEST_DELAY = {REQUEST_DELAY}")
+logging.info(f"WATCH_FOLDERS = {WATCH_FOLDERS}")
+logging.info(f"WATCH_DEBOUNCE_DELAY = {WATCH_DEBOUNCE_DELAY}")
 
 # ==============================
 # Logging setup
