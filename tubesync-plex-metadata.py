@@ -257,29 +257,27 @@ if CACHE_FILE.exists():
 else:
     cache = {}
 
-cache_modified = False
+cache_lock = threading.Lock()
 
 def save_cache():
-    global cache_modified
+    """캐시 즉시 저장 (update_cache 호출 시 바로 저장)"""
     with cache_lock:
-        if cache_modified:
-            CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
-            with CACHE_FILE.open("w", encoding="utf-8") as f:
-                json.dump(cache, f, indent=2, ensure_ascii=False)
-            logging.info(f"[CACHE] Saved to {CACHE_FILE}")
-            cache_modified = False
+        CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with CACHE_FILE.open("w", encoding="utf-8") as f:
+            json.dump(cache, f, indent=2, ensure_ascii=False)
+        logging.info(f"[CACHE] Saved cache ({len(cache)} entries) -> {CACHE_FILE}")
 
 def update_cache(video_path, ratingKey=None, nfo_hash=None):
-    global cache_modified
+    """캐시 업데이트 + 즉시 저장"""
     path = str(video_path)
     with cache_lock:
         current = cache.get(path, {})
         if ratingKey: current["ratingKey"] = ratingKey
         if nfo_hash: current["nfo_hash"] = nfo_hash
         cache[path] = current
-        cache_modified = True
         if DETAIL:
             logging.debug(f"[CACHE] update_cache: {path} => {current}")
+    save_cache()  # 🔹 변경 즉시 반영
 
 # ==============================
 # FFmpeg setup
@@ -697,7 +695,7 @@ class VideoEventHandler(FileSystemEventHandler):
         ext = Path(src_path).suffix.lower()
 
         # -----------------------
-        # MOVED_TO 이벤트 처리 (특히 .tmp -> .nfo rename)
+        # MOVED_TO 이벤트 처리
         # -----------------------
         if event.event_type == "moved" and hasattr(event, "dest_path"):
             dest_path = self._normalize_path(event.dest_path)
@@ -712,7 +710,7 @@ class VideoEventHandler(FileSystemEventHandler):
         # 일반 NFO/영상 파일 처리
         # -----------------------
         if not self._should_process(src_path):
-            return  # NFO나 영상 외 파일은 무시
+            return
 
         if ext == ".nfo":
             self._enqueue(src_path, self.nfo_queue, self.nfo_timer, self.nfo_wait, self.process_nfo)
@@ -729,14 +727,13 @@ class VideoEventHandler(FileSystemEventHandler):
         path = self._normalize_path(event.src_path)
         ext = Path(path).suffix.lower()
 
-        # 영상 파일 삭제 → 캐시 제거
+        # 영상 파일 삭제 → 캐시 제거 + 즉시 저장
         if ext in VIDEO_EXTS:
             with self.lock:
                 processed_files.discard(path)
                 if path in cache:
                     cache.pop(path)
-                    global cache_modified
-                    cache_modified = True
+            save_cache()
             logging.info(f"[WATCHDOG] Deleted video removed from cache: {path}")
 
         # NFO 삭제 → 캐시에는 영향 없음, processed_files에서만 제거
@@ -751,7 +748,7 @@ class VideoEventHandler(FileSystemEventHandler):
     def process_nfo(self, nfo_path):
         nfo_path = self._normalize_path(nfo_path)
         logging.info(f"[WATCHDOG] Processing NFO: {nfo_path}")
-        success = process_nfo(nfo_path)  # 외부 함수 호출
+        success = process_nfo(nfo_path)
         if not success:
             with self.lock:
                 self.retry_queue[nfo_path] = [time.time() + 5, 1]
