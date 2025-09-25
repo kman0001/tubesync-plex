@@ -618,21 +618,14 @@ def upload_subtitles(ep,srt_files):
                 logging.error(f"[ERROR] Subtitle upload failed: {srt} - {e}, retries left: {retries}")
 
 # ==============================
-# processed_files prune 기능
+# Watchdog 이벤트 처리 (영상 + NFO 전용)
 # ==============================
-def prune_processed_files(max_size=10000):
-    """
-    processed_files가 너무 커지면 오래된 항목 제거
-    """
-    if len(processed_files) > max_size:
-        to_remove = list(processed_files)[:len(processed_files)-max_size]
-        for f in to_remove:
-            processed_files.remove(f)
-        logging.debug(f"[PRUNE] processed_files pruned {len(to_remove)} entries")
+import threading, time, logging
+from pathlib import Path
+from watchdog.events import FileSystemEventHandler
 
-# ==============================
-# Watchdog 이벤트 처리 (tmp -> nfo 안정 처리, 개선)
-# ==============================
+VIDEO_EXTS = (".mp4", ".mkv", ".avi", ".mov")  # 필요한 영상 확장자 추가
+
 class VideoEventHandler(FileSystemEventHandler):
     def __init__(self, nfo_wait=10, video_wait=2, debounce_delay=3):
         self.nfo_queue = set()
@@ -644,35 +637,23 @@ class VideoEventHandler(FileSystemEventHandler):
         self.lock = threading.Lock()
         self.retry_queue = {}  # {nfo_path: [next_retry_time, retry_count]}
         self.debounce_delay = debounce_delay
-        self.tmp_map = {}  # {stem: tmp_path}
 
     def _normalize_path(self, path):
         if isinstance(path, bytes):
             path = path.decode("utf-8", errors="ignore")
         return str(Path(path).resolve())
 
-    def _should_process(self, path):
-        path = self._normalize_path(path)
-        ext = Path(path).suffix.lower()
-        if ext not in VIDEO_EXTS + (".nfo", ".tmp"):
-            return False
-        if "/@eaDir/" in path or "/.DS_Store" in path or Path(path).name.startswith("."):
-            return False
-        return True
-
     def _enqueue(self, path, queue_set, timer_dict, wait_time, process_func):
         path = self._normalize_path(path)
         with self.lock:
             if path in queue_set:
-                logging.debug(f"[WATCHDOG] Debounced (already scheduled): {path}")
-                return  # debounce 처리
+                return  # 이미 예약되어 있으면 무시 (debounce)
             queue_set.add(path)
             if path in timer_dict:
                 timer_dict[path].cancel()
             t = threading.Timer(wait_time, self._process_path, args=(path, queue_set, timer_dict, process_func))
             timer_dict[path] = t
             t.start()
-            logging.debug(f"[WATCHDOG] Scheduled processing: {path}")
 
     def _process_path(self, path, queue_set, timer_dict, process_func):
         path = self._normalize_path(path)
@@ -689,34 +670,23 @@ class VideoEventHandler(FileSystemEventHandler):
         ext = Path(src_path).suffix.lower()
 
         # -----------------------
-        # TMP 파일 감시
-        # -----------------------
-        if ext == ".tmp":
-            stem = Path(src_path).stem
-            with self.lock:
-                self.tmp_map[stem] = src_path
-            return
-
-        # -----------------------
-        # TMP -> NFO rename 처리
+        # NFO 처리
         # -----------------------
         if ext == ".nfo":
-            stem = Path(src_path).stem
-            with self.lock:
-                # TMP 매핑에 있으면 제거
-                tmp_candidates = [s for s in self.tmp_map if s in stem]
-                for s in tmp_candidates:
-                    del self.tmp_map[s]
             self._enqueue(src_path, self.nfo_queue, self.nfo_timer, self.nfo_wait, self.process_nfo)
             return
 
         # -----------------------
-        # VIDEO 파일 처리
+        # VIDEO 처리
         # -----------------------
         if ext in VIDEO_EXTS:
             self._enqueue(src_path, self.video_queue, self.video_timer, self.video_wait, self.process_video)
-        else:
-            logging.debug(f"[WATCHDOG] Skipped non-target/system file: {src_path}")
+            return
+
+        # -----------------------
+        # 나머지 파일은 완전히 무시
+        # -----------------------
+        return
 
     # -----------------------------
     # 실제 처리 함수
@@ -724,7 +694,7 @@ class VideoEventHandler(FileSystemEventHandler):
     def process_nfo(self, nfo_path):
         nfo_path = self._normalize_path(nfo_path)
         logging.info(f"[WATCHDOG] Processing NFO: {nfo_path}")
-        success = process_nfo(nfo_path)
+        success = process_nfo(nfo_path)  # 외부 정의 함수 사용
         if not success:
             with self.lock:
                 self.retry_queue[nfo_path] = [time.time() + 5, 1]
