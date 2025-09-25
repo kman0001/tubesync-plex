@@ -695,11 +695,22 @@ class VideoEventHandler(FileSystemEventHandler):
         ext = Path(src_path).suffix.lower()
 
         # -----------------------
-        # MOVED_TO 이벤트 처리
+        # MOVED 이벤트 처리
         # -----------------------
         if event.event_type == "moved" and hasattr(event, "dest_path"):
             dest_path = self._normalize_path(event.dest_path)
             dest_ext = Path(dest_path).suffix.lower()
+
+            # 이전 경로 캐시 제거
+            with self.lock:
+                processed_files.discard(src_path)
+                if src_path in cache:
+                    cache.pop(src_path)
+                    global cache_modified
+                    cache_modified = True
+                logging.info(f"[WATCHDOG] Moved: removed old cache {src_path}")
+
+            # 새 경로 처리
             if dest_ext == ".nfo":
                 self._enqueue(dest_path, self.nfo_queue, self.nfo_timer, self.nfo_wait, self.process_nfo)
             elif dest_ext in VIDEO_EXTS:
@@ -727,16 +738,17 @@ class VideoEventHandler(FileSystemEventHandler):
         path = self._normalize_path(event.src_path)
         ext = Path(path).suffix.lower()
 
-        # 영상 파일 삭제 → 캐시 제거 + 즉시 저장
+        # 영상 파일 삭제 → 캐시 제거
         if ext in VIDEO_EXTS:
             with self.lock:
                 processed_files.discard(path)
                 if path in cache:
                     cache.pop(path)
-            save_cache()
+                    global cache_modified
+                    cache_modified = True
             logging.info(f"[WATCHDOG] Deleted video removed from cache: {path}")
 
-        # NFO 삭제 → 캐시에는 영향 없음, processed_files에서만 제거
+        # NFO 삭제 → processed_files만 제거
         elif ext == ".nfo":
             with self.lock:
                 processed_files.discard(path)
