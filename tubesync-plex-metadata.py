@@ -200,29 +200,48 @@ class HTTPDebugSession(requests.Session):
         return response
 
 # ==============================
-# Plex server wrapper
+# Plex wrapper with timeout & semaphore
 # ==============================
-class PlexServerWithHTTPDebug(PlexServer):
-    def __init__(self, baseurl, token, debug_http=False):
+PLEX_TIMEOUT = 60  # 기존 30초 -> 60초
+
+class PlexServerWithTimeout(PlexServer):
+    def __init__(self, baseurl, token, max_concurrent_requests=2, debug_http=False):
         super().__init__(baseurl, token)
-        self._debug_session = HTTPDebugSession(enable_debug=debug_http)
+        self.semaphore = threading.Semaphore(max_concurrent_requests)
+        self._debug_http = debug_http
+        self._session = requests.Session()
+        retries = Retry(total=3, backoff_factor=2, status_forcelist=[500,502,503,504], allowed_methods=["GET","POST"])
+        adapter = HTTPAdapter(max_retries=retries, pool_connections=max_concurrent_requests, pool_maxsize=max_concurrent_requests)
+        self._session.mount("http://", adapter)
+        self._session.mount("https://", adapter)
 
     def _request(self, path, method="GET", headers=None, params=None, data=None, timeout=None):
-        url = self._buildURL(path)
-        req_headers = headers or {}
-        if self._token:
-            req_headers["X-Plex-Token"] = self._token
-        resp = self._debug_session.request(method, url, headers=req_headers, params=params, data=data, timeout=timeout)
-        resp.raise_for_status()
-        return resp
+        with self.semaphore:
+            url = self._buildURL(path)
+            req_headers = headers or {}
+            if self._token:
+                req_headers["X-Plex-Token"] = self._token
+            try:
+                resp = self._session.request(method, url, headers=req_headers, params=params, data=data, timeout=PLEX_TIMEOUT)
+                resp.raise_for_status()
+                if self._debug_http:
+                    logging.debug(f"[HTTP DEBUG] {method} {url} -> {resp.status_code}")
+                return resp
+            except requests.exceptions.ReadTimeout:
+                logging.warning(f"[WARN] Plex request timeout: {url}")
+                raise
+            except requests.exceptions.RequestException as e:
+                logging.error(f"[ERROR] Plex request failed: {url} - {e}")
+                raise
 
 # ==============================
 # Connect Plex
 # ==============================
 try:
-    plex = PlexServerWithHTTPDebug(
+    plex = PlexServerWithTimeout(
         config["PLEX_BASE_URL"],
         config["PLEX_TOKEN"],
+        max_concurrent_requests=MAX_CONCURRENT_REQUESTS,
         debug_http=DEBUG_HTTP
     )
 except Exception as e:
@@ -350,34 +369,34 @@ def find_plex_item(abs_path):
         except Exception:
             continue
 
-        # section.TYPE may not exist; use section.TYPE or section.type if present
         section_type = getattr(section, "TYPE", None) or getattr(section, "type", "")
         section_type = str(section_type).lower()
         if section_type == "show":
-            results = section.search(libtype="episode")
-        elif section_type in ("movie", "video"):
-            results = section.search(libtype="movie")
+            libtype="episode"
+        elif section_type in ("movie","video"):
+            libtype="movie"
         else:
-            # try a broad search fallback
-            results = section.search()
+            libtype=None
 
-        for item in results:
-            # parts: try several access patterns
-            parts_iter = []
+        attempts = 3
+        for attempt in range(1, attempts+1):
             try:
-                parts_iter = item.iterParts()
-            except Exception:
-                try:
-                    parts_iter = getattr(item, "parts", []) or []
-                except Exception:
-                    parts_iter = []
-
-            for part in parts_iter:
-                try:
-                    if os.path.abspath(part.file) == abs_path:
-                        return item
-                except Exception:
-                    continue
+                results = section.search(libtype=libtype) if libtype else section.search()
+                for item in results:
+                    try:
+                        parts_iter = getattr(item, "parts", []) or []
+                        for part in parts_iter:
+                            if os.path.abspath(part.file) == abs_path:
+                                return item
+                    except Exception:
+                        continue
+                break
+            except requests.exceptions.ReadTimeout:
+                logging.warning(f"[WARN] Plex search timeout (attempt {attempt}/3) for {abs_path}")
+                time.sleep(2)
+            except Exception as e:
+                logging.error(f"[ERROR] Plex search failed: {abs_path} - {e}")
+                break
     return None
 
 # ==============================
