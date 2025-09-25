@@ -631,7 +631,7 @@ def prune_processed_files(max_size=10000):
         logging.debug(f"[PRUNE] processed_files pruned {len(to_remove)} entries")
 
 # ==============================
-# Watchdog 이벤트 처리 (tmp -> nfo 안정 처리)
+# Watchdog 이벤트 처리 (tmp -> nfo 안정 처리, 개선)
 # ==============================
 class VideoEventHandler(FileSystemEventHandler):
     def __init__(self, nfo_wait=10, video_wait=2, debounce_delay=3):
@@ -644,7 +644,7 @@ class VideoEventHandler(FileSystemEventHandler):
         self.lock = threading.Lock()
         self.retry_queue = {}  # {nfo_path: [next_retry_time, retry_count]}
         self.debounce_delay = debounce_delay
-        self.tmp_map = {}  # {tmp_path: last_seen_time}
+        self.tmp_map = {}  # {stem: tmp_path}
 
     def _normalize_path(self, path):
         if isinstance(path, bytes):
@@ -663,6 +663,9 @@ class VideoEventHandler(FileSystemEventHandler):
     def _enqueue(self, path, queue_set, timer_dict, wait_time, process_func):
         path = self._normalize_path(path)
         with self.lock:
+            if path in queue_set:
+                logging.debug(f"[WATCHDOG] Debounced (already scheduled): {path}")
+                return  # debounce 처리
             queue_set.add(path)
             if path in timer_dict:
                 timer_dict[path].cancel()
@@ -683,31 +686,27 @@ class VideoEventHandler(FileSystemEventHandler):
             return
 
         src_path = self._normalize_path(event.src_path)
-        dest_path = getattr(event, "dest_path", None)
-        if dest_path:
-            dest_path = self._normalize_path(dest_path)
-
         ext = Path(src_path).suffix.lower()
 
         # -----------------------
         # TMP 파일 감시
         # -----------------------
         if ext == ".tmp":
-            now = time.time()
+            stem = Path(src_path).stem
             with self.lock:
-                self.tmp_map[src_path] = now
-            return  # 일단 tmp 파일은 enqueue 하지 않음
+                self.tmp_map[stem] = src_path
+            return
 
         # -----------------------
         # TMP -> NFO rename 처리
         # -----------------------
         if ext == ".nfo":
-            # tmp_map에 존재하는 경우 제거
+            stem = Path(src_path).stem
             with self.lock:
-                tmp_candidates = [tmp for tmp in self.tmp_map if Path(tmp).stem in Path(src_path).stem]
-                for tmp in tmp_candidates:
-                    del self.tmp_map[tmp]
-
+                # TMP 매핑에 있으면 제거
+                tmp_candidates = [s for s in self.tmp_map if s in stem]
+                for s in tmp_candidates:
+                    del self.tmp_map[s]
             self._enqueue(src_path, self.nfo_queue, self.nfo_timer, self.nfo_wait, self.process_nfo)
             return
 
