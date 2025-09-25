@@ -686,6 +686,9 @@ class VideoEventHandler(FileSystemEventHandler):
             timer_dict.pop(path, None)
         process_func(path)
 
+    # -----------------------------
+    # 이벤트 처리
+    # -----------------------------
     def on_any_event(self, event):
         if event.is_directory:
             return
@@ -715,6 +718,32 @@ class VideoEventHandler(FileSystemEventHandler):
             self._enqueue(src_path, self.nfo_queue, self.nfo_timer, self.nfo_wait, self.process_nfo)
         elif ext in VIDEO_EXTS:
             self._enqueue(src_path, self.video_queue, self.video_timer, self.video_wait, self.process_video)
+
+    # -----------------------------
+    # 삭제 이벤트 처리
+    # -----------------------------
+    def on_deleted(self, event):
+        if event.is_directory:
+            return
+
+        path = self._normalize_path(event.src_path)
+        ext = Path(path).suffix.lower()
+
+        # 영상 파일 삭제 → 캐시 제거
+        if ext in VIDEO_EXTS:
+            with self.lock:
+                processed_files.discard(path)
+                if path in cache:
+                    cache.pop(path)
+                    global cache_modified
+                    cache_modified = True
+            logging.info(f"[WATCHDOG] Deleted video removed from cache: {path}")
+
+        # NFO 삭제 → 캐시에는 영향 없음, processed_files에서만 제거
+        elif ext == ".nfo":
+            with self.lock:
+                processed_files.discard(path)
+            logging.info(f"[WATCHDOG] Deleted NFO removed from processed_files: {path}")
 
     # -----------------------------
     # 실제 처리 함수
