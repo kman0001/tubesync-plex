@@ -460,11 +460,7 @@ def apply_nfo(ep, file_path):
 
 def process_nfo(file_path):
     """
-    NFO 처리 (캐시 기반)
-    - NFO 존재 여부 감지
-    - 해시 계산
-    - 캐시에 해시가 없거나 변경된 경우에만 Plex 적용
-    - DELETE_NFO_AFTER_APPLY 옵션 적용
+    NFO 처리 (캐시 기반 + ALWAYS_APPLY_NFO 옵션 반영)
     """
     p = Path(file_path)
     if p.suffix.lower() == ".nfo":
@@ -487,15 +483,15 @@ def process_nfo(file_path):
     nfo_hash = compute_nfo_hash(nfo_path)
     cached_hash = cache.get(str_video_path, {}).get("nfo_hash")
 
-    # 캐시 해시와 동일하면 Plex 호출 없이 종료
-    if cached_hash == nfo_hash:
+    # 🔹 캐시 해시가 동일해도 ALWAYS_APPLY_NFO가 True면 적용
+    if cached_hash == nfo_hash and not ALWAYS_APPLY_NFO:
         logging.info(f"[CACHE] NFO already applied for video: {str_video_path}")
         if DELETE_NFO_AFTER_APPLY:
             try: nfo_path.unlink()
             except: pass
         return False
 
-    # 해시가 없거나 변경된 경우 Plex 적용
+    # Plex 아이템 조회
     plex_item = None
     ratingKey = cache.get(str_video_path, {}).get("ratingKey")
     if ratingKey:
@@ -638,17 +634,16 @@ def prune_processed_files(max_size=10000):
 # Watchdog 이벤트 처리 (통합 + debounce + 캐시 기반)
 # ==============================
 class VideoEventHandler(FileSystemEventHandler):
-    def __init__(self, nfo_wait=10, video_wait=2, debounce_delay=2):
+    def __init__(self, nfo_wait=10, video_wait=2, debounce_delay=3):
         self.nfo_queue = set()
         self.video_queue = set()
-        self.nfo_timer = None
-        self.video_timer = None
+        self.nfo_timer = {}
+        self.video_timer = {}
         self.nfo_wait = nfo_wait
         self.video_wait = video_wait
         self.lock = threading.Lock()
         self.retry_queue = {}  # {nfo_path: [next_retry_time, retry_count]}
-        self.last_event_times = {}
-        self.debounce_delay = debounce_delay
+        self.debounce_delay = debounce_delay  # 추가
 
     def _should_process(self, path):
         ext = Path(path).suffix.lower()
@@ -658,59 +653,60 @@ class VideoEventHandler(FileSystemEventHandler):
             return False
         return True
 
-    def _enqueue_with_debounce(self, path, queue_set, timer_attr, wait_time):
-        now = time.time()
-        last_time = self.last_event_times.get(path, 0)
-        if now - last_time < self.debounce_delay:
-            return
-        self.last_event_times[path] = now
-
+    def _enqueue(self, path, queue_set, timer_dict, wait_time, process_func):
         with self.lock:
             queue_set.add(path)
-            if getattr(self, timer_attr) is None:
-                t = threading.Timer(wait_time, getattr(self, f"process_{timer_attr}_queue"))
-                setattr(self, timer_attr, t)
-                t.start()
+            # 기존 Timer 취소
+            if path in timer_dict:
+                timer_dict[path].cancel()
+            # 새로운 Timer 등록
+            t = threading.Timer(wait_time, self._process_path, args=(path, queue_set, timer_dict, process_func))
+            timer_dict[path] = t
+            t.start()
             logging.debug(f"[WATCHDOG] Scheduled processing: {path}")
+
+    def _process_path(self, path, queue_set, timer_dict, process_func):
+        with self.lock:
+            if path in queue_set:
+                queue_set.remove(path)
+            if path in timer_dict:
+                del timer_dict[path]
+        process_func(path)
 
     def on_any_event(self, event):
         if event.is_directory:
             return
         path = str(Path(event.src_path).resolve())
+
+        ext = Path(path).suffix.lower()
         if not self._should_process(path):
-            if event.event_type == "moved" and path.lower().endswith(".nfo"):
-                self._enqueue_with_debounce(path, self.nfo_queue, "nfo_timer", self.nfo_wait)
+            # NFO 파일 이동/생성/수정 이벤트 처리
+            if ext == ".nfo" and event.event_type in ("moved", "created", "modified"):
+                self._enqueue(path, self.nfo_queue, self.nfo_timer, self.nfo_wait, self.process_nfo)
             else:
                 logging.debug(f"[WATCHDOG] Skipped non-target/system file: {path}")
             return
-        ext = Path(path).suffix.lower()
+
         if ext == ".nfo":
-            self._enqueue_with_debounce(path, self.nfo_queue, "nfo_timer", self.nfo_wait)
+            self._enqueue(path, self.nfo_queue, self.nfo_timer, self.nfo_wait, self.process_nfo)
         elif ext in VIDEO_EXTS:
-            self._enqueue_with_debounce(path, self.video_queue, "video_timer", self.video_wait)
+            self._enqueue(path, self.video_queue, self.video_timer, self.video_wait, self.process_video)
 
     # -----------------------------
-    # Queue 처리
+    # 실제 처리 함수
     # -----------------------------
-    def process_nfo_timer_queue(self):
-        with self.lock:
-            nfo_files = list(self.nfo_queue)
-            self.nfo_queue.clear()
-            self.nfo_timer = None
-        for nfo_path in nfo_files:
-            process_nfo(nfo_path)
-        self._process_retry_queue()
+    def process_nfo(self, nfo_path):
+        logging.info(f"[WATCHDOG] Processing NFO: {nfo_path}")
+        success = process_nfo(nfo_path)
+        if not success:
+            with self.lock:
+                self.retry_queue[nfo_path] = [time.time() + 5, 1]
 
-    def process_video_timer_queue(self):
-        with self.lock:
-            video_files = list(self.video_queue)
-            self.video_queue.clear()
-            self.video_timer = None
-        for video_path in video_files:
-            nfo_path = Path(video_path).with_suffix(".nfo")
-            if nfo_path.exists():
-                process_nfo(str(nfo_path))
-        self._process_retry_queue()
+    def process_video(self, video_path):
+        logging.info(f"[WATCHDOG] Processing Video: {video_path}")
+        nfo_path = Path(video_path).with_suffix(".nfo")
+        if nfo_path.exists():
+            self.process_nfo(str(nfo_path))
 
     # -----------------------------
     # Retry 처리
