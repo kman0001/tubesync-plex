@@ -119,28 +119,49 @@ WATCH_DEBOUNCE_DELAY   = config.get("WATCH_DEBOUNCE_DELAY", 2)
 api_semaphore = threading.Semaphore(MAX_CONCURRENT_REQUESTS)
 
 # ==============================
-# Initial logging of config
-# ==============================
-logging.info(f"SILENT = {SILENT}")
-logging.info(f"DETAIL = {DETAIL}")
-logging.info(f"DELETE_NFO_AFTER_APPLY = {DELETE_NFO_AFTER_APPLY}")
-logging.info(f"SUBTITLES_ENABLED = {SUBTITLES_ENABLED}")
-logging.info(f"ALWAYS_APPLY_NFO = {ALWAYS_APPLY_NFO}")
-logging.info(f"THREADS = {THREADS}")
-logging.info(f"MAX_CONCURRENT_REQUESTS = {MAX_CONCURRENT_REQUESTS}")
-logging.info(f"REQUEST_DELAY = {REQUEST_DELAY}")
-logging.info(f"WATCH_FOLDERS = {WATCH_FOLDERS}")
-logging.info(f"WATCH_DEBOUNCE_DELAY = {WATCH_DEBOUNCE_DELAY}")
-
-# ==============================
 # Logging setup
 # ==============================
+
+# 기존 핸들러 제거
+for handler in logging.root.handlers[:]:
+    logging.root.removeHandler(handler)
+
+# 로그 레벨 결정
+if args.debug:
+    log_level = logging.DEBUG        # --debug
+elif SILENT:
+    log_level = logging.WARNING      # 요약 모드
+else:
+    log_level = logging.INFO         # 일반 로그
+
+logging.basicConfig(
+    level=log_level,
+    format='[%(asctime)s] [%(levelname)s] %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S',
+    force=True
+)
+
+# HTTP debug 로그 별도 설정
 if not DEBUG_HTTP:
     logging.getLogger("urllib3").setLevel(logging.WARNING)
     logging.getLogger("requests").setLevel(logging.WARNING)
-log_level = logging.debug if DETAIL else logging.INFO
-logging.basicConfig(level=log_level, format='[%(levelname)s] %(message)s')
 
+# ==============================
+# 로그 출력 함수
+# ==============================
+def log_detail(msg):
+    """ DETAIL 전용 로그 """
+    if DETAIL and not SILENT:
+        logging.info(f"[DETAIL] {msg}")
+
+def log_debug(msg):
+    """ DEBUG 전용 로그 """
+    if args.debug:
+        logging.debug(f"[DEBUG] {msg}")
+
+# ==============================
+# Initial logging of config
+# ==============================
 logging.info(f"BASE_DIR = {BASE_DIR}")
 logging.info(f"CONFIG_FILE = {CONFIG_FILE}")
 logging.info(f"VENVDIR = {VENVDIR}")
@@ -149,6 +170,15 @@ logging.info(f"FFPROBE_BIN = {FFPROBE_BIN}")
 logging.info(f"DISABLE_WATCHDOG = {DISABLE_WATCHDOG}")
 logging.info(f"DETAIL = {DETAIL}")
 logging.info(f"DEBUG_HTTP = {DEBUG_HTTP}")
+logging.info(f"SILENT = {SILENT}")
+logging.info(f"DELETE_NFO_AFTER_APPLY = {DELETE_NFO_AFTER_APPLY}")
+logging.info(f"SUBTITLES_ENABLED = {SUBTITLES_ENABLED}")
+logging.info(f"ALWAYS_APPLY_NFO = {ALWAYS_APPLY_NFO}")
+logging.info(f"THREADS = {THREADS}")
+logging.info(f"MAX_CONCURRENT_REQUESTS = {MAX_CONCURRENT_REQUESTS}")
+logging.info(f"REQUEST_DELAY = {REQUEST_DELAY}")
+logging.info(f"WATCH_FOLDERS = {WATCH_FOLDERS}")
+logging.info(f"WATCH_DEBOUNCE_DELAY = {WATCH_DEBOUNCE_DELAY}")
 
 # ==============================
 # HTTP debug session
@@ -430,12 +460,16 @@ def apply_nfo(ep, file_path):
 
 def process_nfo(file_path):
     """
-    단일 NFO 처리
+    NFO 처리 (캐시 기반)
+    - NFO 존재 여부 감지
+    - 해시 계산
+    - 캐시에 해시가 없거나 변경된 경우에만 Plex 적용
+    - DELETE_NFO_AFTER_APPLY 옵션 적용
     """
     p = Path(file_path)
     if p.suffix.lower() == ".nfo":
         nfo_path = p
-        video_path = p.with_suffix("")  # video path 추정
+        video_path = p.with_suffix("")  # 영상 파일 추정
         if not video_path.exists():
             for ext in VIDEO_EXTS:
                 candidate = p.with_suffix(ext)
@@ -452,22 +486,18 @@ def process_nfo(file_path):
     str_video_path = str(video_path.resolve())
     nfo_hash = compute_nfo_hash(nfo_path)
     cached_hash = cache.get(str_video_path, {}).get("nfo_hash")
-    if cached_hash == nfo_hash and not config.get("ALWAYS_APPLY_NFO", True):
-        # NFO는 적용 안 함
-        logging.info(f"Skipped unchanged NFO: {nfo_path}")
 
-        # 삭제 옵션이 켜져 있으면 삭제
+    # 캐시 해시와 동일하면 Plex 호출 없이 종료
+    if cached_hash == nfo_hash:
+        logging.info(f"[CACHE] NFO already applied for video: {str_video_path}")
         if DELETE_NFO_AFTER_APPLY:
-            try:
-                nfo_path.unlink()
-                logging.info(f"Deleted unchanged NFO: {nfo_path}")
-            except Exception as e:
-                logging.warning(f"Failed to delete NFO file: {nfo_path} - {e}")
+            try: nfo_path.unlink()
+            except: pass
         return False
 
-    # Plex 아이템 찾기
-    ratingKey = cache.get(str_video_path, {}).get("ratingKey")
+    # 해시가 없거나 변경된 경우 Plex 적용
     plex_item = None
+    ratingKey = cache.get(str_video_path, {}).get("ratingKey")
     if ratingKey:
         try:
             plex_item = plex.fetchItem(ratingKey)
@@ -486,15 +516,9 @@ def process_nfo(file_path):
     success = apply_nfo(plex_item, str_video_path)
     if success:
         update_cache(str_video_path, ratingKey=plex_item.ratingKey, nfo_hash=nfo_hash)
-
-        # NFO 삭제 옵션
         if DELETE_NFO_AFTER_APPLY:
-            try:
-                nfo_path.unlink()
-                if DETAIL:
-                    logging.debug(f"[-] Deleted NFO: {nfo_path}")
-            except Exception as e:
-                logging.warning(f"[WARN] Failed to delete NFO file: {nfo_path} - {e}")
+            try: nfo_path.unlink()
+            except: pass
 
     return success
 
@@ -502,37 +526,41 @@ def process_nfo(file_path):
 # 파일 처리 통합 (영상 + NFO)
 # ==============================
 processed_files = set()
-WATCH_DEBOUNCE_DELAY = config.get("WATCH_DEBOUNCE_DELAY", 2)
 file_queue = queue.Queue()
 
 def process_file(file_path):
-    logging.debug(f"[PROCESS_FILE] Start: {file_path}")
+    """
+    단일 파일 처리 (영상 또는 NFO)
+    - NFO는 캐시 기반으로만 Plex 적용
+    - 영상 파일이면 캐시 존재 시 Plex 호출 생략
+    """
     abs_path = Path(file_path).resolve()
     str_path = str(abs_path)
 
-    # 이미 처리된 파일이면 skip
     if str_path in processed_files:
         return False
     processed_files.add(str_path)
 
     plex_item = None
-
-    # 영상 파일 처리
     if abs_path.suffix.lower() in VIDEO_EXTS:
         ratingKey = cache.get(str_path, {}).get("ratingKey")
         if ratingKey:
             try:
                 plex_item = plex.fetchItem(ratingKey)
             except Exception:
-                pass
+                plex_item = None
         if not plex_item:
             plex_item = find_plex_item(str_path)
             if plex_item:
                 update_cache(str_path, ratingKey=plex_item.ratingKey)
 
-    # NFO 파일 처리 → 확실히 .nfo만
+    # NFO 처리
     if abs_path.suffix.lower() == ".nfo":
         process_nfo(str_path)
+    elif abs_path.suffix.lower() in VIDEO_EXTS:
+        nfo_path = abs_path.with_suffix(".nfo")
+        if nfo_path.exists():
+            process_nfo(str(nfo_path))
 
     # 자막 처리
     if SUBTITLES_ENABLED and abs_path.suffix.lower() in VIDEO_EXTS and plex_item:
@@ -607,7 +635,7 @@ def prune_processed_files(max_size=10000):
         logging.debug(f"[PRUNE] processed_files pruned {len(to_remove)} entries")
 
 # ==============================
-# Watchdog 이벤트 처리 (통합 + debounce + retry)
+# Watchdog 이벤트 처리 (통합 + debounce + 캐시 기반)
 # ==============================
 class VideoEventHandler(FileSystemEventHandler):
     def __init__(self, nfo_wait=10, video_wait=2, debounce_delay=2):
@@ -650,7 +678,6 @@ class VideoEventHandler(FileSystemEventHandler):
             return
         path = str(Path(event.src_path).resolve())
         if not self._should_process(path):
-            # rename 후 .nfo인 경우 처리
             if event.event_type == "moved" and path.lower().endswith(".nfo"):
                 self._enqueue_with_debounce(path, self.nfo_queue, "nfo_timer", self.nfo_wait)
             else:
@@ -671,9 +698,7 @@ class VideoEventHandler(FileSystemEventHandler):
             self.nfo_queue.clear()
             self.nfo_timer = None
         for nfo_path in nfo_files:
-            success = process_nfo(nfo_path)  # ← NFO 경로만 전달
-            if not success:
-                self.retry_queue[str(nfo_path)] = [time.time() + 5, 1]
+            process_nfo(nfo_path)
         self._process_retry_queue()
 
     def process_video_timer_queue(self):
@@ -682,11 +707,9 @@ class VideoEventHandler(FileSystemEventHandler):
             self.video_queue.clear()
             self.video_timer = None
         for video_path in video_files:
-            # 영상 파일만 처리할 경우, 내부에서 NFO 찾도록 process_nfo 호출
-            success = process_nfo(Path(video_path).with_suffix(".nfo"))
-            if not success:
-                nfo_path = str(Path(video_path).with_suffix(".nfo"))
-                self.retry_queue[nfo_path] = [time.time() + 5, 1]
+            nfo_path = Path(video_path).with_suffix(".nfo")
+            if nfo_path.exists():
+                process_nfo(str(nfo_path))
         self._process_retry_queue()
 
     # -----------------------------
@@ -709,13 +732,21 @@ class VideoEventHandler(FileSystemEventHandler):
 # Scan: NFO 전용 (신규)
 # ==============================
 def scan_nfo_files(base_dirs):
+    """
+    base_dirs: list[Path] 또는 Path 단일 객체 가능
+    """
+    if isinstance(base_dirs, (str, Path)):
+        base_dirs = [base_dirs]
+
     nfo_files = []
     for base_dir in base_dirs:
         for root, _, files in os.walk(base_dir):
             for f in files:
                 if f.lower().endswith(".nfo"):
                     nfo_files.append(os.path.abspath(os.path.join(root, f)))
-    if DETAIL: logging.debug(f"[SCAN] Found {len(nfo_files)} NFO files")
+
+    if DETAIL:
+        logging.debug(f"[SCAN] Found {len(nfo_files)} NFO files")
     return nfo_files
 
 # ==============================
@@ -759,8 +790,12 @@ def scan_and_update_cache(base_dirs):
 # ==============================
 def process_all_nfo(base_dirs):
     """
+    base_dirs: list[Path] 또는 Path 단일 객체 가능
     base_dirs 내 모든 NFO 처리
     """
+    if isinstance(base_dirs, (str, Path)):
+        base_dirs = [base_dirs]
+
     nfo_files = []
     for base_dir in base_dirs:
         for root, dirs, files in os.walk(base_dir):
@@ -794,7 +829,7 @@ def main():
     if DISABLE_WATCHDOG:
         scan_and_update_cache(base_dirs)
         video_files = [f for f in cache.keys() if Path(f).suffix.lower() in VIDEO_EXTS]
-        nfo_files = scan_nfo_files(base_dir)
+        nfo_files = scan_nfo_files(BASE_DIR)
 
         with ThreadPoolExecutor(max_workers=THREADS) as executor:
             for nfo in nfo_files:
