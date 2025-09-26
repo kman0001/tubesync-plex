@@ -687,7 +687,7 @@ class VideoEventHandler(FileSystemEventHandler):
     # -----------------------------
     # 이벤트 처리
     # -----------------------------
-    def on_any_event(self, event):
+        def on_any_event(self, event):
         if event.is_directory:
             return
 
@@ -705,10 +705,8 @@ class VideoEventHandler(FileSystemEventHandler):
             with self.lock:
                 processed_files.discard(src_path)
                 if src_path in cache:
-                    cache.pop(src_path)
-                    global cache_modified
-                    cache_modified = True
-                logging.info(f"[WATCHDOG] Moved: removed old cache {src_path}")
+                    cache.pop(src_path, None)
+                    logging.info(f"[WATCHDOG] Moved: removed old cache {src_path}")
 
             # 새 경로 처리
             if dest_ext == ".nfo":
@@ -724,8 +722,32 @@ class VideoEventHandler(FileSystemEventHandler):
             return
 
         if ext == ".nfo":
+            # 🔹 해시 비교 → 동일하면 enqueue 스킵
+            try:
+                if Path(src_path).exists() and Path(src_path).stat().st_size > 0:
+                    video_path = str(Path(src_path).with_suffix(""))
+                    for vext in VIDEO_EXTS:
+                        candidate = Path(video_path).with_suffix(vext)
+                        if candidate.exists():
+                            video_path = str(candidate.resolve())
+                            break
+
+                    new_hash = compute_nfo_hash(Path(src_path))
+                    cached_hash = cache.get(video_path, {}).get("nfo_hash")
+                    if cached_hash == new_hash and not ALWAYS_APPLY_NFO:
+                        logging.debug(f"[WATCHDOG] Ignored unchanged NFO: {src_path}")
+                        return  # ✅ 큐에 안 넣음
+            except Exception as e:
+                logging.warning(f"[WATCHDOG] NFO pre-check failed for {src_path}: {e}")
+
             self._enqueue(src_path, self.nfo_queue, self.nfo_timer, self.nfo_wait, self.process_nfo)
+
         elif ext in VIDEO_EXTS:
+            # 🔹 수정 이벤트는 무시 (생성/삭제만 처리)
+            if event.event_type not in ("created", "moved"):
+                logging.debug(f"[WATCHDOG] Ignored non-create/move video event: {src_path} ({event.event_type})")
+                return
+
             self._enqueue(src_path, self.video_queue, self.video_timer, self.video_wait, self.process_video)
 
     # -----------------------------
