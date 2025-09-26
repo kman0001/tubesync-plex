@@ -687,7 +687,7 @@ class VideoEventHandler(FileSystemEventHandler):
     # -----------------------------
     # 이벤트 처리
     # -----------------------------
-        def on_any_event(self, event):
+    def on_any_event(self, event):
         if event.is_directory:
             return
 
@@ -808,7 +808,6 @@ class VideoEventHandler(FileSystemEventHandler):
                     self.retry_queue[nfo_path] = [now + 5, count + 1]
                 else:
                     logging.warning(f"[WATCHDOG] Failed 3 times: {nfo_path}")
-                    del self.retry_queue[nfo_path]
 
 # ==============================
 # Scan: NFO 전용 (신규)
