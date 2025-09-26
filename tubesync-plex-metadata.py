@@ -634,9 +634,6 @@ def upload_subtitles(ep,srt_files):
                 retries-=1
                 logging.error(f"[ERROR] Subtitle upload failed: {srt} - {e}, retries left: {retries}")
 
-# ==============================
-# Watchdog 이벤트 처리 (영상 + NFO 전용)
-# ==============================
 class VideoEventHandler(FileSystemEventHandler):
     def __init__(self, nfo_wait=10, video_wait=2, debounce_delay=3):
         self.nfo_queue = set()
@@ -701,12 +698,14 @@ class VideoEventHandler(FileSystemEventHandler):
             dest_path = self._normalize_path(event.dest_path)
             dest_ext = Path(dest_path).suffix.lower()
 
-            # 이전 경로 캐시 제거
-            with self.lock:
-                processed_files.discard(src_path)
-                if src_path in cache:
-                    cache.pop(src_path, None)
-                    logging.info(f"[WATCHDOG] Moved: removed old cache {src_path}")
+            # 이전 경로 캐시 제거 (영상만)
+            if ext in VIDEO_EXTS:
+                with self.lock:
+                    processed_files.discard(src_path)
+                    if src_path in cache:
+                        cache.pop(src_path, None)
+                        save_cache()
+                    logging.info(f"[WATCHDOG] Moved: removed old video cache {src_path}")
 
             # 새 경로 처리
             if dest_ext == ".nfo":
@@ -715,39 +714,15 @@ class VideoEventHandler(FileSystemEventHandler):
                 self._enqueue(dest_path, self.video_queue, self.video_timer, self.video_wait, self.process_video)
             return
 
-        # -----------------------
-        # 일반 NFO/영상 파일 처리
-        # -----------------------
         if not self._should_process(src_path):
             return
 
         if ext == ".nfo":
-            # 🔹 해시 비교 → 동일하면 enqueue 스킵
-            try:
-                if Path(src_path).exists() and Path(src_path).stat().st_size > 0:
-                    video_path = str(Path(src_path).with_suffix(""))
-                    for vext in VIDEO_EXTS:
-                        candidate = Path(video_path).with_suffix(vext)
-                        if candidate.exists():
-                            video_path = str(candidate.resolve())
-                            break
-
-                    new_hash = compute_nfo_hash(Path(src_path))
-                    cached_hash = cache.get(video_path, {}).get("nfo_hash")
-                    if cached_hash == new_hash and not ALWAYS_APPLY_NFO:
-                        logging.debug(f"[WATCHDOG] Ignored unchanged NFO: {src_path}")
-                        return  # ✅ 큐에 안 넣음
-            except Exception as e:
-                logging.warning(f"[WATCHDOG] NFO pre-check failed for {src_path}: {e}")
-
             self._enqueue(src_path, self.nfo_queue, self.nfo_timer, self.nfo_wait, self.process_nfo)
-
         elif ext in VIDEO_EXTS:
-            # 🔹 수정 이벤트는 무시 (생성/삭제만 처리)
             if event.event_type not in ("created", "moved"):
                 logging.debug(f"[WATCHDOG] Ignored non-create/move video event: {src_path} ({event.event_type})")
                 return
-
             self._enqueue(src_path, self.video_queue, self.video_timer, self.video_wait, self.process_video)
 
     # -----------------------------
@@ -760,14 +735,13 @@ class VideoEventHandler(FileSystemEventHandler):
         path = self._normalize_path(event.src_path)
         ext = Path(path).suffix.lower()
 
-        # 영상 파일 삭제 → 캐시 제거
+        # 영상 삭제 → 캐시 제거 + 저장
         if ext in VIDEO_EXTS:
             with self.lock:
                 processed_files.discard(path)
                 if path in cache:
-                    cache.pop(path)
-                    global cache_modified
-                    cache_modified = True
+                    cache.pop(path, None)
+                    save_cache()
             logging.info(f"[WATCHDOG] Deleted video removed from cache: {path}")
 
         # NFO 삭제 → processed_files만 제거
@@ -790,6 +764,30 @@ class VideoEventHandler(FileSystemEventHandler):
     def process_video(self, video_path):
         video_path = self._normalize_path(video_path)
         logging.info(f"[WATCHDOG] Processing Video: {video_path}")
+
+        # Plex 아이템 찾기
+        plex_item = None
+        ratingKey = cache.get(video_path, {}).get("ratingKey")
+        if ratingKey:
+            try:
+                plex_item = plex.fetchItem(ratingKey)
+            except Exception:
+                plex_item = None
+
+        if not plex_item:
+            plex_item = find_plex_item(video_path)
+            if plex_item:
+                update_cache(video_path, ratingKey=plex_item.ratingKey)
+            else:
+                logging.warning(f"[WATCHDOG] Plex item not found for {video_path}")
+
+        # 영상 캐시 저장 (Plex 아이템 있든 없든)
+        with cache_lock:
+            if video_path not in cache:
+                cache[video_path] = {"ratingKey": plex_item.ratingKey if plex_item else None}
+            save_cache()
+
+        # NFO 처리
         nfo_path = Path(video_path).with_suffix(".nfo")
         if nfo_path.exists():
             self.process_nfo(str(nfo_path))
@@ -808,6 +806,7 @@ class VideoEventHandler(FileSystemEventHandler):
                     self.retry_queue[nfo_path] = [now + 5, count + 1]
                 else:
                     logging.warning(f"[WATCHDOG] Failed 3 times: {nfo_path}")
+                    del self.retry_queue[nfo_path]
 
 # ==============================
 # Scan: NFO 전용 (신규)
