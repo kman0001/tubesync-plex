@@ -513,6 +513,9 @@ def process_nfo(file_path):
             except: pass
         return False
 
+    # -----------------------
+    # Plex 아이템 가져오기
+    # -----------------------
     plex_item = None
     ratingKey = cache.get(str_video_path, {}).get("ratingKey")
     if ratingKey:
@@ -522,6 +525,7 @@ def process_nfo(file_path):
             plex_item = None
 
     if not plex_item:
+        # 캐시에 없거나 fetch 실패 시 절대경로 기준 검색
         plex_item = find_plex_item(str_video_path)
         if plex_item:
             update_cache(str_video_path, ratingKey=plex_item.ratingKey)
@@ -529,6 +533,7 @@ def process_nfo(file_path):
             logging.warning(f"[WARN] Plex item not found for {str_video_path}")
             return False
 
+    # NFO 적용
     success = apply_nfo(plex_item, str_video_path)
     if success:
         update_cache(str_video_path, ratingKey=plex_item.ratingKey, nfo_hash=nfo_hash)
@@ -546,29 +551,21 @@ processed_files_lock = threading.Lock()
 file_queue = queue.Queue()
 
 def process_file(file_path):
-    """영상 또는 NFO 단일 파일 처리 (절대경로 + Plex 호출 안전)"""
+    """영상 또는 NFO 단일 파일 처리 (절대경로 기준)"""
     abs_path = normalize_path_for_cache(file_path)
     with processed_files_lock:
         if abs_path in processed_files:
             return False
         processed_files.add(abs_path)
 
-    plex_item = None
     suffix = Path(abs_path).suffix.lower()
+    plex_item = None
 
     # 영상 파일 처리
     if suffix in VIDEO_EXTS:
-        ratingKey = cache.get(abs_path, {}).get("ratingKey")
-        if ratingKey:
-            try:
-                plex_item = plex.fetchItem(ratingKey)
-            except Exception:
-                plex_item = None
-
-        if not plex_item:
-            plex_item = find_plex_item_by_path(abs_path)  # 절대경로 기반 검색
-            if plex_item:
-                update_cache(abs_path, ratingKey=plex_item.ratingKey)
+        plex_item = find_plex_item(abs_path)  # 절대경로 기반 검색
+        if plex_item:
+            update_cache(abs_path, ratingKey=plex_item.ratingKey)
 
     # NFO 처리
     if suffix == ".nfo":
@@ -775,54 +772,59 @@ def scan_nfo_files(base_dirs):
 # ==============================
 def scan_and_update_cache(base_dirs):
     """
-    전체 스캔 모드 (--disable-watchdog)
-    - 모든 발견된 영상 파일은 캐시에 placeholder로 추가
-    - Plex 검색으로 ratingKey를 채움
-    - 마지막에 단 한 번 save_cache() 호출
+    전체 스캔 모드 안전 버전
+    1. 모든 영상 파일 placeholder를 캐시에 등록
+    2. Plex 검색은 THREADS 단위로 나누어 순차 처리
+    3. NFO 적용은 별도 스레드에서 처리
     """
     global cache
     if isinstance(base_dirs, (str, Path)):
         base_dirs = [base_dirs]
 
-    existing_files = set(cache.keys())
-    current_files = set()
-    total_files = 0
-
+    # 1️⃣ placeholder 등록
+    video_files = []
     for base_dir in base_dirs:
-        for root, dirs, files in os.walk(base_dir):
+        for root, _, files in os.walk(base_dir):
             for f in files:
                 full = os.path.join(root, f)
                 if not full.lower().endswith(VIDEO_EXTS):
                     continue
 
-                total_files += 1
                 norm = normalize_path_for_cache(full)
-                current_files.add(norm)
-
-                # 캐시에 없으면 placeholder 추가
-                if norm not in cache:
-                    with cache_lock:
+                video_files.append(norm)
+                with cache_lock:
+                    if norm not in cache:
                         cache[norm] = {}
                         if DETAIL:
                             logging.debug(f"[SCAN] Added placeholder for {norm}")
 
-                # Plex 검색 (성공 시 ratingKey 갱신)
-                plex_item = find_plex_item(norm)
-                if plex_item:
-                    # 빈번한 디스크 쓰기 방지를 위해 save=False로 갱신
-                    update_cache(norm, ratingKey=plex_item.ratingKey, save=False)
-
-    # 삭제된 파일 캐시에서 제거
-    removed = existing_files - current_files
-    if removed:
-        with cache_lock:
-            for f in removed:
-                cache.pop(f, None)
-            if DETAIL:
-                logging.debug(f"[SCAN] Removed {len(removed)} entries from cache")
-
-    logging.info(f"[SCAN] Completed scan. Total video files found: {total_files}")
     save_cache()
+    logging.info(f"[SCAN] Placeholder registration complete: {len(video_files)} files")
+
+    # 2️⃣ Plex 검색 안전 처리
+    def plex_search_safe(video_path):
+        retries = 3
+        for attempt in range(retries):
+            try:
+                item = find_plex_item(video_path)
+                if item:
+                    update_cache(video_path, ratingKey=item.ratingKey, save=False)
+                return
+            except Exception as e:
+                logging.warning(f"[SCAN] Plex search error {attempt+1}/{retries} for {video_path}: {e}")
+                time.sleep(REQUEST_DELAY + 1)  # 서버 부담 완화
+        logging.error(f"[SCAN] Plex search failed after {retries} attempts: {video_path}")
+
+    with ThreadPoolExecutor(max_workers=THREADS) as executor:
+        futures = {executor.submit(plex_search_safe, f): f for f in video_files}
+        for fut in as_completed(futures):
+            try:
+                fut.result()
+            except Exception as e:
+                logging.error(f"[SCAN] Failed Plex search for {futures[fut]} - {e}")
+
+    save_cache()
+    logging.info(f"[SCAN] Plex search complete and cache updated")
 
 # ==============================
 # Main NFO 처리 루프
