@@ -634,6 +634,10 @@ def upload_subtitles(ep,srt_files):
                 retries-=1
                 logging.error(f"[ERROR] Subtitle upload failed: {srt} - {e}, retries left: {retries}")
 
+# ==============================
+# Watchdog 이벤트 처리 (영상 + NFO 전용) - 교체본
+# ==============================
+# 주의: 이 블록은 기존 VideoEventHandler 정의 전체를 대체해야 합니다.
 class VideoEventHandler(FileSystemEventHandler):
     def __init__(self, nfo_wait=10, video_wait=2, debounce_delay=3):
         self.nfo_queue = set()
@@ -643,8 +647,9 @@ class VideoEventHandler(FileSystemEventHandler):
         self.nfo_wait = nfo_wait
         self.video_wait = video_wait
         self.lock = threading.Lock()
-        self.retry_queue = {}  # {nfo_path: [next_retry_time, retry_count]}
+        self.retry_queue = {}  # {path: (retries_left, next_delay_seconds)}
         self.debounce_delay = debounce_delay
+        self.lookup_timers = {}  # for scheduled plex lookup timers
 
     def _normalize_path(self, path):
         if isinstance(path, bytes):
@@ -671,6 +676,7 @@ class VideoEventHandler(FileSystemEventHandler):
                 timer_dict[path].cancel()
             t = threading.Timer(wait_time, self._process_path, args=(path, queue_set, timer_dict, process_func))
             timer_dict[path] = t
+            t.daemon = True
             t.start()
             logging.debug(f"[WATCHDOG] Scheduled processing: {path}")
 
@@ -679,50 +685,143 @@ class VideoEventHandler(FileSystemEventHandler):
         with self.lock:
             queue_set.discard(path)
             timer_dict.pop(path, None)
-        process_func(path)
+        try:
+            process_func(path)
+        except Exception as e:
+            logging.exception(f"[WATCHDOG] Exception while processing {path}: {e}")
+
+    # -----------------------------
+    # Plex lookup retry helpers
+    # -----------------------------
+    def _schedule_plex_lookup(self, video_path, retries_left=5, delay=5):
+        """
+        특정 비디오 경로에 대해 Plex에서 ratingKey를 찾아 캐시 업데이트를 시도.
+        실패하면 지수 백오프로 재시도함(최대 retries_left).
+        """
+        video_path = self._normalize_path(video_path)
+        with self.lock:
+            # 기존 타이머가 있으면 유지(중복 방지)
+            if video_path in self.lookup_timers:
+                logging.debug(f"[WATCHDOG] Plex lookup already scheduled: {video_path}")
+                return
+
+            def _attempt():
+                with self.lock:
+                    self.lookup_timers.pop(video_path, None)
+                try:
+                    plex_item = find_plex_item(video_path)
+                    if plex_item:
+                        update_cache(video_path, ratingKey=plex_item.ratingKey)
+                        logging.info(f"[WATCHDOG] Plex lookup succeeded for {video_path} -> ratingKey={plex_item.ratingKey}")
+                        return
+                    else:
+                        logging.debug(f"[WATCHDOG] Plex lookup not found for {video_path}")
+                except Exception as e:
+                    logging.debug(f"[WATCHDOG] Plex lookup error for {video_path}: {e}")
+
+                # 재시도 로직
+                if retries_left > 1:
+                    next_delay = min(delay * 2, 60)  # 지수 백오프, cap 60s
+                    logging.debug(f"[WATCHDOG] Scheduling plex lookup retry for {video_path} in {next_delay}s (retries left {retries_left-1})")
+                    # schedule again with one fewer retry
+                    self._schedule_plex_lookup(video_path, retries_left=retries_left-1, delay=next_delay)
+                else:
+                    logging.warning(f"[WATCHDOG] Plex lookup exhausted retries for {video_path}")
+
+            timer = threading.Timer(delay, _attempt)
+            timer.daemon = True
+            self.lookup_timers[video_path] = timer
+            timer.start()
+            logging.debug(f"[WATCHDOG] Scheduled plex lookup for {video_path} in {delay}s (retries {retries_left})")
 
     # -----------------------------
     # 이벤트 처리
     # -----------------------------
     def on_any_event(self, event):
+        # ignore directories
         if event.is_directory:
             return
 
         src_path = self._normalize_path(event.src_path)
         ext = Path(src_path).suffix.lower()
 
-        # -----------------------
-        # MOVED 이벤트 처리
-        # -----------------------
+        # moved (rename, move) 처리: dest_path가 있는 경우
         if event.event_type == "moved" and hasattr(event, "dest_path"):
             dest_path = self._normalize_path(event.dest_path)
             dest_ext = Path(dest_path).suffix.lower()
 
-            # 이전 경로 캐시 제거 (영상만)
-            if ext in VIDEO_EXTS:
+            # 이전 경로 캐시 제거(영상만) — 이동 전 경로가 비디오였다면 삭제 처리
+            if Path(src_path).suffix.lower() in VIDEO_EXTS:
                 with self.lock:
                     processed_files.discard(src_path)
                     if src_path in cache:
                         cache.pop(src_path, None)
+                        logging.info(f"[WATCHDOG] Moved: removed old video cache {src_path}")
                         save_cache()
-                    logging.info(f"[WATCHDOG] Moved: removed old video cache {src_path}")
 
-            # 새 경로 처리
+            # 새 경로는 생성과 동일 처리
             if dest_ext == ".nfo":
+                # nfo는 신규 생성 프로세스와 동일하게 큐에 넣음
                 self._enqueue(dest_path, self.nfo_queue, self.nfo_timer, self.nfo_wait, self.process_nfo)
             elif dest_ext in VIDEO_EXTS:
+                # 비디오는 캐시에 즉시 등록(파일 존재 전제)하고 Plex 재조회 스케줄
+                update_cache(dest_path, ratingKey=None)
+                logging.info(f"[WATCHDOG] Moved: added placeholder cache for {dest_path}")
+                self._schedule_plex_lookup(dest_path, retries_left=5, delay=5)
                 self._enqueue(dest_path, self.video_queue, self.video_timer, self.video_wait, self.process_video)
             return
 
+        # 일반 파일 이벤트: NFO/비디오만 처리
         if not self._should_process(src_path):
             return
 
+        # NFO 이벤트
         if ext == ".nfo":
+            # NFO는 접근(읽기)만으로 무조건 처리하면 중복 실행되므로,
+            # 기존 캐시에 같은 해시가 있으면 스킵(단 ALWAYS_APPLY_NFO 예외)
+            try:
+                if Path(src_path).exists() and Path(src_path).stat().st_size > 0:
+                    # 가능한 영상 후보를 찾아 절대경로 key 사용
+                    video_candidate = str(Path(src_path).with_suffix(""))
+                    for vext in VIDEO_EXTS:
+                        cand = Path(video_candidate).with_suffix(vext)
+                        if cand.exists():
+                            video_candidate = str(cand.resolve())
+                            break
+                    new_hash = compute_nfo_hash(src_path)
+                    cached_hash = cache.get(video_candidate, {}).get("nfo_hash")
+                    if cached_hash == new_hash and not ALWAYS_APPLY_NFO:
+                        logging.debug(f"[WATCHDOG] Ignored unchanged NFO (no-op): {src_path}")
+                        return
+            except Exception as e:
+                logging.debug(f"[WATCHDOG] NFO pre-check failed for {src_path}: {e}")
+
+            # enqueue 하여 처리
             self._enqueue(src_path, self.nfo_queue, self.nfo_timer, self.nfo_wait, self.process_nfo)
+
+        # Video 이벤트
         elif ext in VIDEO_EXTS:
-            if event.event_type not in ("created", "moved"):
+            # video는 생성(created) 또는 moved 만 처리; 수정(modified) 이벤트는 무시
+            if getattr(event, "event_type", "") not in ("created", "moved"):
                 logging.debug(f"[WATCHDOG] Ignored non-create/move video event: {src_path} ({event.event_type})")
                 return
+
+            # 새 파일이 생기면 캐시에 placeholder 추가(즉시 저장) -> Plex lookup 스케줄
+            try:
+                update_cache(src_path, ratingKey=None)
+                logging.info(f"[WATCHDOG] Detected video create/move: placeholder cache added for {src_path}")
+            except Exception as e:
+                logging.warning(f"[WATCHDOG] Failed to add placeholder cache for {src_path}: {e}")
+
+            # Plex에서 실제 ratingKey를 찾아 캐시 업데이트 (재시도 포함)
+            self._schedule_plex_lookup(src_path, retries_left=5, delay=5)
+
+            # NFO가 있으면 NFO 처리도 예약
+            nfo_path = Path(src_path).with_suffix(".nfo")
+            if nfo_path.exists():
+                self._enqueue(str(nfo_path), self.nfo_queue, self.nfo_timer, self.nfo_wait, self.process_nfo)
+
+            # enqueue video processing for any other tasks (subtitles etc.)
             self._enqueue(src_path, self.video_queue, self.video_timer, self.video_wait, self.process_video)
 
     # -----------------------------
@@ -735,16 +834,18 @@ class VideoEventHandler(FileSystemEventHandler):
         path = self._normalize_path(event.src_path)
         ext = Path(path).suffix.lower()
 
-        # 영상 삭제 → 캐시 제거 + 저장
+        # 영상 파일 삭제 → 캐시 제거 및 즉시 저장
         if ext in VIDEO_EXTS:
             with self.lock:
                 processed_files.discard(path)
                 if path in cache:
                     cache.pop(path, None)
+                    logging.info(f"[WATCHDOG] Deleted video removed from cache: {path}")
                     save_cache()
-            logging.info(f"[WATCHDOG] Deleted video removed from cache: {path}")
+                else:
+                    logging.debug(f"[WATCHDOG] Deleted video not present in cache: {path}")
 
-        # NFO 삭제 → processed_files만 제거
+        # NFO 삭제 → processed_files에서만 제거 (캐시 영향 없음)
         elif ext == ".nfo":
             with self.lock:
                 processed_files.discard(path)
@@ -758,55 +859,41 @@ class VideoEventHandler(FileSystemEventHandler):
         logging.info(f"[WATCHDOG] Processing NFO: {nfo_path}")
         success = process_nfo(nfo_path)
         if not success:
-            with self.lock:
-                self.retry_queue[nfo_path] = [time.time() + 5, 1]
+            # 실패하면 Plex lookup 재시도를 위한 큐에 넣어둠
+            # (NFO가 적용되려면 Plex에 항목이 있어야 함)
+            logging.debug(f"[WATCHDOG] NFO processing failed -> scheduling plex lookup for related video: {nfo_path}")
+            # try to schedule lookup for related video path
+            try:
+                vid = str(Path(nfo_path).with_suffix(""))
+                for vext in VIDEO_EXTS:
+                    cand = Path(vid).with_suffix(vext)
+                    if cand.exists():
+                        vid = str(cand.resolve())
+                        break
+                self._schedule_plex_lookup(vid, retries_left=5, delay=5)
+            except Exception:
+                pass
 
     def process_video(self, video_path):
         video_path = self._normalize_path(video_path)
         logging.info(f"[WATCHDOG] Processing Video: {video_path}")
-
-        # Plex 아이템 찾기
-        plex_item = None
-        ratingKey = cache.get(video_path, {}).get("ratingKey")
-        if ratingKey:
-            try:
-                plex_item = plex.fetchItem(ratingKey)
-            except Exception:
-                plex_item = None
-
-        if not plex_item:
-            plex_item = find_plex_item(video_path)
-            if plex_item:
-                update_cache(video_path, ratingKey=plex_item.ratingKey)
-            else:
-                logging.warning(f"[WATCHDOG] Plex item not found for {video_path}")
-
-        # 영상 캐시 저장 (Plex 아이템 있든 없든)
-        with cache_lock:
-            if video_path not in cache:
-                cache[video_path] = {"ratingKey": plex_item.ratingKey if plex_item else None}
-            save_cache()
-
-        # NFO 처리
+        # video 관련 작업: (1) NFO 있으면 처리 (2) 자막 추출/업로드 등
         nfo_path = Path(video_path).with_suffix(".nfo")
         if nfo_path.exists():
             self.process_nfo(str(nfo_path))
+        # (추가 작업: subtitles 등은 process_file()이 이미 처리하므로 중복주의)
+        try:
+            # Try to process the file (this will also call find_plex_item if needed)
+            process_file(video_path)
+        except Exception as e:
+            logging.exception(f"[WATCHDOG] process_file failed for {video_path}: {e}")
 
     # -----------------------------
-    # Retry 처리
+    # Retry 처리 (외부 스케줄링 필요 없음: _schedule_plex_lookup에서 자체 처리)
     # -----------------------------
     def _process_retry_queue(self):
-        now = time.time()
-        for nfo_path, (retry_time, count) in list(self.retry_queue.items()):
-            if now >= retry_time:
-                success = process_nfo(nfo_path)
-                if success:
-                    del self.retry_queue[nfo_path]
-                elif count < 3:
-                    self.retry_queue[nfo_path] = [now + 5, count + 1]
-                else:
-                    logging.warning(f"[WATCHDOG] Failed 3 times: {nfo_path}")
-                    del self.retry_queue[nfo_path]
+        # legacy: 남겨두긴 했지만, 현재 재시도는 _schedule_plex_lookup이 담당함
+        pass
 
 # ==============================
 # Scan: NFO 전용 (신규)
