@@ -13,7 +13,7 @@ PYTHON_BIN="$BASE_DIR/venv/bin/python"
 
 echo "[INFO] Running initial metadata sync (watchdog disabled)..."
 "$PYTHON_BIN" -u "$BASE_DIR/tubesync-plex-metadata.py" \
-  --config "$CONFIG_FILE" --disable-watchdog
+  --config "$CONFIG_FILE" --disable-watchdog --debug
 
 echo "[INFO] Starting folder watch according to config..."
-exec "$PYTHON_BIN" -u "$BASE_DIR/tubesync-plex-metadata.py" --config "$CONFIG_FILE"
+exec "$PYTHON_BIN" -u "$BASE_DIR/tubesync-plex-metadata.py" --config "$CONFIG_FILE" --debug
