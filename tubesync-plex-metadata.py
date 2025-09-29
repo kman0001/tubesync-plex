@@ -397,9 +397,6 @@ def compute_nfo_hash(nfo_path):
         return None
 
 def safe_edit(ep, title=None, summary=None, aired=None):
-    """
-    일반 필드(title, summary, aired) 편집
-    """
     try:
         kwargs = {}
         if title is not None:
@@ -421,11 +418,6 @@ def safe_edit(ep, title=None, summary=None, aired=None):
         return False
 
 def apply_nfo(ep, file_path):
-    """
-    NFO를 Plex 아이템에 적용
-    - titleSort가 없으면 title로 대체
-    - editSortTitle 사용으로 첫 글자 손실 방지
-    """
     nfo_path = Path(file_path).with_suffix(".nfo")
     if not nfo_path.exists() or nfo_path.stat().st_size == 0:
         return False
@@ -436,20 +428,17 @@ def apply_nfo(ep, file_path):
         title = root.findtext("title", "").strip() or None
         plot = root.findtext("plot", "").strip() or None
         aired = root.findtext("aired", "").strip() or None
-        title_sort = root.findtext("titleSort", "").strip() or title  # NFO 없으면 title 사용
+        title_sort = root.findtext("titleSort", "").strip() or title
 
         if DETAIL:
             logging.debug(f"[-] Applying NFO: {file_path} -> {title}")
 
-        # 일반 필드 적용
         safe_edit(ep, title=title, summary=plot, aired=aired)
 
-        # titleSort는 editSortTitle로 적용
         if title_sort:
             try:
-                ep.editSortTitle(title_sort, locked=True)  # 첫 글자 손실 없음
+                ep.editSortTitle(title_sort, locked=True)
             except Exception:
-                # fallback: metadata.edit 사용
                 ep.edit(**{"titleSort.value": title_sort, "titleSort.locked": 1})
             ep.reload()
 
@@ -460,13 +449,10 @@ def apply_nfo(ep, file_path):
         return False
 
 def process_nfo(file_path):
-    """
-    NFO 처리 (캐시 기반 + ALWAYS_APPLY_NFO 옵션 반영)
-    """
     p = Path(file_path)
     if p.suffix.lower() == ".nfo":
         nfo_path = p
-        video_path = p.with_suffix("")  # 영상 파일 추정
+        video_path = p.with_suffix("")
         if not video_path.exists():
             for ext in VIDEO_EXTS:
                 candidate = p.with_suffix(ext)
@@ -484,52 +470,60 @@ def process_nfo(file_path):
     nfo_hash = compute_nfo_hash(nfo_path)
     cached_hash = cache.get(str_video_path, {}).get("nfo_hash")
 
-    # 🔹 캐시 해시가 동일해도 ALWAYS_APPLY_NFO가 True면 적용
+    # 🔹 이미 적용된 NFO이면 Plex 호출 없이 종료
     if cached_hash == nfo_hash and not ALWAYS_APPLY_NFO:
-        logging.info(f"[CACHE] NFO already applied for video: {str_video_path}")
+        logging.info(f"[CACHE] Skipping already applied NFO: {str_video_path}")
         if DELETE_NFO_AFTER_APPLY:
-            try: nfo_path.unlink()
-            except: pass
-        return False
+            try:
+                nfo_path.unlink()
+                if DETAIL:
+                    logging.debug(f"[NFO] Deleted already applied NFO: {nfo_path}")
+            except Exception:
+                pass
+        return False  # Plex 호출 안 함
 
-    # Plex 아이템 조회
+    # 🔹 Plex 호출: 캐시 해시 다르거나 ALWAYS_APPLY_NFO=True인 경우만
     plex_item = None
     ratingKey = cache.get(str_video_path, {}).get("ratingKey")
-    if ratingKey:
-        try:
-            plex_item = plex.fetchItem(ratingKey)
-        except Exception:
-            plex_item = None
+    if cached_hash != nfo_hash or ALWAYS_APPLY_NFO:
+        if ratingKey:
+            try:
+                plex_item = plex.fetchItem(ratingKey)
+            except Exception:
+                plex_item = None
 
-    if not plex_item:
-        plex_item = find_plex_item(str_video_path)
-        if plex_item:
-            update_cache(str_video_path, ratingKey=plex_item.ratingKey)
-        else:
-            logging.warning(f"[WARN] Plex item not found for {str_video_path}")
-            return False
+        if not plex_item:
+            plex_item = find_plex_item(str_video_path)
+            if plex_item:
+                update_cache(str_video_path, ratingKey=plex_item.ratingKey)
+            else:
+                logging.warning(f"[WARN] Plex item not found for {str_video_path}")
+                return False
 
     # NFO 적용
-    success = apply_nfo(plex_item, str_video_path)
-    if success:
-        update_cache(str_video_path, ratingKey=plex_item.ratingKey, nfo_hash=nfo_hash)
-        if DELETE_NFO_AFTER_APPLY:
-            try: nfo_path.unlink()
-            except: pass
+    success = True
+    if plex_item:
+        success = apply_nfo(plex_item, str_video_path)
+        if success:
+            update_cache(str_video_path, ratingKey=plex_item.ratingKey, nfo_hash=nfo_hash)
+            if DELETE_NFO_AFTER_APPLY:
+                try:
+                    nfo_path.unlink()
+                except Exception:
+                    pass
 
-    return success
+    return True  # Plex 호출 여부와 상관없이 NFO 적용 완료 또는 스킵 시 True 반환
 
 # ==============================
 # 파일 처리 통합 (영상 + NFO)
 # ==============================
 processed_files = set()
 file_queue = queue.Queue()
-
-# 전역 세트: 실패/성공 로그 기록 여부 추적
 logged_failures = set()
 logged_successes = set()
 
-def process_file(file_path):
+def process_file(file_path, watchdog_enabled=True):
+    global processed_files, logged_failures, logged_successes
     abs_path = Path(file_path).resolve()
     str_path = str(abs_path)
 
@@ -537,38 +531,35 @@ def process_file(file_path):
         return False
     processed_files.add(str_path)
 
-    plex_item = None
     ratingKey = None
+    plex_item = None
     try:
-        # ===== Plex 아이템 조회 =====
-        if abs_path.suffix.lower() in VIDEO_EXTS:
-            ratingKey = cache.get(str_path, {}).get("ratingKey")
-            if ratingKey:
-                try:
-                    plex_item = plex.fetchItem(ratingKey)
-                except Exception:
-                    plex_item = None
+        # ===== NFO 처리 =====
+        nfo_applied = True
+        if abs_path.suffix.lower() == ".nfo":
+            nfo_applied = process_nfo(str_path)
+        elif abs_path.suffix.lower() in VIDEO_EXTS:
+            nfo_path = abs_path.with_suffix(".nfo")
+            if nfo_path.exists():
+                nfo_applied = process_nfo(str(nfo_path))
+
+        # ===== Plex 호출: NFO가 적용되었거나 해시가 다를 때만 =====
+        cached_entry = cache.get(str_path, {})
+        ratingKey = cached_entry.get("ratingKey")
+
+        if nfo_applied and ratingKey:
+            try:
+                plex_item = plex.fetchItem(ratingKey)
+            except Exception:
+                plex_item = None
+
             if not plex_item:
                 plex_item = find_plex_item(str_path)
                 if plex_item:
                     ratingKey = plex_item.ratingKey
                     update_cache(str_path, ratingKey=ratingKey)
 
-        # ===== NFO 처리 =====
-        if abs_path.suffix.lower() == ".nfo":
-            process_nfo(str_path)
-        elif abs_path.suffix.lower() in VIDEO_EXTS:
-            nfo_path = abs_path.with_suffix(".nfo")
-            if nfo_path.exists():
-                process_nfo(str(nfo_path))
-
-        # ===== 자막 처리 =====
-        if SUBTITLES_ENABLED and abs_path.suffix.lower() in VIDEO_EXTS and plex_item:
-            srt_files = extract_subtitles(str_path)
-            if srt_files:
-                upload_subtitles(plex_item, srt_files)
-
-        # ===== 성공 로그 (최초 1회) =====
+        # ===== 성공 로그 =====
         if str_path not in logged_successes:
             if ratingKey:
                 logging.info(f"[INFO] 성공: {str_path} (ratingKey={ratingKey})")
@@ -576,12 +567,10 @@ def process_file(file_path):
                 logging.info(f"[INFO] 성공: {str_path}")
             logged_successes.add(str_path)
 
-        # 성공 시 실패 기록 제거 (다시 실패하면 로그 찍히게)
         logged_failures.discard(str_path)
         return True
 
     except Exception as e:
-        # ===== 실패 로그 (최초 1회) =====
         if str_path not in logged_failures:
             logging.warning(f"[WARN] 첫 실패: {str_path} 처리 중 오류: {e}")
             logged_failures.add(str_path)
@@ -648,8 +637,8 @@ class MediaFileHandler(PatternMatchingEventHandler):
         self.nfo_wait = nfo_wait
         self.video_wait = video_wait
         self.debounce_delay = debounce_delay
-        self.retry_queue = {}
-        self.last_event_time = {}
+        self.retry_queue = {}       # {path: (next_time, delay)}
+        self.last_event_time = {}   # debounce용
 
     def _debounce(self, path):
         now = time.time()
@@ -669,7 +658,7 @@ class MediaFileHandler(PatternMatchingEventHandler):
             _, delay = self.retry_queue.pop(path)
             logging.info(f"[WATCHDOG] Retrying: {path}")
             if not process_file(path):
-                self._enqueue_retry(path, delay)
+                self._enqueue_retry(path, delay)  # 실패하면 다시 큐에 추가
         save_cache()
 
     def on_created(self, event):
@@ -684,7 +673,6 @@ class MediaFileHandler(PatternMatchingEventHandler):
         if event.is_directory or not self._debounce(event.src_path):
             return
         path = str(Path(event.src_path).resolve())
-        # 🎯 수정 이벤트는 NFO만 처리
         if path.endswith(".nfo"):
             wait = self.nfo_wait
             logging.info(f"[WATCHDOG] NFO modified: {path} (wait {wait}s)")
@@ -707,9 +695,8 @@ class MediaFileHandler(PatternMatchingEventHandler):
         abs_path = str(Path(event.src_path).resolve())
         self._handle_deleted(abs_path)
 
-    # 내부 헬퍼
+    # 삭제 이벤트 처리
     def _handle_deleted(self, abs_path):
-        # 🎯 삭제는 영상만 처리, NFO는 무시
         if abs_path.lower().endswith(VIDEO_EXTS):
             keys_to_remove = [k for k in cache.keys() if k == abs_path]
             for k in keys_to_remove:
@@ -719,10 +706,33 @@ class MediaFileHandler(PatternMatchingEventHandler):
         else:
             logging.debug(f"[WATCHDOG] Ignored NFO delete: {abs_path}")
 
+    # 생성 이벤트 처리 (retry queue에 등록)
     def _handle_created(self, abs_path):
         wait = self.nfo_wait if abs_path.endswith(".nfo") else self.video_wait
         logging.info(f"[WATCHDOG] File created: {abs_path} (wait {wait}s)")
         self._enqueue_retry(abs_path, wait)
+
+
+# ==============================
+# Watchdog Observer 루프
+# ==============================
+def start_watchdog(base_dirs):
+    observer = Observer()
+    handler = MediaFileHandler(debounce_delay=WATCH_DEBOUNCE_DELAY)
+
+    for d in base_dirs:
+        observer.schedule(handler, d, recursive=True)
+    observer.start()
+    logging.info("[WATCHDOG] Started observer")
+
+    try:
+        while True:
+            handler.process_retry_queue()  # 큐에 있는 파일 처리
+            time.sleep(1)
+    except KeyboardInterrupt:
+        logging.info("[WATCHDOG] Stopping observer")
+        observer.stop()
+    observer.join()
 
 # ==============================
 # Scan: NFO 전용 (신규)
@@ -870,7 +880,7 @@ def process_all_nfo(base_dirs):
             logging.error(f"[NFO] Error processing {nfo_file}: {e}", exc_info=True)
 
 # ==============================
-# 메인 실행
+# Main 실행
 # ==============================
 def main():
     setup_ffmpeg()
@@ -884,21 +894,14 @@ def main():
         base_dirs.extend(getattr(section, "locations", []))
 
     if DISABLE_WATCHDOG:
-        run_processing(base_dirs)   # 여기서 호출
+        logging.info("[MAIN] Running initial full processing (watchdog disabled)")
+        run_processing(base_dirs)
     elif config.get("WATCH_FOLDERS", False):
-        observer = Observer()
-        handler = MediaFileHandler(debounce_delay=WATCH_DEBOUNCE_DELAY)
-        for d in base_dirs:
-            observer.schedule(handler, d, recursive=True)
-        observer.start()
-        try:
-            while True:
-                time.sleep(1)
-        except KeyboardInterrupt:
-            observer.stop()
-        observer.join()
+        logging.info("[MAIN] Starting Watchdog mode")
+        start_watchdog(base_dirs)
 
     logging.info("END")
 
-if __name__=="__main__":
+
+if __name__ == "__main__":
     main()
