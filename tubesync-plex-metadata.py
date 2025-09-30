@@ -396,6 +396,7 @@ def compute_nfo_hash(nfo_path):
         logging.error(f"[NFO] compute_nfo_hash failed: {nfo_path} - {e}")
         return None
 
+
 def safe_edit(ep, title=None, summary=None, aired=None):
     try:
         kwargs = {}
@@ -416,6 +417,7 @@ def safe_edit(ep, title=None, summary=None, aired=None):
     except Exception as e:
         logging.error(f"[SAFE_EDIT] Failed to edit item: {e}", exc_info=True)
         return False
+
 
 def apply_nfo(ep, file_path):
     nfo_path = Path(file_path).with_suffix(".nfo")
@@ -448,6 +450,7 @@ def apply_nfo(ep, file_path):
         logging.error(f"[!] Error applying NFO {nfo_path}: {e}", exc_info=True)
         return False
 
+
 def process_nfo(file_path):
     p = Path(file_path)
     if p.suffix.lower() == ".nfo":
@@ -468,9 +471,10 @@ def process_nfo(file_path):
 
     str_video_path = str(video_path.resolve())
     nfo_hash = compute_nfo_hash(nfo_path)
-    cached_hash = cache.get(str_video_path, {}).get("nfo_hash")
+    cached = cache.get(str_video_path, {})
+    cached_hash = cached.get("nfo_hash")
 
-    # 🔹 이미 적용된 NFO이면 Plex 호출 없이 종료
+    # ✅ 이미 적용된 NFO이면 Plex 호출 없이 종료
     if cached_hash == nfo_hash and not ALWAYS_APPLY_NFO:
         logging.info(f"[CACHE] Skipping already applied NFO: {str_video_path}")
         if DELETE_NFO_AFTER_APPLY:
@@ -478,13 +482,13 @@ def process_nfo(file_path):
                 nfo_path.unlink()
                 if DETAIL:
                     logging.debug(f"[NFO] Deleted already applied NFO: {nfo_path}")
-            except Exception:
-                pass
-        return False  # Plex 호출 안 함
+            except Exception as e:
+                logging.warning(f"[WARN] Failed to delete NFO {nfo_path}: {e}")
+        return True  # 스킵했어도 정상 처리로 True 반환
 
-    # 🔹 Plex 호출: 캐시 해시 다르거나 ALWAYS_APPLY_NFO=True인 경우만
+    # ✅ 캐시 불일치 또는 강제 적용 시 Plex 호출
     plex_item = None
-    ratingKey = cache.get(str_video_path, {}).get("ratingKey")
+    ratingKey = cached.get("ratingKey")
     if cached_hash != nfo_hash or ALWAYS_APPLY_NFO:
         if ratingKey:
             try:
@@ -500,8 +504,7 @@ def process_nfo(file_path):
                 logging.warning(f"[WARN] Plex item not found for {str_video_path}")
                 return False
 
-    # NFO 적용
-    success = True
+    # ✅ NFO 적용
     if plex_item:
         success = apply_nfo(plex_item, str_video_path)
         if success:
@@ -509,10 +512,13 @@ def process_nfo(file_path):
             if DELETE_NFO_AFTER_APPLY:
                 try:
                     nfo_path.unlink()
-                except Exception:
-                    pass
+                except Exception as e:
+                    logging.warning(f"[WARN] Failed to delete NFO {nfo_path}: {e}")
+            return True
+        else:
+            return False
 
-    return True  # Plex 호출 여부와 상관없이 NFO 적용 완료 또는 스킵 시 True 반환
+    return True  # Plex 호출이 필요 없었던 경우
 
 # ==============================
 # 파일 처리 통합 (영상 + NFO)
@@ -543,10 +549,11 @@ def process_file(file_path, watchdog_enabled=True):
             if nfo_path.exists():
                 nfo_applied = process_nfo(str(nfo_path))
 
-        # ===== Plex 호출: NFO가 적용되었거나 해시가 다를 때만 =====
+        # ===== Plex 호출 =====
         cached_entry = cache.get(str_path, {})
         ratingKey = cached_entry.get("ratingKey")
 
+        # 🔹 NFO가 스킵된 경우에는 Plex 호출 안 함
         if nfo_applied and ratingKey:
             try:
                 plex_item = plex.fetchItem(ratingKey)
@@ -628,7 +635,7 @@ def upload_subtitles(ep,srt_files):
                 logging.error(f"[ERROR] Subtitle upload failed: {srt} - {e}, retries left: {retries}")
 
 # ==============================
-# Watchdog Handler (VIDEO_EXTS 반영)
+# Watchdog Handler (VIDEO_EXTS 반영, NFO 처리 안전)
 # ==============================
 class MediaFileHandler(PatternMatchingEventHandler):
     def __init__(self, nfo_wait=5, video_wait=2, debounce_delay=1.0):
@@ -657,6 +664,7 @@ class MediaFileHandler(PatternMatchingEventHandler):
         for path in to_process:
             _, delay = self.retry_queue.pop(path)
             logging.info(f"[WATCHDOG] Retrying: {path}")
+            # 🔹 process_file 내부에서 NFO/영상 판단 후 process_nfo 호출
             if not process_file(path):
                 self._enqueue_retry(path, delay)  # 실패하면 다시 큐에 추가
         save_cache()
@@ -706,12 +714,11 @@ class MediaFileHandler(PatternMatchingEventHandler):
         else:
             logging.debug(f"[WATCHDOG] Ignored NFO delete: {abs_path}")
 
-    # 생성 이벤트 처리 (retry queue에 등록)
+    # 생성/이동 이벤트 처리 (retry queue에 등록)
     def _handle_created(self, abs_path):
         wait = self.nfo_wait if abs_path.endswith(".nfo") else self.video_wait
         logging.info(f"[WATCHDOG] File created: {abs_path} (wait {wait}s)")
         self._enqueue_retry(abs_path, wait)
-
 
 # ==============================
 # Watchdog Observer 루프
