@@ -576,26 +576,21 @@ def process_file(file_path):
 
         cached_entry = cache.get(str_path, {})
         ratingKey = cached_entry.get("ratingKey")
-        plex_item = None
 
-        # 🔹 캐시 기반 Plex 호출 최소화
-        if not nfo_applied or not ratingKey:
-            # 필요 시에만 Plex 호출
+        # ✅ NFO 적용 완료 & ratingKey 존재 → Plex 호출 스킵
+        if nfo_applied and ratingKey:
+            if str_path not in logged_successes:
+                logging.info(f"[INFO] Skipping Plex call (NFO applied, ratingKey exists): {str_path}")
+                logged_successes.add(str_path)
+            return True
+
+        # 🔹 필요 시 Plex 호출
+        plex_item = None
+        if not ratingKey:
             plex_item = find_plex_item(str_path)
             if plex_item:
                 ratingKey = plex_item.ratingKey
                 update_cache(str_path, ratingKey=ratingKey)
-
-        elif ratingKey:
-            try:
-                plex_item = plex.fetchItem(ratingKey)
-            except Exception:
-                plex_item = None
-            if not plex_item:
-                plex_item = find_plex_item(str_path)
-                if plex_item:
-                    ratingKey = plex_item.ratingKey
-                    update_cache(str_path, ratingKey=ratingKey)
 
         # ===== 성공 로그 =====
         if str_path not in logged_successes:
