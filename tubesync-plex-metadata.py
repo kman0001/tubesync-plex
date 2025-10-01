@@ -1,16 +1,33 @@
 #!/usr/bin/env python3
-import os, sys, json, time, threading, subprocess, shutil, hashlib, queue
+import os
+import sys
+import json
+import time
+import threading
+import queue
+import hashlib
+import logging
+import platform
+import shutil
+import subprocess
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from urllib3.util.retry import Retry
+import requests
+from requests.adapters import HTTPAdapter
+
+# XML 파싱
+import lxml.etree as ET
+
+# Plex
 from plexapi.server import PlexServer
+
+# 파일 감시
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler, PatternMatchingEventHandler
-import platform, requests, logging
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
-import lxml.etree as ET
-import argparse
 
+# argparse
+import argparse
 
 # ==============================
 # Arguments
@@ -384,6 +401,9 @@ def find_plex_item(abs_path):
 # ==============================
 # NFO Process (titleSort 안전 적용)
 # ==============================
+deleted_nfo_set = set()
+nfo_lock = threading.Lock()
+
 def compute_nfo_hash(nfo_path):
     try:
         with open(nfo_path, "rb") as f:
@@ -395,7 +415,6 @@ def compute_nfo_hash(nfo_path):
     except Exception as e:
         logging.error(f"[NFO] compute_nfo_hash failed: {nfo_path} - {e}")
         return None
-
 
 def safe_edit(ep, title=None, summary=None, aired=None):
     try:
@@ -478,12 +497,15 @@ def process_nfo(file_path):
     if cached_hash == nfo_hash and not ALWAYS_APPLY_NFO:
         logging.info(f"[CACHE] Skipping already applied NFO: {str_video_path}")
         if DELETE_NFO_AFTER_APPLY:
-            try:
-                nfo_path.unlink()
-                if DETAIL:
-                    logging.debug(f"[NFO] Deleted already applied NFO: {nfo_path}")
-            except Exception as e:
-                logging.warning(f"[WARN] Failed to delete NFO {nfo_path}: {e}")
+            with nfo_lock:
+                if nfo_path not in deleted_nfo_set:
+                    try:
+                        nfo_path.unlink()
+                        if DETAIL:
+                            logging.debug(f"[NFO] Deleted already applied NFO: {nfo_path}")
+                    except Exception as e:
+                        logging.warning(f"[WARN] Failed to delete NFO {nfo_path}: {e}")
+                    deleted_nfo_set.add(nfo_path)
         return True  # 스킵했어도 정상 처리로 True 반환
 
     # ✅ 캐시 불일치 또는 강제 적용 시 Plex 호출
@@ -510,10 +532,13 @@ def process_nfo(file_path):
         if success:
             update_cache(str_video_path, ratingKey=plex_item.ratingKey, nfo_hash=nfo_hash)
             if DELETE_NFO_AFTER_APPLY:
-                try:
-                    nfo_path.unlink()
-                except Exception as e:
-                    logging.warning(f"[WARN] Failed to delete NFO {nfo_path}: {e}")
+                with nfo_lock:
+                    if nfo_path not in deleted_nfo_set:
+                        try:
+                            nfo_path.unlink()
+                        except Exception as e:
+                            logging.warning(f"[WARN] Failed to delete NFO {nfo_path}: {e}")
+                        deleted_nfo_set.add(nfo_path)
             return True
         else:
             return False
@@ -521,24 +546,24 @@ def process_nfo(file_path):
     return True  # Plex 호출이 필요 없었던 경우
 
 # ==============================
-# 파일 처리 통합 (영상 + NFO)
+# 파일 처리 통합 (영상 + NFO) - 멀티스레드 안전
 # ==============================
 processed_files = set()
+processed_files_lock = threading.Lock()
 file_queue = queue.Queue()
 logged_failures = set()
 logged_successes = set()
 
-def process_file(file_path, watchdog_enabled=True):
-    global processed_files, logged_failures, logged_successes
+def process_file(file_path):
     abs_path = Path(file_path).resolve()
     str_path = str(abs_path)
 
-    if str_path in processed_files:
-        return False
-    processed_files.add(str_path)
+    # 멀티스레드 중복 처리 방지
+    with processed_files_lock:
+        if str_path in processed_files:
+            return False
+        processed_files.add(str_path)
 
-    ratingKey = None
-    plex_item = None
     try:
         # ===== NFO 처리 =====
         nfo_applied = True
@@ -549,17 +574,23 @@ def process_file(file_path, watchdog_enabled=True):
             if nfo_path.exists():
                 nfo_applied = process_nfo(str(nfo_path))
 
-        # ===== Plex 호출 =====
         cached_entry = cache.get(str_path, {})
         ratingKey = cached_entry.get("ratingKey")
+        plex_item = None
 
-        # 🔹 NFO가 스킵된 경우에는 Plex 호출 안 함
-        if nfo_applied and ratingKey:
+        # 🔹 캐시 기반 Plex 호출 최소화
+        if not nfo_applied or not ratingKey:
+            # 필요 시에만 Plex 호출
+            plex_item = find_plex_item(str_path)
+            if plex_item:
+                ratingKey = plex_item.ratingKey
+                update_cache(str_path, ratingKey=ratingKey)
+
+        elif ratingKey:
             try:
                 plex_item = plex.fetchItem(ratingKey)
             except Exception:
                 plex_item = None
-
             if not plex_item:
                 plex_item = find_plex_item(str_path)
                 if plex_item:
@@ -579,7 +610,7 @@ def process_file(file_path, watchdog_enabled=True):
 
     except Exception as e:
         if str_path not in logged_failures:
-            logging.warning(f"[WARN] 첫 실패: {str_path} 처리 중 오류: {e}")
+            logging.warning(f"[WARN] 처리 중 오류: {str_path} - {e}")
             logged_failures.add(str_path)
         return False
 
