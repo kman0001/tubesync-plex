@@ -257,6 +257,7 @@ else:
     cache = {}
 
 cache_modified = False
+cache_lock = threading.Lock()  # 🔹 빠진 부분 보강 (thread-safe)
 
 def save_cache():
     global cache_modified
@@ -269,16 +270,34 @@ def save_cache():
             cache_modified = False
 
 def update_cache(video_path, ratingKey=None, nfo_hash=None):
+    """
+    캐시에 새로운 항목 추가/갱신
+    """
     global cache_modified
     path = str(video_path)
     with cache_lock:
         current = cache.get(path, {})
-        if ratingKey: current["ratingKey"] = ratingKey
-        if nfo_hash: current["nfo_hash"] = nfo_hash
+        if ratingKey is not None:
+            current["ratingKey"] = ratingKey
+        if nfo_hash is not None:
+            current["nfo_hash"] = nfo_hash
         cache[path] = current
         cache_modified = True
         if DETAIL:
             logging.debug(f"[CACHE] update_cache: {path} => {current}")
+
+def remove_from_cache(video_path):
+    """
+    캐시에서 파일 제거 (존재하지 않는 경우에도 안전)
+    """
+    global cache_modified
+    path = str(video_path)
+    with cache_lock:
+        if path in cache:
+            cache.pop(path, None)
+            cache_modified = True
+            if DETAIL:
+                logging.debug(f"[CACHE] remove_from_cache: {path}")
 
 # ==============================
 # FFmpeg setup
@@ -798,11 +817,9 @@ def scan_and_update_cache(base_dirs):
     2) 캐시와 대조:
        - 캐시에 없는 파일 → Plex 조회 후 추가
        - 캐시에 있지만 실제 없는 파일 → 삭제
-    3) 변경 발생 시 캐시 파일 저장 (한 번만)
+    3) 변경 발생 시 캐시 파일 저장
     """
-    global cache
-    from threading import Lock
-    cache_lock = Lock()
+    global cache, cache_modified
 
     if isinstance(base_dirs, (str, Path)):
         base_dirs = [base_dirs]
@@ -817,39 +834,36 @@ def scan_and_update_cache(base_dirs):
 
     logging.info(f"[CACHE] Scanned {len(current_files)} video files in directories.")
 
-    modified = False
+    added_count = 0
+    removed_count = 0
 
     with cache_lock:
         # ---- 신규 파일 추가 ----
-        added_count = 0
         for path in current_files:
-            if path not in cache or cache.get(path) is None:
-                plex_item = find_plex_item(path)  # 락 필요 없음
-                ratingKey = plex_item.ratingKey if plex_item else None
-                update_cache(path, ratingKey=ratingKey)
-                modified = True
+            if path not in cache:
+                plex_item = find_plex_item(path)
+                if plex_item:
+                    cache[path] = {"ratingKey": plex_item.ratingKey}
+                    logging.info(f"[CACHE] Added: {path} (ratingKey={plex_item.ratingKey})")
+                else:
+                    cache[path] = {}  # placeholder
+                    logging.info(f"[CACHE] Added (no Plex match): {path}")
                 added_count += 1
-                if DETAIL:
-                    logging.debug(f"[CACHE] Added new file: {path}")
+                cache_modified = True
 
         # ---- 삭제된 파일 제거 ----
-        removed_files = [p for p in list(cache.keys()) if p not in current_files]
-        for path in removed_files:
-            cache.pop(path, None)
-            modified = True
-            if DETAIL:
-                logging.debug(f"[CACHE] Removed missing file: {path}")
+        for path in list(cache.keys()):
+            if path not in current_files:
+                cache.pop(path, None)
+                logging.info(f"[CACHE] Removed: {path} (file missing)")
+                removed_count += 1
+                cache_modified = True
 
-        if removed_files:
-            logging.info(f"[CACHE] Removed {len(removed_files)} missing files from cache.")
-        if added_count:
-            logging.info(f"[CACHE] Added {added_count} new files to cache.")
-
-        # ---- 변경 발생 시 캐시 저장 ----
-        if modified:
-            logging.info("[CACHE] Changes detected. Saving cache...")
-            save_cache()
-            logging.info("[CACHE] Cache saved successfully")
+    if cache_modified:
+        save_cache()
+        logging.info(f"[CACHE] Update complete: +{added_count}, -{removed_count}, total={len(cache)}")
+    else:
+        logging.info("[CACHE] No changes detected.")
 
 def run_processing(base_dirs):
     """
