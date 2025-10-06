@@ -21,14 +21,18 @@ COPY requirements.txt .
 
 # Create Python virtual environment and install packages
 RUN python -m venv /app/venv && \
-    /app/venv/bin/pip install --upgrade pip --no-cache-dir && \
-    /app/venv/bin/pip install --no-cache-dir -r requirements.txt
+    /app/venv/bin/pip install --upgrade pip setuptools wheel --no-cache-dir && \
+    /app/venv/bin/pip install --no-cache-dir --prefer-binary -r requirements.txt
 
 # ================================
 # Stage 2: Runtime
 # ================================
 FROM python:3.11-alpine
 WORKDIR /app
+
+ENV LANG=C.UTF-8
+ENV LC_ALL=C.UTF-8
+ENV PATH="/app/venv/bin:$PATH"
 
 # Install minimal runtime dependencies
 RUN apk add --no-cache \
@@ -39,7 +43,6 @@ RUN apk add --no-cache \
 
 # Copy only the virtual environment from the builder stage
 COPY --from=builder /app/venv /app/venv
-ENV PATH="/app/venv/bin:$PATH"
 
 # Copy application source and entrypoint
 COPY tubesync-plex-metadata.py .
