@@ -724,7 +724,7 @@ def repair_wrapper():
         logging.error(f"[CACHE] repair_missing_ratingkeys failed: {e}", exc_info=True)
 
     # 기본 주기로 재스케줄
-    logging.info(f"[CACHE] Rescheduling next repair in {CACHE_REPAIR_INTERVAL} seconds")
+    logging.debug(f"[CACHE] Rescheduling next repair in {CACHE_REPAIR_INTERVAL} seconds")
     schedule_cache_repair(CACHE_REPAIR_INTERVAL)
 
 # ==============================
