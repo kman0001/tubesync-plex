@@ -58,7 +58,6 @@ FFPROBE_BIN = VENVDIR / "bin/ffprobe"
 FFMPEG_SHA_FILE = BASE_DIR / ".ffmpeg_md5"
 
 VIDEO_EXTS = (".mkv", ".mp4", ".avi", ".mov", ".wmv", ".flv", ".m4v")
-NFO_EXTS = (".nfo")
 cache_lock = threading.Lock()
 
 # Language mapping for SUBTITLES
@@ -258,6 +257,7 @@ else:
     cache = {}
 
 cache_modified = False
+cache_lock = threading.Lock()  # 🔹 빠진 부분 보강 (thread-safe)
 
 def save_cache():
     global cache_modified
@@ -266,7 +266,7 @@ def save_cache():
             CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
             with CACHE_FILE.open("w", encoding="utf-8") as f:
                 json.dump(cache, f, indent=2, ensure_ascii=False)
-            logging.info(f"[CACHE] Saved to {CACHE_FILE} (total {len(cache)} entries)")
+            logging.info(f"[CACHE] Saved to {CACHE_FILE}, {len(cache)} entries")
             cache_modified = False
 
 def update_cache(video_path, ratingKey=None, nfo_hash=None):
@@ -283,7 +283,8 @@ def update_cache(video_path, ratingKey=None, nfo_hash=None):
             current["nfo_hash"] = nfo_hash
         cache[path] = current
         cache_modified = True
-        logging.debug(f"[CACHE-DEBUG] update_cache: {path} => {current}")
+        if DETAIL:
+            logging.debug(f"[CACHE] update_cache: {path} => {current}")
 
 def remove_from_cache(video_path):
     """
@@ -292,14 +293,11 @@ def remove_from_cache(video_path):
     global cache_modified
     path = str(video_path)
     with cache_lock:
-        keys_to_remove = [k for k in cache.keys() if k == path or k.startswith(path + "/")]
-        if keys_to_remove:
-            for k in keys_to_remove:
-                cache.pop(k, None)
-                logging.debug(f"[CACHE-DEBUG] remove_from_cache: removed {k}")
+        if path in cache:
+            cache.pop(path, None)
             cache_modified = True
-        else:
-            logging.debug(f"[CACHE-DEBUG] remove_from_cache: no matching keys for {path}")
+            if DETAIL:
+                logging.debug(f"[CACHE] remove_from_cache: {path}")
 
 # ==============================
 # FFmpeg setup
@@ -567,7 +565,7 @@ def process_nfo(file_path):
     return True  # Plex 호출이 필요 없었던 경우
 
 # ==============================
-# 파일 처리 통합 (영상 + NFO) - 멀티스레드 안전
+# 파일 처리 통합 (영상 + NFO) - 멀티스레드 안전 (nfo_hash 검증 포함)
 # ==============================
 processed_files = set()
 processed_files_lock = threading.Lock()
@@ -575,19 +573,24 @@ file_queue = queue.Queue()
 logged_failures = set()
 logged_successes = set()
 
-def process_file(file_path):
+def process_file(file_path, schedule_timer=False):
+    """
+    file_path 처리
+    schedule_timer: True면 ratingKey 없는 새 파일 시 1분 타이머 예약
+    """
     abs_path = Path(file_path).resolve()
     str_path = str(abs_path)
 
-    # 멀티스레드 중복 처리 방지
+    # Thread-safe duplicate prevention
     with processed_files_lock:
         if str_path in processed_files:
             return False
         processed_files.add(str_path)
 
     try:
-        # ===== NFO 처리 =====
+        # ===== NFO Processing =====
         nfo_applied = True
+        nfo_hash = None
         if abs_path.suffix.lower() == ".nfo":
             nfo_applied = process_nfo(str_path)
         elif abs_path.suffix.lower() in VIDEO_EXTS:
@@ -595,45 +598,46 @@ def process_file(file_path):
             if nfo_path.exists():
                 nfo_applied = process_nfo(str(nfo_path))
 
-        # ===== 캐시 상태 확인 =====
+        # ===== Cache Check =====
         cached_entry = cache.get(str_path)
-        ratingKey = None
-        if cached_entry:
-            ratingKey = cached_entry.get("ratingKey")
+        ratingKey = cached_entry.get("ratingKey") if cached_entry else None
+        nfo_hash = cached_entry.get("nfo_hash") if cached_entry else None
 
-        # ✅ NFO 적용 완료 & ratingKey 존재 → Plex 호출 스킵
-        if nfo_applied and ratingKey:
+        # ===== Determine Status =====
+        if nfo_applied and ratingKey and nfo_hash:
             if str_path not in logged_successes:
-                logging.info(f"[INFO] Skipping Plex call (NFO applied, ratingKey exists): {str_path}")
+                logging.info(f"[INFO] Skipping Plex call (NFO applied & cached): {str_path}")
                 logged_successes.add(str_path)
+            logged_failures.discard(str_path)
             return True
-
-        # ===== 신규 파일 / ratingKey 없는 파일 처리 =====
-        plex_item = None
-        if not ratingKey:
+        elif ratingKey and not nfo_hash:
+            if str_path not in logged_successes:
+                logging.info(f"[INFO] Pending NFO apply (ratingKey exists, missing NFO hash): {str_path}")
+                logged_successes.add(str_path)
+            logged_failures.discard(str_path)
+            return True
+        else:
             plex_item = find_plex_item(str_path)
             if plex_item:
                 ratingKey = plex_item.ratingKey
                 update_cache(str_path, ratingKey=ratingKey)
+                logging.info(f"[INFO] Plex item found and cached: {str_path} (ratingKey={ratingKey})")
             else:
-                # 캐시 항목이 없거나 ratingKey가 비어 있을 때도 기본 구조만 등록
-                if str_path not in cache:
-                    update_cache(str_path, ratingKey=None)
+                update_cache(str_path, ratingKey=None)
+                logging.info(f"[INFO] File added to cache (no ratingKey found): {str_path}")
 
-        # ===== 성공 로그 =====
-        if str_path not in logged_successes:
-            if ratingKey:
-                logging.info(f"[INFO] 성공: {str_path} (ratingKey={ratingKey})")
-            else:
-                logging.info(f"[INFO] 성공: {str_path} (cached without ratingKey)")
+                # 🔹 Watchdog 이벤트용 타이머 예약
+                if schedule_timer:
+                    logging.info(f"[CACHE] 🔹 RatingKey missing for {str_path}, scheduling repair in {DELAY_AFTER_NEW_FILE}s")
+                    schedule_cache_repair(DELAY_AFTER_NEW_FILE)
+
+            logged_failures.discard(str_path)
             logged_successes.add(str_path)
-
-        logged_failures.discard(str_path)
-        return True
+            return True
 
     except Exception as e:
         if str_path not in logged_failures:
-            logging.warning(f"[WARN] 처리 중 오류: {str_path} - {e}")
+            logging.warning(f"[WARN] Error while processing {str_path}: {e}")
             logged_failures.add(str_path)
         return False
 
@@ -689,21 +693,51 @@ def upload_subtitles(ep,srt_files):
                 logging.error(f"[ERROR] Subtitle upload failed: {srt} - {e}, retries left: {retries}")
 
 # ==============================
-# Media Watchdog with Cache + ratingKey Fix
+# 글로벌 타이머/락
+# ==============================
+CACHE_REPAIR_INTERVAL = 300        # 기본 주기 (5분)
+DELAY_AFTER_NEW_FILE = 60          # 새 파일 감지 후 1분
+repair_timer = None
+repair_lock = threading.Lock()
+
+
+def schedule_cache_repair(delay):
+    """Repair를 지정된 delay 후 실행, 기존 타이머 취소"""
+    global repair_timer
+    with repair_lock:
+        if repair_timer:
+            logging.debug(f"[CACHE] Existing repair timer canceled")
+            repair_timer.cancel()
+        repair_timer = threading.Timer(delay, repair_wrapper)
+        repair_timer.daemon = True
+        repair_timer.start()
+        logging.debug(f"[CACHE] Repair timer scheduled to run in {delay} seconds ({time.strftime('%H:%M:%S')})")
+
+
+def repair_wrapper():
+    """실제 repair 실행 후 기본 주기로 재예약"""
+    global repair_timer
+    logging.debug(f"[CACHE] Repair wrapper triggered at {time.strftime('%H:%M:%S')}")
+    try:
+        repair_missing_ratingkeys()
+    except Exception as e:
+        logging.error(f"[CACHE] repair_missing_ratingkeys failed: {e}", exc_info=True)
+
+    # 기본 주기로 재스케줄
+    logging.info(f"[CACHE] Rescheduling next repair in {CACHE_REPAIR_INTERVAL} seconds")
+    schedule_cache_repair(CACHE_REPAIR_INTERVAL)
+
+# ==============================
+# Watchdog Handler (VIDEO_EXTS 반영, NFO 처리 안전)
 # ==============================
 class MediaFileHandler(FileSystemEventHandler):
-    def __init__(self, nfo_wait=5, video_wait=2, debounce_delay=1.0, key_scan_interval=300):
+    def __init__(self, nfo_wait=30, video_wait=5, debounce_delay=1.0):
         self.nfo_wait = nfo_wait
         self.video_wait = video_wait
         self.debounce_delay = debounce_delay
         self.retry_queue = {}       # {path: (next_time, delay)}
         self.last_event_time = {}   # debounce용
-        self.key_scan_interval = key_scan_interval
-        self.last_key_scan = 0
 
-    # ------------------------------
-    # Debounce: 짧은 시간 중복 이벤트 무시
-    # ------------------------------
     def _debounce(self, path):
         now = time.time()
         last_time = self.last_event_time.get(path, 0)
@@ -712,18 +746,11 @@ class MediaFileHandler(FileSystemEventHandler):
         self.last_event_time[path] = now
         return True
 
-    # ------------------------------
-    # Retry 큐 등록
-    # ------------------------------
     def _enqueue_retry(self, path, delay):
-        path = str(Path(path).resolve())
         self.retry_queue[path] = (time.time() + delay, delay)
-        logging.debug(f"[WATCHDOG-DEBUG] Enqueued retry: {path} (+{delay}s)")
 
-    # ------------------------------
-    # Retry 큐 처리 + 주기적 ratingKey 보정
-    # ------------------------------
     def process_retry_queue(self):
+        """retry_queue 처리 (폴더 내부 파일까지)"""
         global cache_modified
         now = time.time()
         to_process = [p for p, (t, _) in self.retry_queue.items() if t <= now]
@@ -734,142 +761,85 @@ class MediaFileHandler(FileSystemEventHandler):
 
             if not p.exists():
                 logging.info(f"[WATCHDOG] Path no longer exists, removing from cache: {path}")
-                self._handle_deleted(path)
-                continue
-
-            if not p.is_file():
-                logging.debug(f"[WATCHDOG-DEBUG] Skipping retry (not file): {path}")
-                continue
-
-            logging.info(f"[WATCHDOG] Retrying existing file: {path}")
-            success = process_file(str(p))
-            if not success:
-                self._enqueue_retry(path, delay)
-
-        # ---- 주기적 ratingKey 보정 ----
-        self._scan_missing_rating_keys()
-
-        if cache_modified:
-            save_cache()
-
-    # ------------------------------
-    # ratingKey 없는 캐시 항목 주기적 스캔
-    # ------------------------------
-    def _scan_missing_rating_keys(self):
-        global cache_modified
-        now = time.time()
-        if now - self.last_key_scan < self.key_scan_interval:
-            return
-        self.last_key_scan = now
-
-        logging.info("[CACHE] Scanning for cache entries with missing ratingKey...")
-        missing_keys_found = False
-
-        with cache_lock:
-            for path, entry in cache.items():
-                if entry.get("ratingKey"):
-                    continue
-                if not os.path.exists(path):
-                    continue
-                plex_item = find_plex_item(path)
-                if plex_item:
-                    entry["ratingKey"] = plex_item.ratingKey
+                with cache_lock:
+                    cache.pop(path, None)
                     cache_modified = True
-                    missing_keys_found = True
-                    logging.info(f"[CACHE] ratingKey updated: {path} -> {plex_item.ratingKey}")
+                continue
 
-        if not missing_keys_found:
-            logging.info("[CACHE] No cache entries with missing ratingKey found")
+            # 폴더 내부 파일 처리
+            if p.is_dir():
+                for f in p.rglob("*"):
+                    if f.is_file() and f.suffix.lower() in VIDEO_EXTS:
+                        process_file(str(f.resolve()), schedule_timer=True)
+                continue
+
+            # 파일 처리
+            process_file(str(p.resolve()), schedule_timer=True)
 
         if cache_modified:
-            logging.info("[CACHE] ratingKey scan complete")
+            logging.info(f"[CACHE] Saving cache, {len(cache)} entries")
+            save_cache()
+            cache_modified = False
 
-    # ------------------------------
-    # 생성 이벤트 처리
-    # ------------------------------
+    # ==============================
+    # 이벤트 핸들러
+    # ==============================
     def on_created(self, event):
         if not self._debounce(event.src_path):
             return
+        path = str(Path(event.src_path).resolve())
+        wait = self.nfo_wait if path.endswith(".nfo") else self.video_wait
+        self._enqueue_retry(path, wait)
 
-        p = Path(event.src_path).resolve()
-        path = str(p)
-
-        if p.is_dir():
-            logging.info(f"[WATCHDOG] Directory created: {path}")
-            for f in p.rglob("*"):
-                if f.is_file():
-                    self._handle_created(str(f))
-            return
-
-        self._handle_created(path)
-
-    # ------------------------------
-    # 삭제 이벤트 처리
-    # ------------------------------
     def on_deleted(self, event):
         path = str(Path(event.src_path).resolve())
         self._handle_deleted(path)
 
-    # ------------------------------
-    # 이동 이벤트 처리
-    # ------------------------------
     def on_moved(self, event):
         src = str(Path(event.src_path).resolve())
         dest = str(Path(event.dest_path).resolve()) if getattr(event, "dest_path", None) else None
-
         self._handle_deleted(src)
-        if dest:
+        if dest and not event.is_directory:
             self._handle_created(dest)
 
-    # ------------------------------
-    # 캐시 삭제
-    # ------------------------------
+    # ==============================
+    # 캐시 제거 (삭제/폴더 이동 시)
+    # ==============================
     def _handle_deleted(self, abs_path):
-        global cache_modified
         abs_path = str(Path(abs_path).resolve())
-
         if not self._debounce(abs_path):
             return
-
         keys_to_remove = [k for k in cache.keys() if k == abs_path or k.startswith(f"{abs_path}/")]
         for k in keys_to_remove:
             remove_from_cache(k)
             logging.info(f"[CACHE] Removed {k} (deleted/moved)")
-
+        global cache_modified
         cache_modified = True
         save_cache()
 
-    # ------------------------------
-    # 캐시 생성/추가 처리
-    # ------------------------------
+    # ==============================
+    # 생성/이동 이벤트 처리 (retry queue 등록)
+    # ==============================
     def _handle_created(self, abs_path):
+        """단순히 retry_queue 등록만 수행"""
         abs_path = str(Path(abs_path).resolve())
         if not self._debounce(abs_path):
             return
 
+        files_to_check = []
         p = Path(abs_path)
         if p.is_dir():
-            for f in p.rglob("*"):
-                if f.is_file():
-                    self._handle_created(str(f))
-            return
+            files_to_check = [str(f.resolve()) for f in p.rglob("*") if f.is_file()]
+        else:
+            files_to_check = [abs_path]
 
-        if abs_path in self.retry_queue:
-            return
-
-        cached_entry = cache.get(abs_path)
-        ratingKey = cached_entry.get("ratingKey") if cached_entry else None
-
-        if not cached_entry or not ratingKey:
-            wait = self.nfo_wait if abs_path.endswith(".nfo") else self.video_wait
-            logging.info(f"[WATCHDOG] File created or needs re-add: {abs_path} (wait {wait}s)")
-            success = process_file(abs_path)
-            if not success:
-                logging.warning(f"[CACHE] Immediate process failed, enqueue retry: {abs_path}")
-                self._enqueue_retry(abs_path, wait)
+        for fpath in files_to_check:
+            if fpath not in self.retry_queue:
+                wait = self.nfo_wait if Path(fpath).suffix.lower() == ".nfo" else self.video_wait
+                self._enqueue_retry(fpath, wait)
 
 # ==============================
-# Watchdog 루프 시작
+# Watchdog Observer Loop
 # ==============================
 def start_watchdog(base_dirs):
     observer = Observer()
@@ -880,14 +850,57 @@ def start_watchdog(base_dirs):
     observer.start()
     logging.info("[WATCHDOG] Started observer")
 
+    # 첫 repair 스케줄링
+    schedule_cache_repair(CACHE_REPAIR_INTERVAL)
+    logging.info("[CACHE] Cache repair scheduler started")
+
     try:
         while True:
-            handler.process_retry_queue()  # retry 큐 + ratingKey 주기적 처리
+            try:
+                handler.process_retry_queue()
+            except Exception as e:
+                logging.error(f"[WATCHDOG] process_retry_queue failed: {e}", exc_info=True)
             time.sleep(1)
     except KeyboardInterrupt:
         logging.info("[WATCHDOG] Stopping observer")
         observer.stop()
-    observer.join()
+        with repair_lock:
+            if repair_timer:
+                repair_timer.cancel()
+        observer.join()
+
+# ==============================
+# Cache Repair: Missing ratingKeys only
+# ==============================
+def repair_missing_ratingkeys():
+    """Scan cache and restore missing ratingKeys from Plex."""
+    missing = [
+        path for path, data in cache.items()
+        if data is not None and not data.get("ratingKey") and Path(path).exists()
+    ]
+
+    if not missing:
+        logging.debug("[CACHE] No missing ratingKeys found.")
+        return
+
+    logging.info(f"[CACHE] Found {len(missing)} entries missing ratingKeys — attempting repair...")
+
+    repaired = 0
+    for path in missing:
+        try:
+            plex_item = find_plex_item(path)
+            if plex_item:
+                update_cache(path, ratingKey=plex_item.ratingKey)
+                logging.info(f"[CACHE] Restored ratingKey for {path} → {plex_item.ratingKey}")
+                repaired += 1
+        except Exception as e:
+            logging.warning(f"[CACHE] Failed to repair {path}: {e}")
+
+    if repaired > 0:
+        save_cache()
+        logging.info(f"[CACHE] RatingKey repair completed — {repaired} entries updated.")
+    else:
+        logging.info("[CACHE] No ratingKeys could be repaired.")
 
 # ==============================
 # Scan: NFO 전용 (신규)
@@ -949,7 +962,7 @@ def scan_and_update_cache(base_dirs):
                     cache[path] = {"ratingKey": plex_item.ratingKey}
                     logging.info(f"[CACHE] Added: {path} (ratingKey={plex_item.ratingKey})")
                 else:
-                    cache[path] = {}  # placeholder, ratingKey 없음
+                    cache[path] = {}  # placeholder
                     logging.info(f"[CACHE] Added (no Plex match): {path}")
                 added_count += 1
                 cache_modified = True
@@ -967,7 +980,6 @@ def scan_and_update_cache(base_dirs):
         logging.info(f"[CACHE] Update complete: +{added_count}, -{removed_count}, total={len(cache)}")
     else:
         logging.info("[CACHE] No changes detected.")
-
 
 def run_processing(base_dirs):
     """
@@ -999,10 +1011,9 @@ def run_processing(base_dirs):
                 logging.error(f"[MAIN] Failed: {futures[fut]} - {e}")
 
     # 4) 최종 캐시 저장
-    with cache_lock:
-        if cache_modified:
-            save_cache()
-            logging.info("[CACHE] Final cache saved successfully")
+    logging.debug("[CACHE] Final save_cache() called")
+    save_cache()
+    logging.info(f"[CACHE] Final cache saved successfully, {len(cache)} entries")
         
 # ==============================
 # Main NFO 처리 루프
