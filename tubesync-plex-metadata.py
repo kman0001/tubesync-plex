@@ -418,7 +418,7 @@ def find_plex_item(abs_path):
     return None
 
 # ==============================
-# NFO Process (titleSort 안전 적용)
+# NFO Process (titleSort 안전 적용, 재시도 친화적)
 # ==============================
 deleted_nfo_set = set()
 nfo_lock = threading.Lock()
@@ -456,7 +456,6 @@ def safe_edit(ep, title=None, summary=None, aired=None):
         logging.error(f"[SAFE_EDIT] Failed to edit item: {e}", exc_info=True)
         return False
 
-
 def apply_nfo(ep, file_path):
     nfo_path = Path(file_path).with_suffix(".nfo")
     if not nfo_path.exists() or nfo_path.stat().st_size == 0:
@@ -473,7 +472,8 @@ def apply_nfo(ep, file_path):
         if DETAIL:
             logging.debug(f"[-] Applying NFO: {file_path} -> {title}")
 
-        safe_edit(ep, title=title, summary=plot, aired=aired)
+        if not safe_edit(ep, title=title, summary=plot, aired=aired):
+            return False
 
         if title_sort:
             try:
@@ -483,11 +483,9 @@ def apply_nfo(ep, file_path):
             ep.reload()
 
         return True
-
     except Exception as e:
         logging.error(f"[!] Error applying NFO {nfo_path}: {e}", exc_info=True)
         return False
-
 
 def process_nfo(file_path):
     p = Path(file_path)
@@ -509,6 +507,9 @@ def process_nfo(file_path):
 
     str_video_path = str(video_path.resolve())
     nfo_hash = compute_nfo_hash(nfo_path)
+    if nfo_hash is None:
+        return False
+
     cached = cache.get(str_video_path, {})
     cached_hash = cached.get("nfo_hash")
 
@@ -525,7 +526,7 @@ def process_nfo(file_path):
                     except Exception as e:
                         logging.warning(f"[WARN] Failed to delete NFO {nfo_path}: {e}")
                     deleted_nfo_set.add(nfo_path)
-        return True  # 스킵했어도 정상 처리로 True 반환
+        return True  # 스킵해도 정상 처리로 True 반환
 
     # ✅ 캐시 불일치 또는 강제 적용 시 Plex 호출
     plex_item = None
@@ -543,7 +544,7 @@ def process_nfo(file_path):
                 update_cache(str_video_path, ratingKey=plex_item.ratingKey)
             else:
                 logging.warning(f"[WARN] Plex item not found for {str_video_path}")
-                return False
+                return False  # 🔹 실패 시 False 반환 -> Watchdog에서 재시도 가능
 
     # ✅ NFO 적용
     if plex_item:
@@ -560,9 +561,9 @@ def process_nfo(file_path):
                         deleted_nfo_set.add(nfo_path)
             return True
         else:
-            return False
+            return False  # 🔹 실패 시 False 반환
 
-    return True  # Plex 호출이 필요 없었던 경우
+    return True  # Plex 호출 필요 없었던 경우
 
 # ==============================
 # 파일 처리 통합 (영상 + NFO) - 멀티스레드 안전 (nfo_hash 검증 포함)
@@ -728,16 +729,23 @@ def repair_wrapper():
     schedule_cache_repair(CACHE_REPAIR_INTERVAL)
 
 # ==============================
-# Watchdog Handler (VIDEO_EXTS 반영, NFO 처리 안전)
+# Watchdog Handler (VIDEO_EXTS + NFO 처리 통합, 지능형 재시도)
 # ==============================
 class MediaFileHandler(FileSystemEventHandler):
+    MAX_NFO_RETRY = 5  # NFO 재시도 제한
+    MAX_RETRY_DELAY = 600  # 10분
+
     def __init__(self, nfo_wait=30, video_wait=5, debounce_delay=1.0):
         self.nfo_wait = nfo_wait
         self.video_wait = video_wait
         self.debounce_delay = debounce_delay
-        self.retry_queue = {}       # {path: (next_time, delay)}
-        self.last_event_time = {}   # debounce용
+        # retry_queue = { path: (next_time, delay, retry_count, is_nfo) }
+        self.retry_queue = {}
+        self.last_event_time = {}
 
+    # ==============================
+    # 유틸리티
+    # ==============================
     def _debounce(self, path):
         now = time.time()
         last_time = self.last_event_time.get(path, 0)
@@ -746,35 +754,65 @@ class MediaFileHandler(FileSystemEventHandler):
         self.last_event_time[path] = now
         return True
 
-    def _enqueue_retry(self, path, delay):
-        self.retry_queue[path] = (time.time() + delay, delay)
+    def _enqueue_retry(self, path, delay, retry_count=0, is_nfo=False):
+        """재시도 큐에 추가"""
+        self.retry_queue[path] = (time.time() + delay, delay, retry_count, is_nfo)
+        logging.debug(f"[WATCHDOG] Enqueued for retry ({'NFO' if is_nfo else 'VIDEO'}): {path} (delay={delay}s, retry={retry_count})")
 
+    # ==============================
+    # 재시도 큐 처리
+    # ==============================
     def process_retry_queue(self):
-        """retry_queue 처리 (폴더 내부 파일까지)"""
         global cache_modified
         now = time.time()
-        to_process = [p for p, (t, _) in self.retry_queue.items() if t <= now]
+        ready = [p for p, (t, _, _, _) in self.retry_queue.items() if t <= now]
 
-        for path in to_process:
-            _, delay = self.retry_queue.pop(path)
+        for path in ready:
+            next_time, delay, retry_count, is_nfo = self.retry_queue.pop(path)
             p = Path(path)
 
             if not p.exists():
                 logging.info(f"[WATCHDOG] Path no longer exists, removing from cache: {path}")
                 with cache_lock:
-                    cache.pop(path, None)
-                    cache_modified = True
+                    if path in cache:
+                        cache.pop(path)
+                        cache_modified = True
                 continue
 
-            # 폴더 내부 파일 처리
+            ext = p.suffix.lower()
+
+            # 폴더 내부 처리
             if p.is_dir():
                 for f in p.rglob("*"):
-                    if f.is_file() and f.suffix.lower() in VIDEO_EXTS:
-                        process_file(str(f.resolve()), schedule_timer=True)
+                    if not f.is_file():
+                        continue
+                    fext = f.suffix.lower()
+                    if fext in VIDEO_EXTS:
+                        self._enqueue_retry(str(f.resolve()), self.video_wait)
+                    elif fext == ".nfo":
+                        self._enqueue_retry(str(f.resolve()), self.nfo_wait, is_nfo=True)
                 continue
 
-            # 파일 처리
-            process_file(str(p.resolve()), schedule_timer=True)
+            # 단일 파일 처리
+            success = False
+            if ext in VIDEO_EXTS:
+                logging.info(f"[WATCHDOG] Processing video: {path}")
+                success = process_file(str(p.resolve()))
+            elif ext == ".nfo":
+                logging.info(f"[WATCHDOG] Processing NFO: {path}")
+                success = process_nfo(str(p.resolve()))
+            else:
+                logging.debug(f"[WATCHDOG] Ignored non-video/non-NFO file: {p}")
+                continue
+
+            # 실패 시 재시도
+            if not success:
+                if is_nfo and retry_count + 1 >= self.MAX_NFO_RETRY:
+                    logging.warning(f"[WATCHDOG] Max retries reached for NFO: {path}")
+                    continue
+                new_delay = min(delay * 2, self.MAX_RETRY_DELAY)
+                self._enqueue_retry(path, new_delay, retry_count + 1, is_nfo)
+                logging.warning(f"[WATCHDOG] Retry scheduled for {path} in {new_delay}s (retry #{retry_count + 1})")
 
         if cache_modified:
             logging.info(f"[CACHE] Saving cache, {len(cache)} entries")
@@ -788,12 +826,18 @@ class MediaFileHandler(FileSystemEventHandler):
         if not self._debounce(event.src_path):
             return
         path = str(Path(event.src_path).resolve())
-        wait = self.nfo_wait if path.endswith(".nfo") else self.video_wait
-        self._enqueue_retry(path, wait)
+        ext = Path(path).suffix.lower()
+
+        # 🎬 영상 파일 또는 📄 NFO 파일만 처리
+        if ext in VIDEO_EXTS:
+            self._enqueue_retry(path, self.video_wait, is_nfo=False)
+        elif ext == ".nfo":
+            self._enqueue_retry(path, self.nfo_wait, is_nfo=True)
+        else:
+            logging.debug(f"[WATCHDOG] Ignored file: {path}")
 
     def on_deleted(self, event):
-        path = str(Path(event.src_path).resolve())
-        self._handle_deleted(path)
+        self._handle_deleted(str(Path(event.src_path).resolve()))
 
     def on_moved(self, event):
         src = str(Path(event.src_path).resolve())
@@ -810,33 +854,38 @@ class MediaFileHandler(FileSystemEventHandler):
         if not self._debounce(abs_path):
             return
         keys_to_remove = [k for k in cache.keys() if k == abs_path or k.startswith(f"{abs_path}/")]
+        if not keys_to_remove:
+            return  # 🔹 변경사항 없으면 바로 리턴
         for k in keys_to_remove:
             remove_from_cache(k)
             logging.info(f"[CACHE] Removed {k} (deleted/moved)")
         global cache_modified
         cache_modified = True
-        save_cache()
 
     # ==============================
-    # 생성/이동 이벤트 처리 (retry queue 등록)
+    # 생성/이동 이벤트 처리
     # ==============================
     def _handle_created(self, abs_path):
-        """단순히 retry_queue 등록만 수행"""
+        """폴더 내부 포함하여 영상/NFO만 큐에 등록"""
         abs_path = str(Path(abs_path).resolve())
         if not self._debounce(abs_path):
             return
 
-        files_to_check = []
         p = Path(abs_path)
+        paths = []
         if p.is_dir():
-            files_to_check = [str(f.resolve()) for f in p.rglob("*") if f.is_file()]
+            paths = [str(f.resolve()) for f in p.rglob("*") if f.is_file()]
         else:
-            files_to_check = [abs_path]
+            paths = [abs_path]
 
-        for fpath in files_to_check:
-            if fpath not in self.retry_queue:
-                wait = self.nfo_wait if Path(fpath).suffix.lower() == ".nfo" else self.video_wait
-                self._enqueue_retry(fpath, wait)
+        for f in paths:
+            ext = Path(f).suffix.lower()
+            if ext in VIDEO_EXTS:
+                self._enqueue_retry(f, self.video_wait, is_nfo=False)
+            elif ext == ".nfo":
+                self._enqueue_retry(f, self.nfo_wait, is_nfo=True)
+            else:
+                logging.debug(f"[WATCHDOG] Ignored file in folder: {f}")
 
 # ==============================
 # Watchdog Observer Loop
