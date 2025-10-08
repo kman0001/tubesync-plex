@@ -321,7 +321,7 @@ def setup_ffmpeg():
         r = requests.get(md5_url, timeout=10)
         r.raise_for_status()
         remote_md5 = r.text.strip().split()[0]
-        logging.info(f"[DEBUG] Remote MD5: {remote_md5}")
+        logging.info(f"Remote MD5: {remote_md5}")
     except Exception as e:
         logging.warning(f"Failed to fetch remote MD5: {e}")
         remote_md5 = None
