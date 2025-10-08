@@ -80,12 +80,12 @@ default_config = {
         "SILENT": "true = only summary logs, False = detailed logs",
         "DETAIL": "true = verbose mode (debug output)",
         "SUBTITLES": "true = extract and upload SUBTITLES",
-        "ALWAYS_APPLY_NFO": "true = always apply NFO metadata regardless of hash",
         "THREADS": "Number of worker THREADS for initial scanning",
         "MAX_CONCURRENT_REQUESTS": "Max concurrent Plex API requests",
         "REQUEST_DELAY": "Delay between Plex API requests (sec)",
         "WATCH_FOLDERS": "true = enable real-time folder monitoring",
         "WATCH_DEBOUNCE_DELAY": "Debounce time (sec) before processing events",
+        "ALWAYS_APPLY_NFO": "true = always apply NFO metadata regardless of hash",
         "DELETE_NFO_AFTER_APPLY": "true = remove NFO file after applying"
     },
     "PLEX_BASE_URL": "",
@@ -94,12 +94,12 @@ default_config = {
     "SILENT": False,
     "DETAIL": False,
     "SUBTITLES": False,
-    "ALWAYS_APPLY_NFO": True,
     "THREADS": 8,
     "MAX_CONCURRENT_REQUESTS": 4,
     "REQUEST_DELAY": 0.2,
-    "WATCH_FOLDERS": True,
+    "WATCH_FOLDERS": False,
     "WATCH_DEBOUNCE_DELAY": 3,
+    "ALWAYS_APPLY_NFO": False,
     "DELETE_NFO_AFTER_APPLY": True,
 }
 
