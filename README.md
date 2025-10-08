@@ -149,8 +149,8 @@ Edit `config.json` with your Plex server and processing settings:
 
 * `PLEX_BASE_URL`: Base URL of your Plex server. Example: `http://localhost:32400.`
 * `PLEX_TOKEN`: Your Plex authentication token.
-* `PLEX_LIBRARY_IDS`: **List of libraries to sync**List of Plex library section IDs to process.
-                      Check the Plex Web UI URL:
+* `PLEX_LIBRARY_IDS`: **List of libraries to sync**List of Plex library section IDs to process.  
+                      Check the Plex Web UI URL:  
                       `://localhost:32400/web/index.html#!/library/sections/1 → ID = 1.`
 * `SILENT`: If `true`, only summary logs are printed. Useful for cron jobs.
 * `DETAIL`: If `true`, enables verbose debugging logs.
@@ -160,7 +160,7 @@ Edit `config.json` with your Plex server and processing settings:
 * `REQUEST_DELAY`: Delay in seconds between Plex API requests to prevent rate limiting.
 * `WATCH_FOLDERS`: If `true`, enables real-time folder monitoring using watchdog. (default `false`)
 * `WATCH_DEBOUNCE_DELAY`: Debounce delay (in seconds) for file events to avoid duplicate processing.
-* `ALWAYS_APPLY_NFO`: If `true`, NFO metadata is applied **even if the hash matches the cached value.**
+* `ALWAYS_APPLY_NFO`: If `true`, NFO metadata is applied **even if the hash matches the cached value.**  
                       Useful if Plex sometimes ignores previous metadata changes. (default `false`)
 * `DELETE_NFO_AFTER_APPLY`: If `true`, NFO files are automatically deleted after successful metadata application. (default `true`)
 
