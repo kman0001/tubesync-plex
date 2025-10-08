@@ -127,39 +127,47 @@ bash /tubesync-plex.sh --base-dir /tubesync-plex
 
 ## Configuration
 
-Edit `config.json` with your Plex server details:
+Edit `config.json` with your Plex server and processing settings:
 
 ```json
 {
-    "plex_base_url": "http://localhost:32400",
-    "plex_token": "YOUR_PLEX_TOKEN",
-    "plex_library_names": ["TV Shows", "Movies"],
-    "silent": false,
-    "detail": false,
-    "subtitles": false,
-    "threads": 8,
-    "max_concurrent_requests": 4,
-    "request_delay": 0.2,
-    "watch_folders": false,
-    "watch_debounce_delay": 2
+    "PLEX_BASE_URL": "http://localhost:32400",
+    "PLEX_TOKEN": "YOUR_PLEX_TOKEN",
+    "PLEX_LIBRARY_IDS": [1, 2],
+    "SILENT": false,
+    "DETAIL": false,
+    "SUBTITLES": false,
+    "ALWAYS_APPLY_NFO": true,
+    "THREADS": 8,
+    "MAX_CONCURRENT_REQUESTS": 4,
+    "REQUEST_DELAY": 0.2,
+    "WATCH_FOLDERS": true,
+    "WATCH_DEBOUNCE_DELAY": 3,
+    "DELETE_NFO_AFTER_APPLY": true
 }
 ```
 
-* `plex_base_url`: Plex server URL
-* `plex_token`: Plex server token
-* `plex_library_names`: List of libraries to sync
-* `silent`: Suppress logs if `true`
-* `detail`: Show detailed logs if `true`
-* `subtitles`: Extract embedded subtitles and upload to Plex (default `false`)
-* `threads`: Number of threads for processing files
-* `max_concurrent_requests`: Limit concurrent Plex API requests
-* `request_delay`: Delay between Plex API requests (seconds)
-* `watch_folders`: Enable folder watching (default `false`)
-* `watch_debounce_delay`: Debounce delay for folder watching in seconds
+* `PLEX_BASE_URL`: Base URL of your Plex server. Example: `http://localhost:32400.`
+* `PLEX_TOKEN`: Your Plex authentication token.
+* `PLEX_LIBRARY_IDS`: **List of libraries to sync**List of Plex library section IDs to process.
+                      Check the Plex Web UI URL:
+                      `://localhost:32400/web/index.html#!/library/sections/1 → ID = 1.`
+* `SILENT`: If `true`, only summary logs are printed. Useful for cron jobs.
+* `DETAIL`: If `true`, enables verbose debugging logs.
+* `SUBTITLES`: If `true`, extracts embedded subtitles and uploads them to Plex. (default `false`)
+* `THREADS`: Number of worker threads used for initial scanning and processing.
+* `MAX_CONCURRENT_REQUESTS`: Maximum number of concurrent Plex API requests.
+* `REQUEST_DELAY`: Delay in seconds between Plex API requests to prevent rate limiting.
+* `WATCH_FOLDERS`: If `true`, enables real-time folder monitoring using watchdog. (default `false`)
+* `WATCH_DEBOUNCE_DELAY`: Debounce delay (in seconds) for file events to avoid duplicate processing.
+* `ALWAYS_APPLY_NFO`: If `true`, NFO metadata is applied **even if the hash matches the cached value.**
+                      Useful if Plex sometimes ignores previous metadata changes. (default `false`)
+* `DELETE_NFO_AFTER_APPLY`: If `true`, NFO files are automatically deleted after successful metadata application. (default `true`)
 
 > **Note:**  
-> Set `watch_folders` to `false` when running via cron.  
-> `config.json` file is located at `<base_dir>/config/config.json`.
+> Set WATCH_FOLDERS to false if you're running the script periodically (e.g., via cron).
+> The config.json file should be located at <base_dir>/config/config.json.
+> Make sure the Plex library IDs are correct; otherwise, no items will be processed.
 
 ---
 
