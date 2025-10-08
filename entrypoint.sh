@@ -15,5 +15,5 @@ echo "[INFO] Running initial metadata sync (watchdog disabled)..."
 "$PYTHON_BIN" -u "$BASE_DIR/tubesync-plex-metadata.py" \
   --config "$CONFIG_FILE" --disable-watchdog "$@"
 
-echo "[INFO] Starting folder watch according to config..."
-exec "$PYTHON_BIN" -u "$BASE_DIR/tubesync-plex-metadata.py" --config "$CONFIG_FILE" "$@"
+echo "[INFO] Starting folder watch..."
+exec "$PYTHON_BIN" -u "$BASE_DIR/tubesync-plex-metadata.py" --config "$CONFIG_FILE" --enable-watchdog "$@"
