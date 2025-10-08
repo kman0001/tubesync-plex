@@ -2,7 +2,7 @@ name: Build and Push Multi-Arch Docker Image
 
 on:
   schedule:
-    - cron: '0 0 1 */3 *'  # 3개월마다 1일 00:00 UTC
+    - cron: '0 0 1 * *'  # 1개월마다 1일 00:00 UTC
   workflow_dispatch:   # ✅ 수동 실행만 허용
   # push:
   #   branches:
