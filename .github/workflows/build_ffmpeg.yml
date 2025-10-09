@@ -95,7 +95,7 @@ jobs:
           echo $FF_VERSION > build/${ARCH}/version.txt
 
       - name: Upload FFmpeg binaries as artifacts
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: ffmpeg-${{ matrix.arch }}
           path: ffmpeg-${FF_VERSION}/build/${{ matrix.arch }}/bin/
