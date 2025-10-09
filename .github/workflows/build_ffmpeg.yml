@@ -6,11 +6,9 @@ on:
   workflow_dispatch:    # 수동 실행 가능
 
 jobs:
-  build:
+  build-x86_64:
+    name: Build FFmpeg x86_64
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        arch: [x86_64, aarch64]
 
     steps:
       - name: Checkout repository
@@ -24,60 +22,24 @@ jobs:
             libtool pkg-config yasm nasm curl wget \
             zlib1g-dev libfdk-aac-dev libass-dev
 
-      - name: Set target architecture
-        run: |
-          if [ "${{ matrix.arch }}" = "x86_64" ]; then
-            echo "ARCH=x86_64" >> $GITHUB_ENV
-          else
-            echo "ARCH=aarch64" >> $GITHUB_ENV
-          fi
-
-      - name: Fetch latest FFmpeg release version
+      - name: Fetch latest FFmpeg version
         id: ffver
         run: |
           LATEST=$(curl -s https://ffmpeg.org/releases/ | grep -oP 'ffmpeg-\K[0-9]+\.[0-9]+(\.[0-9]+)?(?=\.tar\.bz2)' | sort -V | tail -1)
           echo "FF_VERSION=$LATEST" >> $GITHUB_ENV
           echo "Latest FFmpeg version: $LATEST"
 
-      - name: Check existing version
-        id: check
-        run: |
-          VERSION_FILE="ffmpeg/${ARCH}/version.txt"
-          if [ -f "$VERSION_FILE" ]; then
-            EXISTING=$(cat $VERSION_FILE)
-          else
-            EXISTING="0.0.0"
-          fi
-          echo "EXISTING_VERSION=$EXISTING" >> $GITHUB_ENV
-          if dpkg --compare-versions "$EXISTING" "ge" "$FF_VERSION"; then
-            echo "UP_TO_DATE=true" >> $GITHUB_ENV
-          else
-            echo "UP_TO_DATE=false" >> $GITHUB_ENV
-          fi
-          echo "Existing version: $EXISTING, Up-to-date: $UP_TO_DATE"
-
-      - name: Skip build if up-to-date
-        if: env.UP_TO_DATE == 'true'
-        run: |
-          echo "FFmpeg is already up-to-date for ${{ matrix.arch }}, skipping build."
-          exit 0
-
       - name: Download FFmpeg source
         run: |
-          SRC_DIR="/tmp/ffmpeg_src_${ARCH}"
-          mkdir -p "$SRC_DIR"
-          wget -O "$SRC_DIR/ffmpeg.tar.bz2" https://ffmpeg.org/releases/ffmpeg-${FF_VERSION}.tar.bz2
-          tar xjf "$SRC_DIR/ffmpeg.tar.bz2" -C "$SRC_DIR"
+          wget https://ffmpeg.org/releases/ffmpeg-${FF_VERSION}.tar.bz2
+          tar xjf ffmpeg-${FF_VERSION}.tar.bz2
 
-      - name: Configure & build minimal FFmpeg
+      - name: Configure & build minimal FFmpeg (x86_64)
         run: |
-          SRC_DIR="/tmp/ffmpeg_src_${ARCH}/ffmpeg-${FF_VERSION}"
-          BUILD_PATH="$PWD/ffmpeg/${ARCH}"
-          mkdir -p "$BUILD_PATH"
-          cd "$SRC_DIR"
+          cd ffmpeg-${FF_VERSION}
+          mkdir -p build/x86_64
           ./configure \
-            --prefix="$BUILD_PATH" \
-            --arch="$ARCH" \
+            --prefix=$PWD/build/x86_64 \
             --disable-doc \
             --disable-ffplay \
             --disable-network \
@@ -95,10 +57,77 @@ jobs:
             --enable-parser=subrip
           make -j$(nproc)
           make install
-          echo $FF_VERSION > "$BUILD_PATH/version.txt"
+          echo $FF_VERSION > build/x86_64/version.txt
 
-      - name: Upload FFmpeg binaries as artifacts
+      - name: Upload x86_64 FFmpeg binaries
         uses: actions/upload-artifact@v4
         with:
-          name: ffmpeg-${{ matrix.arch }}
-          path: ffmpeg/${{ matrix.arch }}/bin/
+          name: ffmpeg-x86_64
+          path: ffmpeg-${FF_VERSION}/build/x86_64/bin/
+
+  build-aarch64:
+    name: Build FFmpeg aarch64
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Setup QEMU (ARM emulation)
+        uses: docker/setup-qemu-action@v2
+        with:
+          platforms: arm64
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            autoconf automake build-essential cmake git \
+            libtool pkg-config yasm nasm curl wget \
+            zlib1g-dev libfdk-aac-dev libass-dev \
+            gcc-aarch64-linux-gnu
+
+      - name: Fetch latest FFmpeg version
+        id: ffver
+        run: |
+          LATEST=$(curl -s https://ffmpeg.org/releases/ | grep -oP 'ffmpeg-\K[0-9]+\.[0-9]+(\.[0-9]+)?(?=\.tar\.bz2)' | sort -V | tail -1)
+          echo "FF_VERSION=$LATEST" >> $GITHUB_ENV
+          echo "Latest FFmpeg version: $LATEST"
+
+      - name: Download FFmpeg source
+        run: |
+          wget https://ffmpeg.org/releases/ffmpeg-${FF_VERSION}.tar.bz2
+          tar xjf ffmpeg-${FF_VERSION}.tar.bz2
+
+      - name: Configure & build minimal FFmpeg (aarch64)
+        run: |
+          cd ffmpeg-${FF_VERSION}
+          mkdir -p build/aarch64
+          ./configure \
+            --prefix=$PWD/build/aarch64 \
+            --arch=aarch64 \
+            --cross-prefix=aarch64-linux-gnu- \
+            --disable-doc \
+            --disable-ffplay \
+            --disable-network \
+            --disable-debug \
+            --enable-small \
+            --disable-programs \
+            --disable-everything \
+            --enable-decoder=subrip \
+            --enable-decoder=dvdsub \
+            --enable-decoder=hdmv_pgs \
+            --enable-demuxer=mov \
+            --enable-demuxer=matroska \
+            --enable-muxer=mp4 \
+            --enable-muxer=mkv \
+            --enable-parser=subrip
+          make -j$(nproc)
+          make install
+          echo $FF_VERSION > build/aarch64/version.txt
+
+      - name: Upload aarch64 FFmpeg binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: ffmpeg-aarch64
+          path: ffmpeg-${FF_VERSION}/build/aarch64/bin/
