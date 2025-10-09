@@ -2,11 +2,11 @@ name: FFmpeg Multi-Arch Minimal Build
 
 on:
   schedule:
-    - cron: '0 1 1 * *' # 매월 1일 UTC 01:00
-  workflow_dispatch: # 수동 실행 가능
+    - cron: '0 1 1 * *'  # 매월 1일 UTC 01:00
+  workflow_dispatch:     # 수동 실행 가능
 
 jobs:
-  build_ffmpeg:
+  build:
     runs-on: ubuntu-latest
     env:
       ARCHS: x86_64 aarch64
@@ -27,20 +27,18 @@ jobs:
       - name: Fetch latest FFmpeg release version
         id: ffver
         run: |
-          LATEST=$(curl -s https://ffmpeg.org/releases/ | \
-            grep -oE 'ffmpeg-[0-9]+\.[0-9]+(\.[0-9]+)?\.tar\.bz2' | \
-            sed -E 's/ffmpeg-|\.tar\.bz2//g' | sort -V | tail -1)
+          LATEST=$(curl -s https://ffmpeg.org/releases/ | grep -oE 'ffmpeg-[0-9]+\.[0-9]+(\.[0-9]+)?\.tar\.bz2' | sed -E 's/ffmpeg-|\.tar\.bz2//g' | sort -V | tail -1)
           echo "FF_VERSION=$LATEST" >> $GITHUB_ENV
           echo "Latest FFmpeg version: $LATEST"
 
-      - name: Build for architectures sequentially
+      - name: Sequential build per architecture
         run: |
           for ARCH in $ARCHS; do
-            echo "=== Building FFmpeg for $ARCH ==="
+            echo "Building FFmpeg for $ARCH"
+
             BUILD_DIR="ffmpeg/$ARCH"
             mkdir -p $BUILD_DIR
             VERSION_FILE="$BUILD_DIR/version.txt"
-
             if [ -f "$VERSION_FILE" ]; then
               EXISTING=$(cat "$VERSION_FILE")
             else
@@ -49,14 +47,17 @@ jobs:
             echo "Existing version: $EXISTING"
 
             if dpkg --compare-versions "$EXISTING" "ge" "$FF_VERSION"; then
-              echo "FFmpeg $ARCH is up-to-date, skipping build."
+              echo "Up-to-date, skipping $ARCH"
               continue
             fi
 
+            # Clean old source
+            rm -rf ffmpeg-$FF_VERSION
             wget https://ffmpeg.org/releases/ffmpeg-${FF_VERSION}.tar.bz2
             tar xjf ffmpeg-${FF_VERSION}.tar.bz2
             cd ffmpeg-${FF_VERSION}
 
+            # Configure
             if [ "$ARCH" = "x86_64" ]; then
               ./configure \
                 --prefix=$PWD/../$BUILD_DIR \
@@ -109,11 +110,18 @@ jobs:
             echo $FF_VERSION > ../$BUILD_DIR/version.txt
             cd ..
 
-            # Commit only the three required files
-            npx git-auto-commit-action \
-              --commit_message "Auto-build FFmpeg $FF_VERSION ($ARCH)" \
-              --branch main \
-              --file_pattern "$BUILD_DIR/ffmpeg" \
-              --file_pattern "$BUILD_DIR/ffprobe" \
-              --file_pattern "$BUILD_DIR/version.txt"
+            echo "FFmpeg build complete for $ARCH"
           done
+
+      - name: Commit and push built binaries
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "Auto-build FFmpeg ${{ env.FF_VERSION }} (x86_64 + aarch64)"
+          branch: main
+          file_pattern: |
+            ffmpeg/x86_64/ffmpeg
+            ffmpeg/x86_64/ffprobe
+            ffmpeg/x86_64/version.txt
+            ffmpeg/aarch64/ffmpeg
+            ffmpeg/aarch64/ffprobe
+            ffmpeg/aarch64/version.txt
