@@ -20,10 +20,12 @@ jobs:
             libtool pkg-config yasm nasm curl wget \
             zlib1g-dev libfdk-aac-dev libass-dev
 
-      - name: Fetch latest FFmpeg release version
+      - name: Fetch latest FFmpeg release
         id: ffver
         run: |
-          LATEST=$(curl -s https://ffmpeg.org/releases/ | grep -oP 'ffmpeg-\K[0-9]+\.[0-9]+(\.[0-9]+)?(?=\.tar\.bz2)' | sort -V | tail -1)
+          LATEST=$(curl -s https://ffmpeg.org/releases/ \
+                   | grep -oP 'ffmpeg-\K[0-9]+\.[0-9]+(\.[0-9]+)?(?=\.tar\.bz2)' \
+                   | sort -V | tail -1)
           echo "FF_VERSION=$LATEST" >> $GITHUB_ENV
           echo "Latest FFmpeg version: $LATEST"
 
@@ -47,7 +49,7 @@ jobs:
       - name: Skip build if up-to-date
         if: env.UP_TO_DATE == 'true'
         run: |
-          echo "FFmpeg is already up-to-date for x86_64, skipping build."
+          echo "FFmpeg x86_64 is already up-to-date. Skipping build."
           exit 0
 
       - name: Download FFmpeg source
@@ -58,7 +60,6 @@ jobs:
       - name: Configure & build minimal FFmpeg
         run: |
           cd ffmpeg-${FF_VERSION}
-          mkdir -p ../ffmpeg/x86_64
           ./configure \
             --prefix=$PWD/../ffmpeg/x86_64 \
             --arch=x86_64 \
@@ -68,8 +69,7 @@ jobs:
             --disable-network \
             --disable-debug \
             --enable-small \
-            --enable-ffmpeg \
-            --enable-ffprobe \
+            --disable-programs \
             --disable-everything \
             --enable-decoder=subrip \
             --enable-decoder=dvdsub \
@@ -83,11 +83,12 @@ jobs:
           make install
           echo $FF_VERSION > ../ffmpeg/x86_64/version.txt
 
-      - name: Upload x86_64 binaries
-        uses: actions/upload-artifact@v4
+      - name: Commit & push x86_64 binaries
+        uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          name: ffmpeg-x86_64
-          path: ffmpeg/x86_64/bin/
+          commit_message: "Update x86_64 FFmpeg to ${{ env.FF_VERSION }}"
+          branch: main
+          file_pattern: ffmpeg/x86_64/*
 
   build_aarch64:
     runs-on: ubuntu-latest
@@ -104,10 +105,12 @@ jobs:
             zlib1g-dev libfdk-aac-dev libass-dev \
             gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
 
-      - name: Fetch latest FFmpeg release version
+      - name: Fetch latest FFmpeg release
         id: ffver
         run: |
-          LATEST=$(curl -s https://ffmpeg.org/releases/ | grep -oP 'ffmpeg-\K[0-9]+\.[0-9]+(\.[0-9]+)?(?=\.tar\.bz2)' | sort -V | tail -1)
+          LATEST=$(curl -s https://ffmpeg.org/releases/ \
+                   | grep -oP 'ffmpeg-\K[0-9]+\.[0-9]+(\.[0-9]+)?(?=\.tar\.bz2)' \
+                   | sort -V | tail -1)
           echo "FF_VERSION=$LATEST" >> $GITHUB_ENV
           echo "Latest FFmpeg version: $LATEST"
 
@@ -131,7 +134,7 @@ jobs:
       - name: Skip build if up-to-date
         if: env.UP_TO_DATE == 'true'
         run: |
-          echo "FFmpeg is already up-to-date for aarch64, skipping build."
+          echo "FFmpeg aarch64 is already up-to-date. Skipping build."
           exit 0
 
       - name: Download FFmpeg source
@@ -142,7 +145,6 @@ jobs:
       - name: Configure & build minimal FFmpeg
         run: |
           cd ffmpeg-${FF_VERSION}
-          mkdir -p ../ffmpeg/aarch64
           ./configure \
             --prefix=$PWD/../ffmpeg/aarch64 \
             --arch=aarch64 \
@@ -153,8 +155,7 @@ jobs:
             --disable-network \
             --disable-debug \
             --enable-small \
-            --enable-ffmpeg \
-            --enable-ffprobe \
+            --disable-programs \
             --disable-everything \
             --enable-decoder=subrip \
             --enable-decoder=dvdsub \
@@ -168,8 +169,9 @@ jobs:
           make install
           echo $FF_VERSION > ../ffmpeg/aarch64/version.txt
 
-      - name: Upload aarch64 binaries
-        uses: actions/upload-artifact@v4
+      - name: Commit & push aarch64 binaries
+        uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          name: ffmpeg-aarch64
-          path: ffmpeg/aarch64/bin/
+          commit_message: "Update aarch64 FFmpeg to ${{ env.FF_VERSION }}"
+          branch: main
+          file_pattern: ffmpeg/aarch64/*
