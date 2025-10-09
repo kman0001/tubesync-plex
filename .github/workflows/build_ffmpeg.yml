@@ -2,101 +2,21 @@ name: FFmpeg Multi-Arch Minimal Build
 
 on:
   schedule:
-    - cron: '0 1 1 * *' # 매월 1일 UTC 00:00
+    - cron: '0 1 1 * *' # 매월 1일 UTC 00:00 (한국시간 오전 10시)
   workflow_dispatch: # 수동 실행 가능
 
 jobs:
-  build_x86_64:
+  build:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        arch: [x86_64, aarch64]
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Install build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            autoconf automake build-essential cmake git \
-            libtool pkg-config yasm nasm curl wget \
-            zlib1g-dev libfdk-aac-dev libass-dev
-
-      - name: Fetch latest FFmpeg release version
-        id: ffver
-        run: |
-          LATEST=$(curl -s https://ffmpeg.org/releases/ | grep -oE 'ffmpeg-[0-9]+\.[0-9]+(\.[0-9]+)?\.tar\.bz2' | sed -E 's/ffmpeg-|\.tar\.bz2//g' | sort -V | tail -1)
-          echo "FF_VERSION=$LATEST" >> $GITHUB_ENV
-          echo "Latest FFmpeg version: $LATEST"
-
-      - name: Prepare build directory
-        run: |
-          BUILD_DIR="ffmpeg/x86_64"
-          mkdir -p $BUILD_DIR
-          VERSION_FILE="$BUILD_DIR/version.txt"
-          if [ -f "$VERSION_FILE" ]; then
-            EXISTING=$(cat "$VERSION_FILE")
-          else
-            EXISTING="0.0.0"
-          fi
-          echo "EXISTING_VERSION=$EXISTING" >> $GITHUB_ENV
-          if dpkg --compare-versions "$EXISTING" "ge" "$FF_VERSION"; then
-            echo "UP_TO_DATE=true" >> $GITHUB_ENV
-          else
-            echo "UP_TO_DATE=false" >> $GITHUB_ENV
-          fi
-
-      - name: Skip build if up-to-date
-        if: env.UP_TO_DATE == 'true'
-        run: |
-          echo "FFmpeg is already up-to-date for x86_64, skipping build."
-          exit 0
-
-      - name: Download FFmpeg source
-        run: |
-          wget https://ffmpeg.org/releases/ffmpeg-${FF_VERSION}.tar.bz2
-          tar xjf ffmpeg-${FF_VERSION}.tar.bz2
-
-      - name: Configure & build minimal FFmpeg (x86_64)
-        run: |
-          cd ffmpeg-${FF_VERSION}
-          ./configure \
-            --prefix=$PWD/../ffmpeg/x86_64 \
-            --arch=x86_64 \
-            --target-os=linux \
-            --disable-doc \
-            --disable-ffplay \
-            --disable-network \
-            --disable-debug \
-            --enable-small \
-            --disable-programs \
-            --disable-everything \
-            --enable-ffmpeg \
-            --enable-ffprobe \
-            --enable-decoder=subrip \
-            --enable-decoder=dvdsub \
-            --enable-decoder=hdmv_pgs \
-            --enable-demuxer=mov \
-            --enable-demuxer=matroska \
-            --enable-muxer=mp4 \
-            --enable-muxer=mkv \
-            --enable-parser=subrip
-          make -j$(nproc)
-          make install
-          echo $FF_VERSION > ../ffmpeg/x86_64/version.txt
-
-      - name: Commit and push built binaries
-        uses: stefanzweifel/git-auto-commit-action@v5
-        with:
-          commit_message: "Auto-build FFmpeg ${{ env.FF_VERSION }} (x86_64)"
-          branch: main
-          file_pattern: ffmpeg/x86_64/**
-
-  build_aarch64:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Install cross-compile dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -108,13 +28,15 @@ jobs:
       - name: Fetch latest FFmpeg release version
         id: ffver
         run: |
-          LATEST=$(curl -s https://ffmpeg.org/releases/ | grep -oE 'ffmpeg-[0-9]+\.[0-9]+(\.[0-9]+)?\.tar\.bz2' | sed -E 's/ffmpeg-|\.tar\.bz2//g' | sort -V | tail -1)
+          LATEST=$(curl -s https://ffmpeg.org/releases/ | \
+            grep -oE 'ffmpeg-[0-9]+\.[0-9]+(\.[0-9]+)?\.tar\.bz2' | \
+            sed -E 's/ffmpeg-|\.tar\.bz2//g' | sort -V | tail -1)
           echo "FF_VERSION=$LATEST" >> $GITHUB_ENV
-          echo "Latest FFmpeg version: $LATEST"
+          echo "✅ Latest FFmpeg version: $LATEST"
 
       - name: Prepare build directory
         run: |
-          BUILD_DIR="ffmpeg/aarch64"
+          BUILD_DIR="ffmpeg/${{ matrix.arch }}"
           mkdir -p $BUILD_DIR
           VERSION_FILE="$BUILD_DIR/version.txt"
           if [ -f "$VERSION_FILE" ]; then
@@ -123,40 +45,50 @@ jobs:
             EXISTING="0.0.0"
           fi
           echo "EXISTING_VERSION=$EXISTING" >> $GITHUB_ENV
+
           if dpkg --compare-versions "$EXISTING" "ge" "$FF_VERSION"; then
             echo "UP_TO_DATE=true" >> $GITHUB_ENV
           else
             echo "UP_TO_DATE=false" >> $GITHUB_ENV
           fi
 
-      - name: Skip build if up-to-date
+      - name: Skip build if already up-to-date
         if: env.UP_TO_DATE == 'true'
         run: |
-          echo "FFmpeg is already up-to-date for aarch64, skipping build."
+          echo "🟢 FFmpeg $FF_VERSION already built for ${{ matrix.arch }}. Skipping."
           exit 0
 
       - name: Download FFmpeg source
         run: |
-          wget https://ffmpeg.org/releases/ffmpeg-${FF_VERSION}.tar.bz2
+          wget -q https://ffmpeg.org/releases/ffmpeg-${FF_VERSION}.tar.bz2
           tar xjf ffmpeg-${FF_VERSION}.tar.bz2
 
-      - name: Configure & build minimal FFmpeg (aarch64)
+      - name: Configure & build minimal FFmpeg (${{ matrix.arch }})
         run: |
           cd ffmpeg-${FF_VERSION}
+          PREFIX_DIR=$GITHUB_WORKSPACE/ffmpeg/${{ matrix.arch }}
+          mkdir -p $PREFIX_DIR/bin
+
+          if [ "${{ matrix.arch }}" = "aarch64" ]; then
+            CROSS_PREFIX="aarch64-linux-gnu-"
+            ARCH_FLAGS="--arch=aarch64 --target-os=linux"
+          else
+            CROSS_PREFIX=""
+            ARCH_FLAGS="--arch=x86_64 --target-os=linux"
+          fi
+
           ./configure \
-            --prefix=$PWD/../ffmpeg/aarch64 \
-            --arch=aarch64 \
-            --target-os=linux \
-            --cross-prefix=aarch64-linux-gnu- \
+            --prefix=$PREFIX_DIR \
+            $ARCH_FLAGS \
+            ${CROSS_PREFIX:+--cross-prefix=$CROSS_PREFIX} \
             --disable-doc \
             --disable-ffplay \
             --disable-network \
             --disable-debug \
             --enable-small \
-            --disable-programs \
-            --disable-everything \
             --enable-ffmpeg \
             --enable-ffprobe \
+            --disable-everything \
             --enable-decoder=subrip \
             --enable-decoder=dvdsub \
             --enable-decoder=hdmv_pgs \
@@ -165,13 +97,15 @@ jobs:
             --enable-muxer=mp4 \
             --enable-muxer=mkv \
             --enable-parser=subrip
+
           make -j$(nproc)
           make install
-          echo $FF_VERSION > ../ffmpeg/aarch64/version.txt
+
+          echo $FF_VERSION > $PREFIX_DIR/version.txt
 
       - name: Commit and push built binaries
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: "Auto-build FFmpeg ${{ env.FF_VERSION }} (aarch64)"
+          commit_message: "Auto-build FFmpeg ${{ env.FF_VERSION }} (${{ matrix.arch }})"
           branch: main
-          file_pattern: ffmpeg/aarch64/**
+          file_pattern: ffmpeg/${{ matrix.arch }}/**
