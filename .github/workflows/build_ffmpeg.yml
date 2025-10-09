@@ -2,15 +2,15 @@ name: FFmpeg Multi-Arch Minimal Build
 
 on:
   schedule:
-    - cron: '0 1 1 * *' # 매월 1일 UTC 01:00
-  workflow_dispatch:
+    - cron: '0 1 1 * *' # 매월 1일 UTC 00:00
+  workflow_dispatch: # 수동 실행 가능
 
 jobs:
   build_x86_64:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Install build dependencies
         run: |
@@ -23,7 +23,7 @@ jobs:
       - name: Fetch latest FFmpeg release version
         id: ffver
         run: |
-          LATEST=$(curl -s https://ffmpeg.org/releases/ | grep -oP 'ffmpeg-\K[0-9]+\.[0-9]+(\.[0-9]+)?(?=\.tar\.bz2)' | sort -V | tail -1)
+          LATEST=$(curl -s https://ffmpeg.org/releases/ | grep -oE 'ffmpeg-[0-9]+\.[0-9]+(\.[0-9]+)?\.tar\.bz2' | sed -E 's/ffmpeg-|\.tar\.bz2//g' | sort -V | tail -1)
           echo "FF_VERSION=$LATEST" >> $GITHUB_ENV
           echo "Latest FFmpeg version: $LATEST"
 
@@ -55,7 +55,7 @@ jobs:
           wget https://ffmpeg.org/releases/ffmpeg-${FF_VERSION}.tar.bz2
           tar xjf ffmpeg-${FF_VERSION}.tar.bz2
 
-      - name: Configure & build minimal FFmpeg
+      - name: Configure & build minimal FFmpeg (x86_64)
         run: |
           cd ffmpeg-${FF_VERSION}
           ./configure \
@@ -69,6 +69,8 @@ jobs:
             --enable-small \
             --disable-programs \
             --disable-everything \
+            --enable-ffmpeg \
+            --enable-ffprobe \
             --enable-decoder=subrip \
             --enable-decoder=dvdsub \
             --enable-decoder=hdmv_pgs \
@@ -81,21 +83,18 @@ jobs:
           make install
           echo $FF_VERSION > ../ffmpeg/x86_64/version.txt
 
-      - name: Commit & push x86_64 binaries
+      - name: Commit and push built binaries
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: "Update FFmpeg x86_64 binaries"
+          commit_message: "Auto-build FFmpeg ${{ env.FF_VERSION }} (x86_64)"
           branch: main
-          file_pattern: |
-            ffmpeg/x86_64/bin/ffmpeg
-            ffmpeg/x86_64/bin/ffprobe
-            ffmpeg/x86_64/version.txt
+          file_pattern: ffmpeg/x86_64/**
 
   build_aarch64:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Install cross-compile dependencies
         run: |
@@ -109,7 +108,7 @@ jobs:
       - name: Fetch latest FFmpeg release version
         id: ffver
         run: |
-          LATEST=$(curl -s https://ffmpeg.org/releases/ | grep -oP 'ffmpeg-\K[0-9]+\.[0-9]+(\.[0-9]+)?(?=\.tar\.bz2)' | sort -V | tail -1)
+          LATEST=$(curl -s https://ffmpeg.org/releases/ | grep -oE 'ffmpeg-[0-9]+\.[0-9]+(\.[0-9]+)?\.tar\.bz2' | sed -E 's/ffmpeg-|\.tar\.bz2//g' | sort -V | tail -1)
           echo "FF_VERSION=$LATEST" >> $GITHUB_ENV
           echo "Latest FFmpeg version: $LATEST"
 
@@ -141,7 +140,7 @@ jobs:
           wget https://ffmpeg.org/releases/ffmpeg-${FF_VERSION}.tar.bz2
           tar xjf ffmpeg-${FF_VERSION}.tar.bz2
 
-      - name: Configure & build minimal FFmpeg
+      - name: Configure & build minimal FFmpeg (aarch64)
         run: |
           cd ffmpeg-${FF_VERSION}
           ./configure \
@@ -156,6 +155,8 @@ jobs:
             --enable-small \
             --disable-programs \
             --disable-everything \
+            --enable-ffmpeg \
+            --enable-ffprobe \
             --enable-decoder=subrip \
             --enable-decoder=dvdsub \
             --enable-decoder=hdmv_pgs \
@@ -168,12 +169,9 @@ jobs:
           make install
           echo $FF_VERSION > ../ffmpeg/aarch64/version.txt
 
-      - name: Commit & push aarch64 binaries
+      - name: Commit and push built binaries
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: "Update FFmpeg aarch64 binaries"
+          commit_message: "Auto-build FFmpeg ${{ env.FF_VERSION }} (aarch64)"
           branch: main
-          file_pattern: |
-            ffmpeg/aarch64/bin/ffmpeg
-            ffmpeg/aarch64/bin/ffprobe
-            ffmpeg/aarch64/version.txt
+          file_pattern: ffmpeg/aarch64/**
