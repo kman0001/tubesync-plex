@@ -16,11 +16,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v3
 
-      - name: Set target architecture
-        run: |
-          echo "ARCH=${{ matrix.arch }}" >> $GITHUB_ENV
-          echo "BUILD_DIR=ffmpeg/${{ matrix.arch }}" >> $GITHUB_ENV
-
       - name: Install build dependencies
         run: |
           sudo apt-get update
@@ -28,6 +23,14 @@ jobs:
             autoconf automake build-essential cmake git \
             libtool pkg-config yasm nasm curl wget \
             zlib1g-dev libfdk-aac-dev libass-dev
+
+      - name: Set target architecture
+        run: |
+          if [ "${{ matrix.arch }}" = "x86_64" ]; then
+            echo "ARCH=x86_64" >> $GITHUB_ENV
+          else
+            echo "ARCH=aarch64" >> $GITHUB_ENV
+          fi
 
       - name: Fetch latest FFmpeg release version
         id: ffver
@@ -39,7 +42,7 @@ jobs:
       - name: Check existing version
         id: check
         run: |
-          VERSION_FILE="${BUILD_DIR}/version.txt"
+          VERSION_FILE="ffmpeg/${ARCH}/version.txt"
           if [ -f "$VERSION_FILE" ]; then
             EXISTING=$(cat $VERSION_FILE)
           else
@@ -56,7 +59,7 @@ jobs:
       - name: Skip build if up-to-date
         if: env.UP_TO_DATE == 'true'
         run: |
-          echo "FFmpeg is already up-to-date for $ARCH, skipping build."
+          echo "FFmpeg is already up-to-date for ${{ matrix.arch }}, skipping build."
           exit 0
 
       - name: Download FFmpeg source
@@ -64,11 +67,12 @@ jobs:
           SRC_DIR="/tmp/ffmpeg_src_${ARCH}"
           mkdir -p "$SRC_DIR"
           wget -O "$SRC_DIR/ffmpeg.tar.bz2" https://ffmpeg.org/releases/ffmpeg-${FF_VERSION}.tar.bz2
-          tar xjf "$SRC_DIR/ffmpeg.tar.bz2" -C "$SRC_DIR" --strip-components=1
+          tar xjf "$SRC_DIR/ffmpeg.tar.bz2" -C "$SRC_DIR"
 
       - name: Configure & build minimal FFmpeg
         run: |
-          BUILD_PATH="$PWD/${BUILD_DIR}"
+          SRC_DIR="/tmp/ffmpeg_src_${ARCH}/ffmpeg-${FF_VERSION}"
+          BUILD_PATH="$PWD/ffmpeg/${ARCH}"
           mkdir -p "$BUILD_PATH"
           cd "$SRC_DIR"
           ./configure \
@@ -96,5 +100,5 @@ jobs:
       - name: Upload FFmpeg binaries as artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ffmpeg-${ARCH}
-          path: ${{ env.BUILD_DIR }}/bin/
+          name: ffmpeg-${{ matrix.arch }}
+          path: ffmpeg/${{ matrix.arch }}/bin/
