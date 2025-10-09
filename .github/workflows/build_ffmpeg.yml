@@ -1,9 +1,9 @@
-name: FFmpeg Multi-Arch Subtitle Build
+name: FFmpeg Multi-Arch Minimal Build
 
 on:
   schedule:
-    - cron: '0 0 * * 0' # 매주 일요일 UTC 00:00
-  workflow_dispatch:
+    - cron: '0 1 1 * *' # 매월 1일 UTC 00:00
+  workflow_dispatch:    # 수동 실행 가능
 
 jobs:
   build:
@@ -16,15 +16,18 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v3
 
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y autoconf automake build-essential cmake git \
-            libtool pkg-config yasm nasm curl wget zlib1g-dev libfdk-aac-dev libass-dev
-
       - name: Set target architecture
         run: |
           echo "ARCH=${{ matrix.arch }}" >> $GITHUB_ENV
+          echo "BUILD_DIR=ffmpeg/${{ matrix.arch }}" >> $GITHUB_ENV
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            autoconf automake build-essential cmake git \
+            libtool pkg-config yasm nasm curl wget \
+            zlib1g-dev libfdk-aac-dev libass-dev
 
       - name: Fetch latest FFmpeg release version
         id: ffver
@@ -34,33 +37,46 @@ jobs:
           echo "Latest FFmpeg version: $LATEST"
 
       - name: Check existing version
+        id: check
         run: |
-          VERSION_FILE="ffmpeg/${ARCH}/version.txt"
+          VERSION_FILE="${BUILD_DIR}/version.txt"
           if [ -f "$VERSION_FILE" ]; then
             EXISTING=$(cat $VERSION_FILE)
           else
             EXISTING="0.0.0"
           fi
           echo "EXISTING_VERSION=$EXISTING" >> $GITHUB_ENV
+          if dpkg --compare-versions "$EXISTING" "ge" "$FF_VERSION"; then
+            echo "UP_TO_DATE=true" >> $GITHUB_ENV
+          else
+            echo "UP_TO_DATE=false" >> $GITHUB_ENV
+          fi
+          echo "Existing version: $EXISTING, Up-to-date: $UP_TO_DATE"
 
       - name: Skip build if up-to-date
-        if: env.EXISTING_VERSION == env.FF_VERSION
-        run: echo "FFmpeg is already up-to-date for ${{ matrix.arch }}"
+        if: env.UP_TO_DATE == 'true'
+        run: |
+          echo "FFmpeg is already up-to-date for $ARCH, skipping build."
+          exit 0
 
       - name: Download FFmpeg source
         run: |
-          wget https://ffmpeg.org/releases/ffmpeg-${FF_VERSION}.tar.bz2
-          tar xjf ffmpeg-${FF_VERSION}.tar.bz2
+          SRC_DIR="/tmp/ffmpeg_src_${ARCH}"
+          mkdir -p "$SRC_DIR"
+          wget -O "$SRC_DIR/ffmpeg.tar.bz2" https://ffmpeg.org/releases/ffmpeg-${FF_VERSION}.tar.bz2
+          tar xjf "$SRC_DIR/ffmpeg.tar.bz2" -C "$SRC_DIR" --strip-components=1
 
-      - name: Configure & build minimal subtitle FFmpeg
+      - name: Configure & build minimal FFmpeg
         run: |
-          cd ffmpeg-${FF_VERSION}
-          mkdir -p build/${ARCH}
+          BUILD_PATH="$PWD/${BUILD_DIR}"
+          mkdir -p "$BUILD_PATH"
+          cd "$SRC_DIR"
           ./configure \
-            --prefix=$PWD/build/${ARCH} \
-            --arch=${ARCH} \
+            --prefix="$BUILD_PATH" \
+            --arch="$ARCH" \
             --disable-doc \
             --disable-ffplay \
+            --disable-network \
             --disable-debug \
             --enable-small \
             --disable-programs \
@@ -75,10 +91,10 @@ jobs:
             --enable-parser=subrip
           make -j$(nproc)
           make install
-          echo $FF_VERSION > build/${ARCH}/version.txt
+          echo $FF_VERSION > "$BUILD_PATH/version.txt"
 
       - name: Upload FFmpeg binaries as artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ffmpeg-${{ matrix.arch }}
-          path: ffmpeg-${FF_VERSION}/build/${{ matrix.arch }}/bin/
+          name: ffmpeg-${ARCH}
+          path: ${{ env.BUILD_DIR }}/bin/
