@@ -1,0 +1,101 @@
+name: FFmpeg Multi-Arch Minimal Build
+
+on:
+  schedule:
+    - cron: '0 0 * * 0' # 매주 일요일 UTC 00:00
+  workflow_dispatch:    # 수동 실행 가능
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        arch: [x86_64, aarch64]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            autoconf automake build-essential cmake git \
+            libtool pkg-config yasm nasm curl wget \
+            zlib1g-dev libfdk-aac-dev libass-dev
+
+      - name: Set target architecture
+        run: |
+          if [ "${{ matrix.arch }}" = "x86_64" ]; then
+            echo "ARCH=x86_64" >> $GITHUB_ENV
+          else
+            echo "ARCH=aarch64" >> $GITHUB_ENV
+
+      - name: Fetch latest FFmpeg release version
+        id: ffver
+        run: |
+          LATEST=$(curl -s https://ffmpeg.org/releases/ | grep -oP 'ffmpeg-\K[0-9]+\.[0-9]+(\.[0-9]+)?(?=\.tar\.bz2)' | sort -V | tail -1)
+          echo "FF_VERSION=$LATEST" >> $GITHUB_ENV
+          echo "Latest FFmpeg version: $LATEST"
+
+      - name: Check existing version
+        id: check
+        run: |
+          VERSION_FILE="ffmpeg/${ARCH}/version.txt"
+          if [ -f "$VERSION_FILE" ]; then
+            EXISTING=$(cat $VERSION_FILE)
+          else
+            EXISTING="0.0.0"
+          fi
+          echo "EXISTING_VERSION=$EXISTING" >> $GITHUB_ENV
+          # 비교 결과: 최신이면 true
+          if dpkg --compare-versions "$EXISTING" "ge" "$FF_VERSION"; then
+            echo "UP_TO_DATE=true" >> $GITHUB_ENV
+          else
+            echo "UP_TO_DATE=false" >> $GITHUB_ENV
+          fi
+          echo "Existing version: $EXISTING, Up-to-date: $UP_TO_DATE"
+
+      - name: Skip build if up-to-date
+        if: env.UP_TO_DATE == 'true'
+        run: |
+          echo "FFmpeg is already up-to-date for ${{ matrix.arch }}, skipping build."
+          exit 0
+
+      - name: Download FFmpeg source
+        run: |
+          wget https://ffmpeg.org/releases/ffmpeg-${FF_VERSION}.tar.bz2
+          tar xjf ffmpeg-${FF_VERSION}.tar.bz2
+
+      - name: Configure & build minimal FFmpeg
+        run: |
+          cd ffmpeg-${FF_VERSION}
+          mkdir -p build/${ARCH}
+          ./configure \
+            --prefix=$PWD/build/${ARCH} \
+            --arch=${ARCH} \
+            --disable-doc \
+            --disable-ffplay \
+            --disable-network \
+            --disable-debug \
+            --enable-small \
+            --disable-programs \
+            --disable-everything \
+            --enable-decoder=subrip \
+            --enable-decoder=dvdsub \
+            --enable-decoder=hdmv_pgs \
+            --enable-demuxer=mov \
+            --enable-demuxer=matroska \
+            --enable-muxer=mp4 \
+            --enable-muxer=mkv \
+            --enable-parser=subrip
+          make -j$(nproc)
+          make install
+          # 빌드 후 버전 기록
+          echo $FF_VERSION > build/${ARCH}/version.txt
+
+      - name: Upload FFmpeg binaries as artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: ffmpeg-${{ matrix.arch }}
+          path: ffmpeg-${FF_VERSION}/build/${{ matrix.arch }}/bin/
