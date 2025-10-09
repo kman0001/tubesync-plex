@@ -1,0 +1,14 @@
+prefix=/home/runner/work/tubesync-plex/tubesync-plex/ffmpeg/aarch64
+exec_prefix=${prefix}
+libdir=/home/runner/work/tubesync-plex/tubesync-plex/ffmpeg/aarch64/lib
+includedir=/home/runner/work/tubesync-plex/tubesync-plex/ffmpeg/aarch64/include
+
+Name: libswresample
+Description: FFmpeg audio resampling library
+Version: 6.1.100
+Requires: libavutil >= 60.8.100
+Requires.private: 
+Conflicts:
+Libs: -L${libdir}  -lswresample -lm -latomic
+Libs.private: 
+Cflags: -I${includedir}
