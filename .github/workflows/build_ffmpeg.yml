@@ -30,6 +30,7 @@ jobs:
             echo "ARCH=x86_64" >> $GITHUB_ENV
           else
             echo "ARCH=aarch64" >> $GITHUB_ENV
+          fi
 
       - name: Fetch latest FFmpeg release version
         id: ffver
