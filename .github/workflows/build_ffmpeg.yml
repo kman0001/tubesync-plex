@@ -2,8 +2,8 @@ name: FFmpeg Multi-Arch Minimal Build
 
 on:
   schedule:
-    - cron: '0 1 1 * *' # 매월 1일 UTC 00:00
-  workflow_dispatch:    # 수동 실행 가능
+    - cron: '0 1 1 * *' # 매월 1일 UTC 01:00
+  workflow_dispatch:
 
 jobs:
   build_x86_64:
@@ -58,6 +58,7 @@ jobs:
       - name: Configure & build minimal FFmpeg
         run: |
           cd ffmpeg-${FF_VERSION}
+          mkdir -p ../ffmpeg/x86_64
           ./configure \
             --prefix=$PWD/../ffmpeg/x86_64 \
             --arch=x86_64 \
@@ -67,7 +68,8 @@ jobs:
             --disable-network \
             --disable-debug \
             --enable-small \
-            --disable-programs \
+            --enable-ffmpeg \
+            --enable-ffprobe \
             --disable-everything \
             --enable-decoder=subrip \
             --enable-decoder=dvdsub \
@@ -140,6 +142,7 @@ jobs:
       - name: Configure & build minimal FFmpeg
         run: |
           cd ffmpeg-${FF_VERSION}
+          mkdir -p ../ffmpeg/aarch64
           ./configure \
             --prefix=$PWD/../ffmpeg/aarch64 \
             --arch=aarch64 \
@@ -150,7 +153,8 @@ jobs:
             --disable-network \
             --disable-debug \
             --enable-small \
-            --disable-programs \
+            --enable-ffmpeg \
+            --enable-ffprobe \
             --disable-everything \
             --enable-decoder=subrip \
             --enable-decoder=dvdsub \
@@ -169,4 +173,3 @@ jobs:
         with:
           name: ffmpeg-aarch64
           path: ffmpeg/aarch64/bin/
-
