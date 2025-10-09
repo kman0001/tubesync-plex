@@ -12,7 +12,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # ✅ 전체 이력 가져오기 (non-fast-forward 방지)
+          fetch-depth: 0
 
       - name: Install build dependencies
         run: |
@@ -61,7 +61,7 @@ jobs:
         run: |
           cd ffmpeg-${FF_VERSION}
           ./configure \
-            --prefix=$PWD/../ffmpeg/x86_64 \
+            --prefix=$PWD/../ffmpeg/x86_64/tmp \
             --arch=x86_64 \
             --target-os=linux \
             --disable-doc \
@@ -83,16 +83,25 @@ jobs:
             --enable-parser=subrip
           make -j$(nproc)
           make install
-          echo $FF_VERSION > ../ffmpeg/x86_64/version.txt
+
+          # ✅ 필요한 3개 파일만 이동
+          cd ../ffmpeg/x86_64
+          mv tmp/bin/ffmpeg .
+          mv tmp/bin/ffprobe .
+          echo $FF_VERSION > version.txt
+          rm -rf tmp include lib share
 
       - name: Commit and push built binaries
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: "Auto-build FFmpeg ${{ env.FF_VERSION }} (x86_64)"
           branch: main
-          file_pattern: ffmpeg/x86_64/**
-          skip_fetch: false                # ✅ 원격 최신 상태 가져오기
-          push_options: '--force-with-lease'  # ✅ 안전 강제 푸시
+          file_pattern: |
+            ffmpeg/x86_64/ffmpeg
+            ffmpeg/x86_64/ffprobe
+            ffmpeg/x86_64/version.txt
+          skip_fetch: false
+          push_options: '--force-with-lease'
 
 
   build_aarch64:
@@ -101,7 +110,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # ✅ non-fast-forward 방지
+          fetch-depth: 0
 
       - name: Install cross-compile dependencies
         run: |
@@ -151,7 +160,7 @@ jobs:
         run: |
           cd ffmpeg-${FF_VERSION}
           ./configure \
-            --prefix=$PWD/../ffmpeg/aarch64 \
+            --prefix=$PWD/../ffmpeg/aarch64/tmp \
             --arch=aarch64 \
             --target-os=linux \
             --cross-prefix=aarch64-linux-gnu- \
@@ -174,13 +183,22 @@ jobs:
             --enable-parser=subrip
           make -j$(nproc)
           make install
-          echo $FF_VERSION > ../ffmpeg/aarch64/version.txt
+
+          # ✅ 필요한 3개 파일만 이동
+          cd ../ffmpeg/aarch64
+          mv tmp/bin/ffmpeg .
+          mv tmp/bin/ffprobe .
+          echo $FF_VERSION > version.txt
+          rm -rf tmp include lib share
 
       - name: Commit and push built binaries
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: "Auto-build FFmpeg ${{ env.FF_VERSION }} (aarch64)"
           branch: main
-          file_pattern: ffmpeg/aarch64/**
+          file_pattern: |
+            ffmpeg/aarch64/ffmpeg
+            ffmpeg/aarch64/ffprobe
+            ffmpeg/aarch64/version.txt
           skip_fetch: false
           push_options: '--force-with-lease'
