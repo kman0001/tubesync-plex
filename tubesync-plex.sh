@@ -60,7 +60,7 @@ REQ_FILE="$BASE_DIR/requirements.txt"
 # ----------------------------
 # Files/folders to keep
 # ----------------------------
-KEEP=("config" "json_to_nfo" "README.md" "requirements.txt" "tubesync-plex-metadata.py" "tubesync-plex.sh" ".git")
+KEEP=("config" "json_to_nfo" "README.md" "requirements.txt" "tubesync-plex-metadata.py" "tubesync-plex.sh" ".git" "venv")
 
 # ----------------------------
 # 2. Clone or update repository
