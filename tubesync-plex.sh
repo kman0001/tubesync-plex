@@ -50,41 +50,45 @@ PY_FILE="$BASE_DIR/tubesync-plex-metadata.py"
 REQ_FILE="$BASE_DIR/requirements.txt"
 
 # ----------------------------
-# 2. Git repository setup
+# 2. Git clone / fetch + reset
 # ----------------------------
 cd "$BASE_DIR"
 if [ ! -d "$BASE_DIR/.git" ]; then
-    log "Initializing repository with shallow clone and sparse-checkout..."
-    git init
-    git remote add origin "$REPO_URL"
-    git fetch --depth 1 origin main
-    git sparse-checkout init --cone
-
-    # Only include necessary files/folders
-    echo "config/" > .git/info/sparse-checkout
-    echo "json_to_nfo/" >> .git/info/sparse-checkout
-    echo "README.md" >> .git/info/sparse-checkout
-    echo "requirements.txt" >> .git/info/sparse-checkout
-    echo "tubesync-plex-metadata.py" >> .git/info/sparse-checkout
-    echo "tubesync-plex.sh" >> .git/info/sparse-checkout
-
-    git checkout main
+    log "Cloning repository..."
+    git clone "$REPO_URL" .
 else
-    log "Updating repository: forcing overwrite to match remote..."
-    git fetch --depth 1 origin main
-    git reset --hard origin/main       # Overwrite all local changes
-    git sparse-checkout init --cone
-    echo "config/" > .git/info/sparse-checkout
-    echo "json_to_nfo/" >> .git/info/sparse-checkout
-    echo "README.md" >> .git/info/sparse-checkout
-    echo "requirements.txt" >> .git/info/sparse-checkout
-    echo "tubesync-plex-metadata.py" >> .git/info/sparse-checkout
-    echo "tubesync-plex.sh" >> .git/info/sparse-checkout
-    git sparse-checkout reapply        # Apply sparse patterns
+    log "Updating repository..."
+    git fetch origin
+    git reset --hard origin/main
 fi
 
 # ----------------------------
-# 3. Python virtual environment
+# 3. Remove unnecessary files (keep only needed files/folders)
+# ----------------------------
+log "Cleaning up unnecessary files/folders..."
+# Define files/folders to keep
+KEEP=("config" "json_to_nfo" "README.md" "requirements.txt" "tubesync-plex-metadata.py" "tubesync-plex.sh")
+
+# Remove everything except KEEP
+for item in * .*; do
+    # Skip . and ..
+    [[ "$item" == "." || "$item" == ".." ]] && continue
+
+    # Check if item is in KEEP
+    skip=false
+    for k in "${KEEP[@]}"; do
+        [[ "$item" == "$k" ]] && skip=true && break
+    done
+
+    # Remove if not in KEEP
+    if [ "$skip" = false ]; then
+        rm -rf "$item"
+        log "Removed $item"
+    fi
+done
+
+# ----------------------------
+# 4. Python venv
 # ----------------------------
 if [ ! -d "$BASE_DIR/venv" ]; then
     log "Creating virtual environment..."
@@ -97,10 +101,12 @@ if [ ! -d "$BASE_DIR/venv" ]; then
         fi
         virtualenv "$BASE_DIR/venv"
     fi
+else
+    log "Virtual environment already exists."
 fi
 
 # ----------------------------
-# 4. Install / update Python dependencies
+# 5. Install / update Python dependencies
 # ----------------------------
 if [ -f "$REQ_FILE" ]; then
     "$PIP_BIN" install --disable-pip-version-check -q -r "$REQ_FILE"
@@ -108,7 +114,7 @@ fi
 export PATH="$BASE_DIR/venv/bin:$PATH"
 
 # ----------------------------
-# 5. Run Python script
+# 6. Run Python script
 # ----------------------------
 if [ -f "$PY_FILE" ]; then
     log "Running tubesync-plex..."
