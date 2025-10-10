@@ -1,4 +1,6 @@
 venv/
 config/
-.ffmpeg_md5
+.ffmpeg_version
 ffmpeg/
+Dockerfile
+entrypoint.sh
