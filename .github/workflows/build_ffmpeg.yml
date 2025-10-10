@@ -79,14 +79,15 @@ jobs:
           echo "$FF_VERSION" > "$ARCH_DIR/version.txt"
 
           cd "$GITHUB_WORKSPACE"
-          ls -lh "$ARCH_DIR"
+          ls -lh "$ARCH_DIR/bin" || true
 
       - name: Commit x86_64 build
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
           git pull --rebase origin main || true
-          git add ffmpeg/x86_64/ffmpeg ffmpeg/x86_64/ffprobe ffmpeg/x86_64/version.txt
+
+          git add ffmpeg/x86_64/bin/ffmpeg ffmpeg/x86_64/bin/ffprobe ffmpeg/x86_64/version.txt || true
           if git diff --cached --quiet; then
             echo "No changes to commit for x86_64"
           else
@@ -140,14 +141,15 @@ jobs:
           echo "$FF_VERSION" > "$ARCH_DIR/version.txt"
 
           cd "$GITHUB_WORKSPACE"
-          ls -lh "$ARCH_DIR"
+          ls -lh "$ARCH_DIR/bin" || true
 
       - name: Commit aarch64 build
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
           git pull --rebase origin main || true
-          git add ffmpeg/aarch64/ffmpeg ffmpeg/aarch64/ffprobe ffmpeg/aarch64/version.txt
+
+          git add ffmpeg/aarch64/bin/ffmpeg ffmpeg/aarch64/bin/ffprobe ffmpeg/aarch64/version.txt || true
           if git diff --cached --quiet; then
             echo "No changes to commit for aarch64"
           else
