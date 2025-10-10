@@ -68,12 +68,25 @@ PY_FILE="$BASE_DIR/tubesync-plex-metadata.py"
 REQ_FILE="$BASE_DIR/requirements.txt"
 
 # ----------------------------
-# 1. Git clone / fetch + reset
+# 1. Git clone / fetch + sparse-checkout
 # ----------------------------
 cd "$BASE_DIR"
 if [ ! -d "$BASE_DIR/.git" ]; then
-    log "Cloning repository..."
-    git clone "$REPO_URL" .
+    log "Initializing repository with sparse-checkout..."
+    git init
+    git remote add origin "$REPO_URL"
+    git fetch origin main
+    git sparse-checkout init --cone
+
+    # 체크아웃할 파일/폴더 지정 (전체 포함 + 제외 파일)
+    echo "/*" > .git/info/sparse-checkout       # 전체 포함
+    # .으로 시작하는 모든 파일/폴더 제외
+    echo "!/.*" >> .git/info/sparse-checkout
+    echo "!/Dockerfile" >> .git/info/sparse-checkout  # 제외
+    echo "!/entrypoint.sh" >> .git/info/sparse-checkout  # 제외
+    echo "!/ffmpeg/*" >> .git/info/sparse-checkout  # 제외
+
+    git checkout main
 else
     log "Updating repository..."
     git fetch origin
