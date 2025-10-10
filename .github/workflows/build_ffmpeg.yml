@@ -53,7 +53,7 @@ jobs:
           cd ffmpeg-${FF_VERSION}
 
           ./configure \
-            --prefix="$ARCH_DIR/tmp" \
+            --prefix="$ARCH_DIR" \
             --arch=x86_64 \
             --target-os=linux \
             --disable-doc \
@@ -77,14 +77,15 @@ jobs:
           make -j$(nproc)
           make install
 
-          # 필요한 파일만 이동
-          mv "$ARCH_DIR/tmp/bin/ffmpeg" "$ARCH_DIR/ffmpeg"
-          mv "$ARCH_DIR/tmp/bin/ffprobe" "$ARCH_DIR/ffprobe"
-          echo "$FF_VERSION" > "$ARCH_DIR/version.txt"
-          rm -rf "$ARCH_DIR/tmp"
+          # bin 폴더 없이 바로 ffmpeg/아키텍처/ 에 복사
+          cp -f "$ARCH_DIR/bin/ffmpeg" "$ARCH_DIR/ffmpeg"
+          cp -f "$ARCH_DIR/bin/ffprobe" "$ARCH_DIR/ffprobe"
+          rm -rf "$ARCH_DIR/bin"
 
-          echo "✅ x86_64 build done:"
-          ls -lh "$ARCH_DIR"
+          echo "$FF_VERSION" > "$ARCH_DIR/version.txt"
+
+          cd "$GITHUB_WORKSPACE"
+          ls -lh "$ARCH_DIR" || true
 
       - name: Commit x86_64 build
         run: |
@@ -119,7 +120,7 @@ jobs:
           cd ffmpeg-${FF_VERSION}
 
           ./configure \
-            --prefix="$ARCH_DIR/tmp" \
+            --prefix="$ARCH_DIR" \
             --arch=aarch64 \
             --target-os=linux \
             --cross-prefix=aarch64-linux-gnu- \
@@ -144,14 +145,15 @@ jobs:
           make -j$(nproc)
           make install
 
-          # 필요한 파일만 이동
-          mv "$ARCH_DIR/tmp/bin/ffmpeg" "$ARCH_DIR/ffmpeg"
-          mv "$ARCH_DIR/tmp/bin/ffprobe" "$ARCH_DIR/ffprobe"
-          echo "$FF_VERSION" > "$ARCH_DIR/version.txt"
-          rm -rf "$ARCH_DIR/tmp"
+          # bin 폴더 없이 바로 ffmpeg/아키텍처/ 에 복사
+          cp -f "$ARCH_DIR/bin/ffmpeg" "$ARCH_DIR/ffmpeg"
+          cp -f "$ARCH_DIR/bin/ffprobe" "$ARCH_DIR/ffprobe"
+          rm -rf "$ARCH_DIR/bin"
 
-          echo "✅ aarch64 build done:"
-          ls -lh "$ARCH_DIR"
+          echo "$FF_VERSION" > "$ARCH_DIR/version.txt"
+
+          cd "$GITHUB_WORKSPACE"
+          ls -lh "$ARCH_DIR" || true
 
       - name: Commit aarch64 build
         run: |
