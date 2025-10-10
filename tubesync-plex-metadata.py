@@ -55,7 +55,7 @@ CACHE_FILE = CONFIG_FILE.parent / "tubesync_cache.json"
 VENVDIR = BASE_DIR / "venv"
 FFMPEG_BIN = VENVDIR / "bin/ffmpeg"
 FFPROBE_BIN = VENVDIR / "bin/ffprobe"
-FFMPEG_SHA_FILE = BASE_DIR / ".ffmpeg_md5"
+FFMPEG_VERSION_FILE = BASE_DIR / ".ffmpeg_version"
 
 VIDEO_EXTS = (".mkv", ".mp4", ".avi", ".mov", ".wmv", ".flv", ".m4v")
 cache_lock = threading.Lock()
@@ -300,81 +300,90 @@ def remove_from_cache(video_path):
                 logging.debug(f"[CACHE] remove_from_cache: {path}")
 
 # ==============================
-# FFmpeg setup
+# FFmpeg setup (from GitHub)
 # ==============================
 def setup_ffmpeg():
     arch = platform.machine()
-    if arch == "x86_64":
-        url = "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz"
-    elif arch == "aarch64":
-        url = "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-arm64-static.tar.xz"
-    else:
-        logging.error(f"Unsupported arch: {arch}")
-        return  # No longer force exit here
+    base_url = f"https://raw.githubusercontent.com/kman0001/tubesync-plex/main/ffmpeg/{arch}"
 
-    md5_url = url + ".md5"
+    ffmpeg_url = f"{base_url}/ffmpeg"
+    ffprobe_url = f"{base_url}/ffprobe"
+    version_url = f"{base_url}/version.txt"
+
     tmp_dir = Path("/tmp/ffmpeg_dl")
     tmp_dir.mkdir(parents=True, exist_ok=True)
-    tar_path = tmp_dir / "ffmpeg.tar.xz"
 
+    # 다운로드 대상 경로
+    tar_ffmpeg = tmp_dir / "ffmpeg"
+    tar_ffprobe = tmp_dir / "ffprobe"
+    ver_file = tmp_dir / "version.txt"
+
+    # 이미 최신 버전인지 확인
+    remote_version = None
     try:
-        r = requests.get(md5_url, timeout=10)
+        r = requests.get(version_url, timeout=10)
         r.raise_for_status()
-        remote_md5 = r.text.strip().split()[0]
-        logging.info(f"Remote MD5: {remote_md5}")
+        remote_version = r.text.strip()
+        logging.info(f"Remote FFmpeg version: {remote_version}")
     except Exception as e:
-        logging.warning(f"Failed to fetch remote MD5: {e}")
-        remote_md5 = None
-
-    local_md5 = FFMPEG_SHA_FILE.read_text().strip() if FFMPEG_SHA_FILE.exists() else None
-    if FFMPEG_BIN.exists() and FFPROBE_BIN.exists() and remote_md5 and local_md5 == remote_md5:
-        logging.info("FFmpeg is up-to-date (MD5 match)")
+        logging.warning(f"Failed to fetch version info from GitHub: {e}")
         return
 
-    if FFMPEG_BIN.exists(): FFMPEG_BIN.unlink(missing_ok=True)
-    if FFPROBE_BIN.exists(): FFPROBE_BIN.unlink(missing_ok=True)
+    local_version = None
+    if FFMPEG_VERSION_FILE.exists():
+        local_version = FFMPEG_VERSION_FILE.read_text().strip()
 
-    logging.info("Downloading FFmpeg...")
-    try:
-        r = requests.get(url, stream=True, timeout=60)
-        r.raise_for_status()
-        with open(tar_path, "wb") as f:
-            for chunk in r.iter_content(chunk_size=8192):
-                f.write(chunk)
-    except Exception as e:
-        logging.error(f"Failed to download FFmpeg: {e}")
+    if (
+        FFMPEG_BIN.exists()
+        and FFPROBE_BIN.exists()
+        and local_version == remote_version
+    ):
+        logging.info(f"FFmpeg already up-to-date ({local_version})")
         return
 
-    if remote_md5:
-        h = hashlib.md5()
-        with open(tar_path, "rb") as f:
-            for chunk in iter(lambda: f.read(4096), b""):
-                h.update(chunk)
-        if h.hexdigest() != remote_md5:
-            logging.error("Downloaded FFmpeg MD5 mismatch, aborting")
-            return
+    # 기존 파일 삭제
+    for f in (FFMPEG_BIN, FFPROBE_BIN):
+        if f.exists():
+            f.unlink()
 
+    # 다운로드 함수
+    def download_file(url, path):
+        try:
+            r = requests.get(url, stream=True, timeout=60)
+            r.raise_for_status()
+            with open(path, "wb") as f:
+                for chunk in r.iter_content(chunk_size=8192):
+                    f.write(chunk)
+            logging.info(f"Downloaded {url}")
+            return True
+        except Exception as e:
+            logging.error(f"Failed to download {url}: {e}")
+            return False
+
+    # 다운로드 수행
+    ok1 = download_file(ffmpeg_url, tar_ffmpeg)
+    ok2 = download_file(ffprobe_url, tar_ffprobe)
+    if not (ok1 and ok2):
+        logging.error("Failed to download one or more FFmpeg binaries.")
+        return
+
+    # 설치 (권한 설정)
     try:
-        extract_dir = tmp_dir / "extract"
-        shutil.rmtree(extract_dir, ignore_errors=True)
-        extract_dir.mkdir(parents=True)
-        subprocess.run(["tar", "-xJf", str(tar_path), "-C", str(extract_dir)], check=True)
-        ffmpeg_path = next(extract_dir.glob("**/ffmpeg"))
-        ffprobe_path = next(extract_dir.glob("**/ffprobe"))
-        shutil.move(str(ffmpeg_path), FFMPEG_BIN)
-        shutil.move(str(ffprobe_path), FFPROBE_BIN)
+        shutil.move(str(tar_ffmpeg), FFMPEG_BIN)
+        shutil.move(str(tar_ffprobe), FFPROBE_BIN)
         os.chmod(FFMPEG_BIN, 0o755)
         os.chmod(FFPROBE_BIN, 0o755)
-        if remote_md5: FFMPEG_SHA_FILE.write_text(remote_md5)
+        if remote_version:
+            FFMPEG_VERSION_FILE.write_text(remote_version)
     except Exception as e:
-        logging.error(f"FFmpeg extraction/move failed: {e}")
+        logging.error(f"FFmpeg move/install failed: {e}")
         return
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
     env = os.environ.copy()
-    env["PATH"] = f"{FFMPEG_BIN.parent}:{env.get('PATH','')}"
-    if DETAIL: logging.info("FFmpeg installed/updated successfully")
+    env["PATH"] = f"{FFMPEG_BIN.parent}:{env.get('PATH', '')}"
+    logging.info("✅ FFmpeg installed/updated successfully")
 
 # ==============================
 # Plex helpers
