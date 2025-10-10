@@ -50,7 +50,7 @@ PY_FILE="$BASE_DIR/tubesync-plex-metadata.py"
 REQ_FILE="$BASE_DIR/requirements.txt"
 
 # ----------------------------
-# 2. Git shallow clone + sparse-checkout
+# 2. Git repository setup
 # ----------------------------
 cd "$BASE_DIR"
 if [ ! -d "$BASE_DIR/.git" ]; then
@@ -70,9 +70,17 @@ if [ ! -d "$BASE_DIR/.git" ]; then
 
     git checkout main
 else
-    log "Updating repository (shallow, sparse)..."
+    log "Updating repository: forcing overwrite to match remote..."
     git fetch --depth 1 origin main
-    git reset --hard origin/main  # Force overwrite local changes
+    git reset --hard origin/main  # Force local files to match remote
+    git sparse-checkout init --cone
+    echo "config/" > .git/info/sparse-checkout
+    echo "json_to_nfo/" >> .git/info/sparse-checkout
+    echo "README.md" >> .git/info/sparse-checkout
+    echo "requirements.txt" >> .git/info/sparse-checkout
+    echo "tubesync-plex-metadata.py" >> .git/info/sparse-checkout
+    echo "tubesync-plex.sh" >> .git/info/sparse-checkout
+    git sparse-checkout reapply
 fi
 
 # ----------------------------
