@@ -47,8 +47,6 @@ It supports multiple libraries, multithreading, and safe deletion of processed `
 The following system packages must be installed:
 
 * `git` - for cloning/updating the repository
-* `curl` - for downloading FFmpeg
-* `tar` and `xz-utils` - for extracting FFmpeg archive
 * `python3` (version 3.10 or higher)
 * `pip3` (Python package manager; provided by `python3-pip` package on Debian/Ubuntu)
 * `python3-venv` - for creating virtual environments
@@ -60,31 +58,31 @@ The following system packages must be installed:
 
 ```bash
 sudo apt-get update
-sudo apt-get install -y git curl tar xz-utils python3 python3-pip python3-venv
+sudo apt-get install -y git python3 python3-pip python3-venv
 ```
 
 #### Fedora
 
 ```bash
-sudo dnf install -y git curl tar xz python3 python3-pip python3-virtualenv
+sudo dnf install -y git python3 python3-pip python3-virtualenv
 ```
 
 #### CentOS/RHEL
 
 ```bash
-sudo yum install -y git curl tar xz python3 python3-pip python3-virtualenv
+sudo yum install -y git python3 python3-pip python3-virtualenv
 ```
 
 #### Alpine
 
 ```bash
-sudo apk add git curl tar xz python3 py3-pip py3-virtualenv
+sudo apk add git python3 py3-pip py3-virtualenv
 ```
 
 #### Arch Linux / Manjaro
 
 ```bash
-sudo pacman -Sy git curl tar xz python python-pip python-virtualenv
+sudo pacman -Sy git python python-pip python-virtualenv
 ```
 
 ### Python Packages
