@@ -1,3 +1,4 @@
 venv/
 config/
 .ffmpeg_md5
+ffmpeg/
