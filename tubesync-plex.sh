@@ -60,7 +60,7 @@ if [ ! -d "$BASE_DIR/.git" ]; then
     git fetch --depth 1 origin main
     git sparse-checkout init --cone
 
-    # Include only necessary folders/files
+    # Only include necessary files/folders
     echo "config/" > .git/info/sparse-checkout
     echo "json_to_nfo/" >> .git/info/sparse-checkout
     echo "README.md" >> .git/info/sparse-checkout
@@ -72,7 +72,7 @@ if [ ! -d "$BASE_DIR/.git" ]; then
 else
     log "Updating repository: forcing overwrite to match remote..."
     git fetch --depth 1 origin main
-    git reset --hard origin/main  # Force local files to match remote
+    git reset --hard origin/main       # Overwrite all local changes
     git sparse-checkout init --cone
     echo "config/" > .git/info/sparse-checkout
     echo "json_to_nfo/" >> .git/info/sparse-checkout
@@ -80,7 +80,7 @@ else
     echo "requirements.txt" >> .git/info/sparse-checkout
     echo "tubesync-plex-metadata.py" >> .git/info/sparse-checkout
     echo "tubesync-plex.sh" >> .git/info/sparse-checkout
-    git sparse-checkout reapply
+    git sparse-checkout reapply        # Apply sparse patterns
 fi
 
 # ----------------------------
