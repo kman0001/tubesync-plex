@@ -68,34 +68,33 @@ KEEP=(".git" "venv" ".ffmpeg_version" "config" "json_to_nfo" "README.md" "requir
 # ----------------------------
 # 2. Initialize or update Git repository
 # ----------------------------
-cd "$BASE_DIR"
-
-if [ ! -d ".git" ]; then
+if [ ! -d "$BASE_DIR/.git" ]; then
     log ".git not found, initializing repository..."
-    git init
-    git remote add origin "$REPO_URL"
-    git fetch origin main
-    git reset --hard origin/main
+    git -C "$BASE_DIR" init
+    git -C "$BASE_DIR" remote add origin "$REPO_URL"
+    git -C "$BASE_DIR" fetch origin main
+    git -C "$BASE_DIR" reset --hard origin/main
 else
     log "Updating repository..."
-    git fetch origin
-    git reset --hard origin/main
+    git -C "$BASE_DIR" fetch origin
+    git -C "$BASE_DIR" reset --hard origin/main
 fi
 
 # ----------------------------
 # 3. Python venv
 # ----------------------------
-if [ ! -d "venv" ]; then
+VENV_PYTHON="$BASE_DIR/venv/bin/python"
+VENV_PIP="$BASE_DIR/venv/bin/pip"
+
+if [ ! -d "$BASE_DIR/venv" ]; then
     log "Creating virtual environment..."
-    python3 -m venv venv
-else
-    log "Virtual environment exists, updating packages..."
+    python3 -m venv "$BASE_DIR/venv"
 fi
 
 log "Installing/updating Python dependencies..."
-"$BASE_DIR/venv/bin/pip" install --no-cache-dir --upgrade pip
+"$VENV_PIP" install --no-cache-dir --upgrade pip
 if [ -f "$REQ_FILE" ]; then
-    "$BASE_DIR/venv/bin/pip" install --no-cache-dir -r "$REQ_FILE"
+    "$VENV_PIP" install --no-cache-dir -r "$REQ_FILE"
 fi
 
 export PATH="$BASE_DIR/venv/bin:$PATH"
@@ -104,15 +103,13 @@ export PATH="$BASE_DIR/venv/bin:$PATH"
 # 4. Cleanup unwanted files
 # ----------------------------
 log "Removing unwanted files..."
-for item in * .*; do
-    [[ "$item" == "." || "$item" == ".." ]] && continue
+for item in "$BASE_DIR"/* "$BASE_DIR"/.*; do
+    [[ "$item" == "$BASE_DIR/." || "$item" == "$BASE_DIR/.." ]] && continue
     skip=false
     for k in "${KEEP[@]}"; do
-        [[ "$item" == "$k" ]] && skip=true && break
+        [[ "$item" == "$BASE_DIR/$k" ]] && skip=true && break
     done
-    if [ "$skip" = false ]; then
-        rm -rf "$item"
-    fi
+    [ "$skip" = false ] && rm -rf "$item"
 done
 
 # ----------------------------
@@ -120,7 +117,7 @@ done
 # ----------------------------
 if [ -f "$PY_FILE" ]; then
     log "Running tubesync-plex..."
-    CMD="$BASE_DIR/venv/bin/python $PY_FILE --config $CONFIG_PATH"
+    CMD="$VENV_PYTHON $PY_FILE --config $CONFIG_PATH"
     [ "$DISABLE_WATCHDOG" = true ] && CMD="$CMD --disable-watchdog"
     [ "$DEBUG" = true ] && CMD="$CMD --debug"
     [ "$DEBUG_HTTP" = true ] && CMD="$CMD --debug-http"
