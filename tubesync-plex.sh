@@ -93,9 +93,9 @@ else
 fi
 
 log "Installing/updating Python dependencies..."
-"$BASE_DIR/venv/bin/pip" install --upgrade pip
+"$BASE_DIR/venv/bin/pip" install --no-cache-dir --upgrade pip
 if [ -f "$REQ_FILE" ]; then
-    "$BASE_DIR/venv/bin/pip" install -r "$REQ_FILE"
+    "$BASE_DIR/venv/bin/pip" install --no-cache-dir -r "$REQ_FILE"
 fi
 
 export PATH="$BASE_DIR/venv/bin:$PATH"
