@@ -119,10 +119,15 @@ jobs:
           tar xjf ffmpeg-${FF_VERSION}.tar.bz2
           cd ffmpeg-${FF_VERSION}
 
+          # ✅ Clean previous build just in case
+          make distclean || true
+
+          # ✅ Cross compile config
           ./configure \
             --prefix="$ARCH_DIR" \
             --arch=aarch64 \
             --target-os=linux \
+            --enable-cross-compile \
             --cross-prefix=aarch64-linux-gnu- \
             --disable-doc \
             --disable-ffplay \
@@ -142,10 +147,13 @@ jobs:
             --enable-muxer=mkv \
             --enable-parser=subrip
 
+          # ✅ Ensure clean build tree
+          make clean || true
+
           make -j$(nproc)
           make install
 
-          # bin 폴더 없이 바로 ffmpeg/아키텍처/ 에 복사
+          # bin 폴더 없이 바로 복사
           cp -f "$ARCH_DIR/bin/ffmpeg" "$ARCH_DIR/ffmpeg"
           cp -f "$ARCH_DIR/bin/ffprobe" "$ARCH_DIR/ffprobe"
           rm -rf "$ARCH_DIR/bin"
