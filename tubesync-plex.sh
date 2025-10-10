@@ -63,7 +63,8 @@ KEEP=("config" "json_to_nfo" "README.md" "requirements.txt" "tubesync-plex-metad
 # 2. Clone or update repository
 # ----------------------------
 cd "$BASE_DIR"
-if [ ! -d "$BASE_DIR/.git" ]; then
+
+if [ ! -d ".git" ]; then
     log "Cloning repository..."
     git clone "$REPO_URL" .
 else
