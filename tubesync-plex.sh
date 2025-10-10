@@ -57,15 +57,20 @@ REPO_URL="https://github.com/kman0001/tubesync-plex.git"
 PY_FILE="$BASE_DIR/tubesync-plex-metadata.py"
 REQ_FILE="$BASE_DIR/requirements.txt"
 
+# Files/folders to keep
 KEEP=("config" "json_to_nfo" "README.md" "requirements.txt" "tubesync-plex-metadata.py" "tubesync-plex.sh" ".git" "venv")
 
 # ----------------------------
-# 2. Clone or update repository
+# 2. Initialize or update Git repository
 # ----------------------------
 cd "$BASE_DIR"
+
 if [ ! -d ".git" ]; then
-    log "Initializing repository..."
-    git clone "$REPO_URL" .
+    log ".git not found, initializing repository..."
+    git init
+    git remote add origin "$REPO_URL"
+    git fetch origin main
+    git reset --hard origin/main
 else
     log "Updating repository..."
     git fetch origin
@@ -73,21 +78,7 @@ else
 fi
 
 # ----------------------------
-# 3. Python venv
-# ----------------------------
-if [ -d "$BASE_DIR/venv" ]; then
-    log "Updating existing virtual environment..."
-    "$BASE_DIR/venv/bin/pip" install --disable-pip-version-check -q -r "$REQ_FILE"
-else
-    log "Creating virtual environment..."
-    python3 -m venv "$BASE_DIR/venv"
-    "$BASE_DIR/venv/bin/pip" install --disable-pip-version-check -q -r "$REQ_FILE"
-fi
-
-export PATH="$BASE_DIR/venv/bin:$PATH"
-
-# ----------------------------
-# 4. Cleanup unwanted files
+# 3. Cleanup unwanted files
 # ----------------------------
 log "Removing unwanted files..."
 for item in * .*; do
@@ -102,16 +93,32 @@ for item in * .*; do
 done
 
 # ----------------------------
+# 4. Python venv
+# ----------------------------
+if [ ! -d "venv" ]; then
+    log "Creating virtual environment..."
+    python3 -m venv venv
+else
+    log "Virtual environment exists, updating packages..."
+fi
+
+log "Installing/updating Python dependencies..."
+"$BASE_DIR/venv/bin/pip" install --upgrade pip
+if [ -f "$REQ_FILE" ]; then
+    "$BASE_DIR/venv/bin/pip" install -r "$REQ_FILE"
+fi
+
+export PATH="$BASE_DIR/venv/bin:$PATH"
+
+# ----------------------------
 # 5. Run Python script
 # ----------------------------
 if [ -f "$PY_FILE" ]; then
     log "Running tubesync-plex..."
     CMD="$BASE_DIR/venv/bin/python $PY_FILE --config $CONFIG_PATH"
-
     [ "$DISABLE_WATCHDOG" = true ] && CMD="$CMD --disable-watchdog"
     [ "$DEBUG" = true ] && CMD="$CMD --debug"
     [ "$DEBUG_HTTP" = true ] && CMD="$CMD --debug-http"
-
     exec $CMD
 else
     log "ERROR: tubesync-plex-metadata.py not found."
