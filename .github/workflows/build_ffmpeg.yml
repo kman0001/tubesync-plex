@@ -53,7 +53,7 @@ jobs:
           cd ffmpeg-${FF_VERSION}
 
           ./configure \
-            --prefix="$ARCH_DIR" \
+            --prefix="$ARCH_DIR/tmp" \
             --arch=x86_64 \
             --target-os=linux \
             --disable-doc \
@@ -76,10 +76,15 @@ jobs:
 
           make -j$(nproc)
           make install
-          echo "$FF_VERSION" > "$ARCH_DIR/version.txt"
 
-          cd "$GITHUB_WORKSPACE"
-          ls -lh "$ARCH_DIR/bin" || true
+          # 필요한 파일만 이동
+          mv "$ARCH_DIR/tmp/bin/ffmpeg" "$ARCH_DIR/ffmpeg"
+          mv "$ARCH_DIR/tmp/bin/ffprobe" "$ARCH_DIR/ffprobe"
+          echo "$FF_VERSION" > "$ARCH_DIR/version.txt"
+          rm -rf "$ARCH_DIR/tmp"
+
+          echo "✅ x86_64 build done:"
+          ls -lh "$ARCH_DIR"
 
       - name: Commit x86_64 build
         run: |
@@ -87,7 +92,7 @@ jobs:
           git config user.email "actions@github.com"
           git pull --rebase origin main || true
 
-          git add ffmpeg/x86_64/bin/ffmpeg ffmpeg/x86_64/bin/ffprobe ffmpeg/x86_64/version.txt || true
+          git add ffmpeg/x86_64/ffmpeg ffmpeg/x86_64/ffprobe ffmpeg/x86_64/version.txt || true
           if git diff --cached --quiet; then
             echo "No changes to commit for x86_64"
           else
@@ -114,7 +119,7 @@ jobs:
           cd ffmpeg-${FF_VERSION}
 
           ./configure \
-            --prefix="$ARCH_DIR" \
+            --prefix="$ARCH_DIR/tmp" \
             --arch=aarch64 \
             --target-os=linux \
             --cross-prefix=aarch64-linux-gnu- \
@@ -138,10 +143,15 @@ jobs:
 
           make -j$(nproc)
           make install
-          echo "$FF_VERSION" > "$ARCH_DIR/version.txt"
 
-          cd "$GITHUB_WORKSPACE"
-          ls -lh "$ARCH_DIR/bin" || true
+          # 필요한 파일만 이동
+          mv "$ARCH_DIR/tmp/bin/ffmpeg" "$ARCH_DIR/ffmpeg"
+          mv "$ARCH_DIR/tmp/bin/ffprobe" "$ARCH_DIR/ffprobe"
+          echo "$FF_VERSION" > "$ARCH_DIR/version.txt"
+          rm -rf "$ARCH_DIR/tmp"
+
+          echo "✅ aarch64 build done:"
+          ls -lh "$ARCH_DIR"
 
       - name: Commit aarch64 build
         run: |
@@ -149,7 +159,7 @@ jobs:
           git config user.email "actions@github.com"
           git pull --rebase origin main || true
 
-          git add ffmpeg/aarch64/bin/ffmpeg ffmpeg/aarch64/bin/ffprobe ffmpeg/aarch64/version.txt || true
+          git add ffmpeg/aarch64/ffmpeg ffmpeg/aarch64/ffprobe ffmpeg/aarch64/version.txt || true
           if git diff --cached --quiet; then
             echo "No changes to commit for aarch64"
           else
