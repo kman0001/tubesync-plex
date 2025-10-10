@@ -72,7 +72,7 @@ if [ ! -d "$BASE_DIR/.git" ]; then
 else
     log "Updating repository (shallow, sparse)..."
     git fetch --depth 1 origin main
-    git checkout main  # Update only changed files
+    git reset --hard origin/main  # Force overwrite local changes
 fi
 
 # ----------------------------
