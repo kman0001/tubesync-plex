@@ -67,7 +67,7 @@ fi
 # ----------------------------
 log "Cleaning up unnecessary files/folders..."
 # Define files/folders to keep
-KEEP=("config" "json_to_nfo" "README.md" "requirements.txt" "tubesync-plex-metadata.py" "tubesync-plex.sh")
+KEEP=(".git" "config" "json_to_nfo" "README.md" "requirements.txt" "tubesync-plex-metadata.py" "tubesync-plex.sh")
 
 # Remove everything except KEEP
 for item in * .*; do
