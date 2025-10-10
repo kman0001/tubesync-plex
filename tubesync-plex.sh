@@ -58,7 +58,7 @@ PY_FILE="$BASE_DIR/tubesync-plex-metadata.py"
 REQ_FILE="$BASE_DIR/requirements.txt"
 
 # Files/folders to keep
-KEEP=("config" "json_to_nfo" "README.md" "requirements.txt" "tubesync-plex-metadata.py" "tubesync-plex.sh" ".git" "venv")
+KEEP=(".git" "venv" ".ffmpeg_version" "config" "json_to_nfo" "README.md" "requirements.txt" "tubesync-plex-metadata.py" "tubesync-plex.sh")
 
 # ----------------------------
 # 2. Initialize or update Git repository
@@ -78,22 +78,7 @@ else
 fi
 
 # ----------------------------
-# 3. Cleanup unwanted files
-# ----------------------------
-log "Removing unwanted files..."
-for item in * .*; do
-    [[ "$item" == "." || "$item" == ".." ]] && continue
-    skip=false
-    for k in "${KEEP[@]}"; do
-        [[ "$item" == "$k" ]] && skip=true && break
-    done
-    if [ "$skip" = false ]; then
-        rm -rf "$item"
-    fi
-done
-
-# ----------------------------
-# 4. Python venv
+# 3. Python venv
 # ----------------------------
 if [ ! -d "venv" ]; then
     log "Creating virtual environment..."
@@ -109,6 +94,21 @@ if [ -f "$REQ_FILE" ]; then
 fi
 
 export PATH="$BASE_DIR/venv/bin:$PATH"
+
+# ----------------------------
+# 4. Cleanup unwanted files
+# ----------------------------
+log "Removing unwanted files..."
+for item in * .*; do
+    [[ "$item" == "." || "$item" == ".." ]] && continue
+    skip=false
+    for k in "${KEEP[@]}"; do
+        [[ "$item" == "$k" ]] && skip=true && break
+    done
+    if [ "$skip" = false ]; then
+        rm -rf "$item"
+    fi
+done
 
 # ----------------------------
 # 5. Run Python script
