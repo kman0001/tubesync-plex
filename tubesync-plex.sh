@@ -69,7 +69,10 @@ cd "$BASE_DIR"
 
 if [ ! -d ".git" ]; then
     log "Initializing repository..."
-    git clone "$REPO_URL" .
+    git init
+    git remote add origin "$REPO_URL"
+    git fetch origin main
+    git reset --hard origin/main
 else
     log "Updating repository..."
     git fetch origin
