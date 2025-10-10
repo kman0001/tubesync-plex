@@ -20,13 +20,14 @@ done
 
 if [ ${#MISSING_PACKAGES[@]} -gt 0 ]; then
     log "ERROR: Missing required system packages: ${MISSING_PACKAGES[*]}"
+    log "Please install them using your system's package manager before running this script."
     exit 1
 else
     log "All required system packages are installed."
 fi
 
 # ----------------------------
-# 1. Parse arguments
+# Parse arguments
 # ----------------------------
 BASE_DIR=""
 DISABLE_WATCHDOG=false
@@ -45,26 +46,32 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# ----------------------------
+# Default BASE_DIR
+# ----------------------------
 if [ -z "$BASE_DIR" ]; then
     log "ERROR: --base-dir must be specified"
     exit 1
 fi
 
-CONFIG_PATH="${CONFIG_PATH:-$BASE_DIR/config/config.json}"
-mkdir -p "$BASE_DIR"
+# ----------------------------
+# Default config path
+# ----------------------------
+if [ -z "$CONFIG_PATH" ]; then
+    CONFIG_PATH="$BASE_DIR/config/config.json"
+fi
 
 REPO_URL="https://github.com/kman0001/tubesync-plex.git"
+mkdir -p "$BASE_DIR"
+PIP_BIN="$BASE_DIR/venv/bin/pip"
 PY_FILE="$BASE_DIR/tubesync-plex-metadata.py"
 REQ_FILE="$BASE_DIR/requirements.txt"
 
-KEEP=("config" "json_to_nfo" "README.md" "requirements.txt" "tubesync-plex-metadata.py" "tubesync-plex.sh" ".git")
-
 # ----------------------------
-# 2. Clone or update repository
+# 1. Git clone / fetch + reset
 # ----------------------------
 cd "$BASE_DIR"
-
-if [ ! -d ".git" ]; then
+if [ ! -d "$BASE_DIR/.git" ]; then
     log "Cloning repository..."
     git clone "$REPO_URL" .
 else
@@ -74,61 +81,43 @@ else
 fi
 
 # ----------------------------
-# 3. Cleanup unwanted files
+# 2. Python venv
 # ----------------------------
-log "Removing unwanted files..."
-for item in * .*; do
-    [[ "$item" == "." || "$item" == ".." ]] && continue
-    skip=false
-    for k in "${KEEP[@]}"; do
-        [[ "$item" == "$k" ]] && skip=true && break
-    done
-    if [ "$skip" = false ]; then
-        rm -rf "$item"
+if [ ! -d "$BASE_DIR/venv" ]; then
+    log "Creating virtual environment..."
+    if python3 -m venv "$BASE_DIR/venv" 2>/dev/null; then
+        log "Python venv created successfully."
+    else
+        log "Python venv module not available, trying virtualenv..."
+        if ! command -v virtualenv &>/dev/null; then
+            log "ERROR: virtualenv not found. Please install it using 'pip install --user virtualenv'."
+            exit 1
+        fi
+        virtualenv "$BASE_DIR/venv"
+        log "Virtual environment created via virtualenv."
     fi
-done
-
-# ----------------------------
-# 4. Python venv in temporary folder
-# ----------------------------
-TMP_INSTALL_DIR=$(mktemp -d)
-PIP_BIN="$TMP_INSTALL_DIR/venv/bin/pip"
-
-log "Creating virtual environment in temporary folder..."
-if python3 -m venv "$TMP_INSTALL_DIR/venv"; then
-    log "Python venv created successfully."
 else
-    log "Python venv module not available, trying virtualenv..."
-    if ! command -v virtualenv &>/dev/null; then
-        log "ERROR: virtualenv not found. Please install it using 'pip install --user virtualenv'."
-        exit 1
-    fi
-    virtualenv "$TMP_INSTALL_DIR/venv"
-    log "Virtual environment created via virtualenv."
+    log "Virtual environment already exists."
 fi
 
+# ----------------------------
+# 3. Install / update Python dependencies
+# ----------------------------
 log "Installing/updating Python dependencies..."
 if [ -f "$REQ_FILE" ]; then
     "$PIP_BIN" install --disable-pip-version-check -q -r "$REQ_FILE"
 fi
 
-# Move venv to BASE_DIR
-mv "$TMP_INSTALL_DIR/venv" "$BASE_DIR/venv"
-rm -rf "$TMP_INSTALL_DIR"
-log "Temporary folder removed."
-
 export PATH="$BASE_DIR/venv/bin:$PATH"
 
 # ----------------------------
-# 5. Run Python script
+# 4. Run Python script
 # ----------------------------
 if [ -f "$PY_FILE" ]; then
     log "Running tubesync-plex..."
     CMD="$BASE_DIR/venv/bin/python $PY_FILE --config $CONFIG_PATH"
 
-    if [ "$DISABLE_WATCHDOG" = true ]; then
-        CMD="$CMD --disable-watchdog"
-    fi
+    [ "$DISABLE_WATCHDOG" = true ] && CMD="$CMD --disable-watchdog"
     [ "$DEBUG" = true ] && CMD="$CMD --debug"
     [ "$DEBUG_HTTP" = true ] && CMD="$CMD --debug-http"
 
