@@ -57,22 +57,15 @@ REPO_URL="https://github.com/kman0001/tubesync-plex.git"
 PY_FILE="$BASE_DIR/tubesync-plex-metadata.py"
 REQ_FILE="$BASE_DIR/requirements.txt"
 
-# ----------------------------
-# Files/folders to keep
-# ----------------------------
 KEEP=("config" "json_to_nfo" "README.md" "requirements.txt" "tubesync-plex-metadata.py" "tubesync-plex.sh" ".git" "venv")
 
 # ----------------------------
 # 2. Clone or update repository
 # ----------------------------
 cd "$BASE_DIR"
-
 if [ ! -d ".git" ]; then
     log "Initializing repository..."
-    git init
-    git remote add origin "$REPO_URL"
-    git fetch origin main
-    git reset --hard origin/main
+    git clone "$REPO_URL" .
 else
     log "Updating repository..."
     git fetch origin
@@ -80,7 +73,21 @@ else
 fi
 
 # ----------------------------
-# 3. Cleanup unwanted files
+# 3. Python venv
+# ----------------------------
+if [ -d "$BASE_DIR/venv" ]; then
+    log "Updating existing virtual environment..."
+    "$BASE_DIR/venv/bin/pip" install --disable-pip-version-check -q -r "$REQ_FILE"
+else
+    log "Creating virtual environment..."
+    python3 -m venv "$BASE_DIR/venv"
+    "$BASE_DIR/venv/bin/pip" install --disable-pip-version-check -q -r "$REQ_FILE"
+fi
+
+export PATH="$BASE_DIR/venv/bin:$PATH"
+
+# ----------------------------
+# 4. Cleanup unwanted files
 # ----------------------------
 log "Removing unwanted files..."
 for item in * .*; do
@@ -93,34 +100,6 @@ for item in * .*; do
         rm -rf "$item"
     fi
 done
-
-# ----------------------------
-# 4. Python venv (create or update)
-# ----------------------------
-if [ -d "$BASE_DIR/venv" ]; then
-    log "Virtual environment exists. Upgrading/installing dependencies..."
-else
-    log "Creating new virtual environment..."
-    if python3 -m venv "$BASE_DIR/venv"; then
-        log "Python venv created successfully."
-    else
-        log "Python venv module not available, trying virtualenv..."
-        if ! command -v virtualenv &>/dev/null; then
-            log "ERROR: virtualenv not found. Please install it using 'pip install --user virtualenv'."
-            exit 1
-        fi
-        virtualenv "$BASE_DIR/venv"
-        log "Virtual environment created via virtualenv."
-    fi
-fi
-
-PIP_BIN="$BASE_DIR/venv/bin/pip"
-"$PIP_BIN" install --upgrade pip --disable-pip-version-check -q
-if [ -f "$REQ_FILE" ]; then
-    "$PIP_BIN" install --disable-pip-version-check -q -r "$REQ_FILE"
-fi
-
-export PATH="$BASE_DIR/venv/bin:$PATH"
 
 # ----------------------------
 # 5. Run Python script
