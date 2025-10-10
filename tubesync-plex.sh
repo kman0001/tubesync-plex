@@ -58,18 +58,20 @@ PY_FILE="$BASE_DIR/tubesync-plex-metadata.py"
 REQ_FILE="$BASE_DIR/requirements.txt"
 
 # ----------------------------
+# Files/folders to keep
+# ----------------------------
+KEEP=("config" "json_to_nfo" "README.md" "requirements.txt" "tubesync-plex-metadata.py" "tubesync-plex.sh" ".git")
+
+# ----------------------------
 # 2. Clone or update repository
 # ----------------------------
 cd "$BASE_DIR"
 
 if [ ! -d ".git" ]; then
-    log "Initializing new .git repository..."
-    git init
-    git remote add origin "$REPO_URL"
-    git fetch origin main
-    git reset --hard origin/main
+    log "Initializing repository..."
+    git clone "$REPO_URL" .
 else
-    log "Updating existing repository..."
+    log "Updating repository..."
     git fetch origin
     git reset --hard origin/main
 fi
@@ -77,8 +79,6 @@ fi
 # ----------------------------
 # 3. Cleanup unwanted files
 # ----------------------------
-KEEP=("config" "json_to_nfo" "README.md" "requirements.txt" "tubesync-plex-metadata.py" "tubesync-plex.sh" ".git")
-
 log "Removing unwanted files..."
 for item in * .*; do
     [[ "$item" == "." || "$item" == ".." ]] && continue
@@ -92,33 +92,30 @@ for item in * .*; do
 done
 
 # ----------------------------
-# 4. Python venv in temporary folder
+# 4. Python venv (create or update)
 # ----------------------------
-TMP_INSTALL_DIR=$(mktemp -d)
-PIP_BIN="$TMP_INSTALL_DIR/venv/bin/pip"
-
-log "Creating virtual environment in temporary folder..."
-if python3 -m venv "$TMP_INSTALL_DIR/venv"; then
-    log "Python venv created successfully."
+if [ -d "$BASE_DIR/venv" ]; then
+    log "Virtual environment exists. Upgrading/installing dependencies..."
 else
-    log "Python venv module not available, trying virtualenv..."
-    if ! command -v virtualenv &>/dev/null; then
-        log "ERROR: virtualenv not found. Please install it using 'pip install --user virtualenv'."
-        exit 1
+    log "Creating new virtual environment..."
+    if python3 -m venv "$BASE_DIR/venv"; then
+        log "Python venv created successfully."
+    else
+        log "Python venv module not available, trying virtualenv..."
+        if ! command -v virtualenv &>/dev/null; then
+            log "ERROR: virtualenv not found. Please install it using 'pip install --user virtualenv'."
+            exit 1
+        fi
+        virtualenv "$BASE_DIR/venv"
+        log "Virtual environment created via virtualenv."
     fi
-    virtualenv "$TMP_INSTALL_DIR/venv"
-    log "Virtual environment created via virtualenv."
 fi
 
-log "Installing/updating Python dependencies..."
+PIP_BIN="$BASE_DIR/venv/bin/pip"
+"$PIP_BIN" install --upgrade pip --disable-pip-version-check -q
 if [ -f "$REQ_FILE" ]; then
     "$PIP_BIN" install --disable-pip-version-check -q -r "$REQ_FILE"
 fi
-
-# Move venv to BASE_DIR
-mv "$TMP_INSTALL_DIR/venv" "$BASE_DIR/venv"
-rm -rf "$TMP_INSTALL_DIR"
-log "Temporary folder removed."
 
 export PATH="$BASE_DIR/venv/bin:$PATH"
 
