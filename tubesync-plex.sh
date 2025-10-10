@@ -50,8 +50,13 @@ if [ -z "$BASE_DIR" ]; then
     exit 1
 fi
 
-CONFIG_PATH="${CONFIG_PATH:-$BASE_DIR/config/config.json}"
+if [ "$BASE_DIR" = "false" ]; then
+    log "ERROR: BASE_DIR is set to 'false' (check how the script was invoked)"
+    exit 1
+fi
+
 mkdir -p "$BASE_DIR"
+CONFIG_PATH="${CONFIG_PATH:-$BASE_DIR/config/config.json}"
 
 REPO_URL="https://github.com/kman0001/tubesync-plex.git"
 PY_FILE="$BASE_DIR/tubesync-plex-metadata.py"
