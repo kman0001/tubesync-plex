@@ -1,18 +1,16 @@
 import json
 import threading
 from pathlib import Path
+from core.config import CACHE_FILE
 import logging
 
-CACHE_FILE = Path(__file__).parent.parent / "settings" / "tubesync_cache.json"
-
-cache_lock = threading.Lock()
+cache = {}
 cache_modified = False
+cache_lock = threading.Lock()
 
 if CACHE_FILE.exists():
     with CACHE_FILE.open("r", encoding="utf-8") as f:
         cache = json.load(f)
-else:
-    cache = {}
 
 def save_cache():
     global cache_modified
@@ -35,7 +33,6 @@ def update_cache(video_path, ratingKey=None, nfo_hash=None):
             current["nfo_hash"] = nfo_hash
         cache[path] = current
         cache_modified = True
-        logging.debug(f"[CACHE] update_cache: {path} => {current}")
 
 def remove_from_cache(video_path):
     global cache_modified
@@ -44,4 +41,3 @@ def remove_from_cache(video_path):
         if path in cache:
             cache.pop(path, None)
             cache_modified = True
-            logging.debug(f"[CACHE] remove_from_cache: {path}")
