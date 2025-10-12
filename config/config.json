@@ -21,10 +21,10 @@
     "DETAIL": false,
     "SUBTITLES": false,
     "THREADS": 8,
-    "MAX_CONCURRENT_REQUESTS": 2,
-    "REQUEST_DELAY": 0.1,
+    "MAX_CONCURRENT_REQUESTS": 4,
+    "REQUEST_DELAY": 0.2,
     "WATCH_FOLDERS": false,
-    "WATCH_DEBOUNCE_DELAY": 2,
-    "ALWAYS_APPLY_NFO": true,
-    "DELETE_NFO_AFTER_APPLY": true
+    "WATCH_DEBOUNCE_DELAY": 3,
+    "ALWAYS_APPLY_NFO": false,
+    "DELETE_NFO_AFTER_APPLY": true,
 }
