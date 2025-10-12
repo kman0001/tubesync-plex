@@ -43,3 +43,82 @@ class MediaFileHandler(FileSystemEventHandler):
         for path in ready:
             next_time, delay, retry_count, is_nfo = self.retry_queue.pop(path)
             p = Path(path)
+
+            if not p.exists():
+                logging.info(f"[WATCHDOG] Path no longer exists, removing from cache: {path}")
+                remove_from_cache(path)
+                continue
+
+            ext = p.suffix.lower()
+            if p.is_dir():
+                for f in p.rglob("*"):
+                    if not f.is_file():
+                        continue
+                    fext = f.suffix.lower()
+                    if fext in VIDEO_EXTS:
+                        self._enqueue_retry(str(f.resolve()), self.video_wait)
+                    elif fext == ".nfo":
+                        self._enqueue_retry(str(f.resolve()), self.nfo_wait, is_nfo=True)
+                continue
+
+            success = False
+            if ext in VIDEO_EXTS:
+                logging.info(f"[WATCHDOG] Processing video: {path}")
+                from core.video_processor import process_file  # lazy import to avoid circular
+                success = process_file(str(p.resolve()))
+            elif ext == ".nfo":
+                logging.info(f"[WATCHDOG] Processing NFO: {path}")
+                success = process_nfo(str(p.resolve()))
+
+            if not success:
+                if is_nfo and retry_count + 1 >= self.MAX_NFO_RETRY:
+                    logging.warning(f"[WATCHDOG] Max retries reached for NFO: {path}")
+                    continue
+                new_delay = min(delay * 2, self.MAX_RETRY_DELAY)
+                self._enqueue_retry(path, new_delay, retry_count + 1, is_nfo)
+                logging.warning(f"[WATCHDOG] Retry scheduled for {path} in {new_delay}s (retry #{retry_count + 1})")
+
+        save_cache()
+
+    def on_created(self, event):
+        if not self._debounce(event.src_path):
+            return
+        path = str(Path(event.src_path).resolve())
+        ext = Path(path).suffix.lower()
+        if ext in VIDEO_EXTS:
+            self._enqueue_retry(path, self.video_wait, is_nfo=False)
+        elif ext == ".nfo":
+            self._enqueue_retry(path, self.nfo_wait, is_nfo=True)
+
+    def on_deleted(self, event):
+        path = str(Path(event.src_path).resolve())
+        remove_from_cache(path)
+
+    def on_moved(self, event):
+        src = str(Path(event.src_path).resolve())
+        dest = str(Path(event.dest_path).resolve()) if getattr(event, "dest_path", None) else None
+        remove_from_cache(src)
+        if dest and not event.is_directory:
+            self.on_created(event)
+
+def start_watchdog(base_dirs):
+    observer = Observer()
+    handler = MediaFileHandler(debounce_delay=WATCH_DEBOUNCE_DELAY)
+
+    for d in base_dirs:
+        observer.schedule(handler, d, recursive=True)
+    observer.start()
+    logging.info("[WATCHDOG] Started observer")
+    schedule_cache_repair(CACHE_REPAIR_INTERVAL)
+
+    try:
+        while True:
+            try:
+                handler.process_retry_queue()
+            except Exception as e:
+                logging.error(f"[WATCHDOG] process_retry_queue failed: {e}", exc_info=True)
+            time.sleep(1)
+    except KeyboardInterrupt:
+        logging.info("[WATCHDOG] Stopping observer")
+        observer.stop()
+        observer.join()
