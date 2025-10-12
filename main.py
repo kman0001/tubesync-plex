@@ -1,25 +1,38 @@
 #!/usr/bin/env python3
 import logging
-from settings.base import load_settings
-from core.ffmpeg import ensure_ffmpeg
-from core.cache import load_cache
+from settings.base import load_config, BASE_DIR
+from core.ffmpeg import setup_ffmpeg
+from core.cache import load_cache, save_cache
+from core.plex import connect_plex
 from watchers.filesystem import start_watchdog
-from watchers.scheduler import start_periodic_cache_save
+from watchers.scheduler import start_repair_scheduler
 
 def main():
-    logging.basicConfig(level=logging.INFO, format='[%(levelname)s] %(message)s')
+    # 1️⃣ 설정 로드
+    config = load_config()
+    logging.basicConfig(level=logging.INFO, format="[%(asctime)s] [%(levelname)s] %(message)s")
 
-    config = load_settings()
-    logging.info("[INIT] Configuration loaded")
+    # 2️⃣ Plex 연결
+    plex = connect_plex(config)
+    logging.info("[MAIN] Connected to Plex successfully")
 
-    ensure_ffmpeg()
-    logging.info("[INIT] FFmpeg ready")
+    # 3️⃣ ffmpeg 준비
+    setup_ffmpeg()
 
-    load_cache()
-    start_periodic_cache_save(interval=60)
+    # 4️⃣ 캐시 로드
+    cache = load_cache()
+    logging.info(f"[CACHE] Loaded {len(cache)} entries")
 
-    start_watchdog(config)
-    logging.info("[RUNNING] Watchdog started")
+    # 5️⃣ 감시 시작
+    if config.get("WATCH_FOLDERS", False):
+        start_watchdog(config, plex, cache)
+    else:
+        logging.info("[MAIN] Watchdog disabled, running manual scan")
+        start_repair_scheduler(config, plex, cache)
+
+    # 종료 시 캐시 저장
+    save_cache(cache)
+    logging.info("[MAIN] Exiting gracefully")
 
 if __name__ == "__main__":
     main()
