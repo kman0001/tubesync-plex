@@ -1,10 +1,9 @@
-import logging
-import hashlib
 from pathlib import Path
-from lxml import etree as ET
-from core.cache import cache, update_cache
-from core.plex import PlexServerWithHTTPDebug
-import threading
+import hashlib
+import logging
+import lxml.etree as ET
+from core.cache import update_cache
+from core.plex_helper import find_plex_item, plex
 
 deleted_nfo_set = set()
 nfo_lock = threading.Lock()
@@ -63,22 +62,19 @@ def apply_nfo(ep, file_path):
             except Exception:
                 ep.edit(**{"titleSort.value": title_sort, "titleSort.locked": 1})
             ep.reload()
+
         return True
     except Exception as e:
         logging.error(f"[!] Error applying NFO {nfo_path}: {e}", exc_info=True)
         return False
 
-def process_nfo(file_path, plex=None):
-    """
-    file_path: NFO or video file
-    plex: PlexServer instance (optional)
-    """
+def process_nfo(file_path, ALWAYS_APPLY_NFO=True, DELETE_NFO_AFTER_APPLY=True):
     p = Path(file_path)
     if p.suffix.lower() == ".nfo":
         nfo_path = p
         video_path = p.with_suffix("")
         if not video_path.exists():
-            for ext in (".mkv",".mp4",".avi",".mov",".wmv",".flv",".m4v"):
+            for ext in [".mp4",".mkv",".avi",".mov"]:
                 candidate = p.with_suffix(ext)
                 if candidate.exists():
                     video_path = candidate
@@ -98,29 +94,27 @@ def process_nfo(file_path, plex=None):
     cached = cache.get(str_video_path, {})
     cached_hash = cached.get("nfo_hash")
 
-    if cached_hash == nfo_hash:
+    if cached_hash == nfo_hash and not ALWAYS_APPLY_NFO:
         logging.info(f"[CACHE] Skipping already applied NFO: {str_video_path}")
+        if DELETE_NFO_AFTER_APPLY:
+            with nfo_lock:
+                if nfo_path not in deleted_nfo_set:
+                    try:
+                        nfo_path.unlink()
+                    except Exception as e:
+                        logging.warning(f"[WARN] Failed to delete NFO {nfo_path}: {e}")
+                    deleted_nfo_set.add(nfo_path)
         return True
 
-    # Plex item
     plex_item = None
     ratingKey = cached.get("ratingKey")
-    if ratingKey and plex:
-        try:
-            plex_item = plex.fetchItem(ratingKey)
-        except Exception:
-            plex_item = None
-    if not plex_item and plex:
-        # fallback search
-        from core.plex import find_plex_item
-        plex_item = find_plex_item(str_video_path)
-        if plex_item:
-            update_cache(str_video_path, ratingKey=plex_item.ratingKey)
+    if cached_hash != nfo_hash or ALWAYS_APPLY_NFO:
+        if ratingKey:
+            try:
+                plex_item = plex.fetchItem(ratingKey)
+            except Exception:
+                plex_item = None
 
-    if plex_item:
-        success = apply_nfo(plex_item, str_video_path)
-        if success:
-            update_cache(str_video_path, ratingKey=plex_item.ratingKey, nfo_hash=nfo_hash)
-        return success
-
-    return True
+        if not plex_item:
+            plex_item = find_plex_item(str_video_path)
+            if plex_i_
