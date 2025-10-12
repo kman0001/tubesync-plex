@@ -5,7 +5,6 @@ import logging
 CONFIG_FILE = Path("config/config.json").resolve()
 CACHE_FILE = CONFIG_FILE.parent / "tubesync_cache.json"
 
-# Default config skeleton
 default_config = {
     "_comment": {
         "PLEX_BASE_URL": "Base URL of your Plex server (e.g., http://localhost:32400).",
@@ -37,7 +36,6 @@ default_config = {
     "DELETE_NFO_AFTER_APPLY": True,
 }
 
-# Load config
 if not CONFIG_FILE.exists():
     CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
     with CONFIG_FILE.open("w", encoding="utf-8") as f:
