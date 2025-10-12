@@ -11,4 +11,9 @@ export PYTHONUNBUFFERED=1
 # Use venv Python
 PYTHON_BIN="$BASE_DIR/venv/bin/python"
 
+echo "[INFO] Running initial metadata sync (watchdog disabled)..."
+"$PYTHON_BIN" -u "$BASE_DIR/tubesync-plex-metadata.py" \
+  --config "$CONFIG_FILE" --disable-watchdog "$@"
+
+echo "[INFO] Starting folder watch..."
 exec "$PYTHON_BIN" -u "$BASE_DIR/tubesync-plex-metadata.py" --config "$CONFIG_FILE" "$@"
