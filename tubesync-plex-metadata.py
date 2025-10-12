@@ -10,6 +10,7 @@ import logging
 import platform
 import shutil
 import subprocess
+import signal
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib3.util.retry import Retry
@@ -59,7 +60,9 @@ FFPROBE_BIN = VENVDIR / "bin/ffprobe"
 FFMPEG_VERSION_FILE = BASE_DIR / ".ffmpeg_version"
 
 VIDEO_EXTS = (".mkv", ".mp4", ".avi", ".mov", ".wmv", ".flv", ".m4v")
+
 cache_lock = threading.Lock()
+stop_event = threading.Event()
 
 # Language mapping for subtitles
 LANG_MAP = {
@@ -69,6 +72,13 @@ LANG_MAP = {
 
 def map_lang(code):
     return LANG_MAP.get(code.lower(), "und")
+
+# ==============================
+# Signal handler
+# ==============================
+def handle_signal(signum, frame):
+    logging.info(f"[MAIN] Signal received ({signum}), shutting down...")
+    stop_event.set()
 
 # ==============================
 # Default config skeleton
@@ -432,25 +442,33 @@ def find_plex_item(abs_path):
 # ==============================
 class PlexLibraryMonitor(threading.Thread):
     """Monitor Plex library changes periodically and update snapshot + rescan"""
-    def __init__(self, plex_client, cache_file, snapshot_file, interval=600):
+    def __init__(self, plex_client, cache_file, snapshot_file, stop_event, interval=600):
+        """
+        :param plex_client: Plex server client
+        :param cache_file: path to cache JSON
+        :param snapshot_file: path to snapshot JSON
+        :param stop_event: threading.Event to signal shutdown
+        :param interval: check interval in seconds
+        """
         super().__init__(daemon=True)
         self.plex_client = plex_client
         self.cache_file = cache_file
         self.snapshot_file = snapshot_file
         self.interval = interval
+        self.stop_event = stop_event  # Shutdown signal
 
     def run(self):
         prev_snapshot = self._load_snapshot()
-        while True:
+        while not self.stop_event.is_set():
             try:
                 current = self._fetch_library_info()
                 changed_keys = self._detect_changes(prev_snapshot, current)
 
                 if changed_keys:
                     logging.info(f"[PLEX-MONITOR] Library change detected: {', '.join(changed_keys)}")
-                    self._reset_cache()
+                    # 🔹 Reset cache for changed sections or regenerate if missing
+                    self._reset_cache_for_sections(changed_keys, current)
                     self._save_snapshot(current)
-                    logging.info(f"[PLEX-MONITOR] Updated Plex library snapshot ({self.snapshot_file})")
 
                     for key in changed_keys:
                         section = current[key]
@@ -460,10 +478,17 @@ class PlexLibraryMonitor(threading.Thread):
 
                     prev_snapshot = current
 
-                time.sleep(self.interval)
+                # Wait for interval or until stop signal
+                for _ in range(self.interval):
+                    if self.stop_event.is_set():
+                        break
+                    time.sleep(1)
+
             except Exception as e:
                 logging.warning(f"[PLEX-MONITOR] Error while checking library: {e}")
-                time.sleep(self.interval)
+                time.sleep(5)  # short sleep on error
+
+        logging.info("[PLEX-MONITOR] Stopped monitoring (shutdown signal received)")
 
     # ==============================
     # Internal methods
@@ -492,13 +517,38 @@ class PlexLibraryMonitor(threading.Thread):
                 changed.append(key)
         return changed
 
-    def _reset_cache(self):
-        """Reset existing cache (backup before delete)"""
-        if os.path.exists(self.cache_file):
+    def _reset_cache_for_sections(self, changed_keys, current_snapshot):
+        """
+        Reset cache only for changed library sections.
+        If cache missing, regenerate entire cache for all sections.
+        """
+        if not os.path.exists(self.cache_file):
+            logging.info(f"[CACHE] No existing cache found, generating new cache...")
+            # Generate cache for all current sections
+            for section in current_snapshot.values():
+                self._scan_library(section["paths"])
+            return
+
+        # Load existing cache
+        with open(self.cache_file, "r", encoding="utf-8") as f:
+            cache_data = json.load(f)
+
+        modified = False
+        for key in changed_keys:
+            if key in cache_data:
+                del cache_data[key]
+                modified = True
+
+        if modified:
             backup = f"{self.cache_file}.bak"
             shutil.copy2(self.cache_file, backup)
-            os.remove(self.cache_file)
-            logging.info(f"[CACHE] Cache reset (backup saved to {backup})")
+            logging.info(f"[CACHE] Backup saved to {backup}")
+
+            with open(self.cache_file, "w", encoding="utf-8") as f:
+                json.dump(cache_data, f, indent=2, ensure_ascii=False)
+            logging.info(f"[CACHE] Cache updated for changed sections: {', '.join(changed_keys)}")
+        else:
+            logging.info(f"[CACHE] No entries removed; cache unchanged")
 
     def _scan_library(self, base_paths):
         """Rescan updated library folders"""
@@ -532,7 +582,6 @@ class PlexLibraryMonitor(threading.Thread):
             json.dump(data, f, indent=2, ensure_ascii=False)
         logging.info(f"[PLEX-MONITOR] Snapshot saved ({self.snapshot_file})")
 
-
 # ==============================
 # Initial Full Scan (disable-watchdog mode)
 # ==============================
@@ -540,7 +589,6 @@ def initial_full_scan(base_dirs, plex_client, snapshot_file):
     """Save Plex library snapshot (config-specified libraries only) + scan all files"""
     logging.info("[INIT] Starting full library scan...")
 
-    # ✅ Save Plex library snapshot (config-limited, all locations) only if changed
     try:
         library_ids = config.get("PLEX_LIBRARY_IDS", [])
         sections = plex_client.library.sections()
@@ -552,16 +600,16 @@ def initial_full_scan(base_dirs, plex_client, snapshot_file):
             for s in sections if s.key in library_ids
         }
 
-        # 기존 스냅샷 비교 후 변경 시만 저장
+        # Save snapshot only if changed
         if os.path.exists(snapshot_file):
             with open(snapshot_file, "r", encoding="utf-8") as f:
                 old_snapshot = json.load(f)
-            if old_snapshot == snapshot:
-                logging.info(f"[INIT] No changes in libraries, snapshot not updated")
-            else:
+            if old_snapshot != snapshot:
                 with open(snapshot_file, "w", encoding="utf-8") as f:
                     json.dump(snapshot, f, indent=2, ensure_ascii=False)
                 logging.info(f"[INIT] Saved Plex library snapshot (config-limited) to {snapshot_file}")
+            else:
+                logging.info(f"[INIT] No changes in libraries, snapshot not updated")
         else:
             with open(snapshot_file, "w", encoding="utf-8") as f:
                 json.dump(snapshot, f, indent=2, ensure_ascii=False)
@@ -570,7 +618,7 @@ def initial_full_scan(base_dirs, plex_client, snapshot_file):
     except Exception as e:
         logging.warning(f"[INIT] Failed to save Plex library snapshot: {e}")
 
-    # ✅ Scan all files under all library locations
+    # Scan all files under all library locations
     for lib in snapshot.values():
         for base in lib["paths"]:
             for root, _, files in os.walk(base):
@@ -895,22 +943,22 @@ def repair_wrapper():
     schedule_cache_repair(CACHE_REPAIR_INTERVAL)
 
 # ==============================
-# Watchdog Handler (integrated VIDEO_EXTS + NFO handling, intelligent retry)
+# Watchdog Handler (VIDEO + NFO with retry)
 # ==============================
 class MediaFileHandler(FileSystemEventHandler):
-    MAX_NFO_RETRY = 5  # NFO retry limit
+    MAX_NFO_RETRY = 5
     MAX_RETRY_DELAY = 600  # 10 minutes
 
-    def __init__(self, nfo_wait=30, video_wait=5, debounce_delay=1.0):
+    def __init__(self, stop_event, nfo_wait=30, video_wait=5, debounce_delay=1.0):
         self.nfo_wait = nfo_wait
         self.video_wait = video_wait
         self.debounce_delay = debounce_delay
-        # retry_queue = { path: (next_time, delay, retry_count, is_nfo) }
-        self.retry_queue = {}
+        self.stop_event = stop_event
+        self.retry_queue = {}  # { path: (next_time, delay, retry_count, is_nfo) }
         self.last_event_time = {}
 
     # ==============================
-    # Utility
+    # Debounce & Retry Queue
     # ==============================
     def _debounce(self, path):
         now = time.time()
@@ -921,12 +969,11 @@ class MediaFileHandler(FileSystemEventHandler):
         return True
 
     def _enqueue_retry(self, path, delay, retry_count=0, is_nfo=False):
-        """Add to retry queue"""
         self.retry_queue[path] = (time.time() + delay, delay, retry_count, is_nfo)
-        logging.debug(f"[WATCHDOG] Enqueued for retry ({'NFO' if is_nfo else 'VIDEO'}): {path} (delay={delay}s, retry={retry_count})")
+        logging.debug(f"[WATCHDOG] Enqueued ({'NFO' if is_nfo else 'VIDEO'}): {path} (delay={delay}s, retry={retry_count})")
 
     # ==============================
-    # Retry queue processing
+    # Process Retry Queue
     # ==============================
     def process_retry_queue(self):
         global cache_modified
@@ -945,9 +992,6 @@ class MediaFileHandler(FileSystemEventHandler):
                         cache_modified = True
                 continue
 
-            ext = p.suffix.lower()
-
-            # Folder handling
             if p.is_dir():
                 for f in p.rglob("*"):
                     if not f.is_file():
@@ -959,19 +1003,15 @@ class MediaFileHandler(FileSystemEventHandler):
                         self._enqueue_retry(str(f.resolve()), self.nfo_wait, is_nfo=True)
                 continue
 
-            # Single file handling
             success = False
+            ext = p.suffix.lower()
             if ext in VIDEO_EXTS:
                 logging.info(f"[WATCHDOG] Processing video: {path}")
                 success = process_file(str(p.resolve()))
             elif ext == ".nfo":
                 logging.info(f"[WATCHDOG] Processing NFO: {path}")
                 success = process_nfo(str(p.resolve()))
-            else:
-                logging.debug(f"[WATCHDOG] Ignored non-video/non-NFO file: {p}")
-                continue
 
-            # Retry on failure
             if not success:
                 if is_nfo and retry_count + 1 >= self.MAX_NFO_RETRY:
                     logging.warning(f"[WATCHDOG] Max retries reached for NFO: {path}")
@@ -993,14 +1033,10 @@ class MediaFileHandler(FileSystemEventHandler):
             return
         path = str(Path(event.src_path).resolve())
         ext = Path(path).suffix.lower()
-
-        # 🎬 Video files and 📄 NFO files only
         if ext in VIDEO_EXTS:
             self._enqueue_retry(path, self.video_wait, is_nfo=False)
         elif ext == ".nfo":
             self._enqueue_retry(path, self.nfo_wait, is_nfo=True)
-        else:
-            logging.debug(f"[WATCHDOG] Ignored file: {path}")
 
     def on_deleted(self, event):
         self._handle_deleted(str(Path(event.src_path).resolve()))
@@ -1013,7 +1049,7 @@ class MediaFileHandler(FileSystemEventHandler):
             self._handle_created(dest)
 
     # ==============================
-    # Cache removal (on delete or folder move)
+    # Cache removal
     # ==============================
     def _handle_deleted(self, abs_path):
         abs_path = str(Path(abs_path).resolve())
@@ -1021,7 +1057,7 @@ class MediaFileHandler(FileSystemEventHandler):
             return
         keys_to_remove = [k for k in cache.keys() if k == abs_path or k.startswith(f"{abs_path}/")]
         if not keys_to_remove:
-            return  # 🔹 No changes — return immediately
+            return
         for k in keys_to_remove:
             remove_from_cache(k)
             logging.info(f"[CACHE] Removed {k} (deleted/moved)")
@@ -1029,36 +1065,27 @@ class MediaFileHandler(FileSystemEventHandler):
         cache_modified = True
 
     # ==============================
-    # Handle create/move events
+    # Handle create/move
     # ==============================
     def _handle_created(self, abs_path):
-        """Register only video/NFO files including inside folders"""
         abs_path = str(Path(abs_path).resolve())
         if not self._debounce(abs_path):
             return
-
         p = Path(abs_path)
-        paths = []
-        if p.is_dir():
-            paths = [str(f.resolve()) for f in p.rglob("*") if f.is_file()]
-        else:
-            paths = [abs_path]
-
+        paths = [str(f.resolve()) for f in p.rglob("*") if f.is_file()] if p.is_dir() else [abs_path]
         for f in paths:
             ext = Path(f).suffix.lower()
             if ext in VIDEO_EXTS:
                 self._enqueue_retry(f, self.video_wait, is_nfo=False)
             elif ext == ".nfo":
                 self._enqueue_retry(f, self.nfo_wait, is_nfo=True)
-            else:
-                logging.debug(f"[WATCHDOG] Ignored file in folder: {f}")
 
 # ==============================
 # Watchdog Observer Loop
 # ==============================
-def start_watchdog(base_dirs):
+def start_watchdog(base_dirs, stop_event):
     observer = Observer()
-    handler = MediaFileHandler(debounce_delay=WATCH_DEBOUNCE_DELAY)
+    handler = MediaFileHandler(stop_event=stop_event, debounce_delay=WATCH_DEBOUNCE_DELAY)
 
     for d in base_dirs:
         observer.schedule(handler, d, recursive=True)
@@ -1070,19 +1097,20 @@ def start_watchdog(base_dirs):
     logging.info("[CACHE] Cache repair scheduler started")
 
     try:
-        while True:
+        while not stop_event.is_set():
             try:
                 handler.process_retry_queue()
             except Exception as e:
                 logging.error(f"[WATCHDOG] process_retry_queue failed: {e}", exc_info=True)
             time.sleep(1)
-    except KeyboardInterrupt:
+    finally:
         logging.info("[WATCHDOG] Stopping observer")
         observer.stop()
         with repair_lock:
             if repair_timer:
                 repair_timer.cancel()
         observer.join()
+        logging.info("[WATCHDOG] Observer stopped (shutdown signal received)")
 
 # ==============================
 # Cache Repair: Missing ratingKeys only
@@ -1285,31 +1313,53 @@ def main():
         logging.info("[INFO] Running initial metadata sync...")
 
     initial_full_scan(base_dirs, plex, SNAPSHOT_FILE)
+    
+    logging.info("[MAIN] Finished initial setup")
 
     # ==============================
     # Watchdog mode (only if not disabled)
     # ==============================
+    monitor = None
     if not disable_watchdog and watch_folders:
         logging.info("[INFO] Starting folder watch...")
-        logging.info("[MAIN] Starting Watchdog mode")
 
-        # 🔹 Start Plex library monitor (detect changes, reset cache, rescan)
+        # 🔹 Start Plex library monitor (pass stop_event)
         monitor = PlexLibraryMonitor(
             plex_client=plex,
             cache_file=CACHE_FILE,
             snapshot_file=SNAPSHOT_FILE,
             interval=300,  # 5 minutes
+            stop_event=stop_event,  # pass event
         )
         monitor.start()
 
-        # 🔹 Start Watchdog loop
-        start_watchdog(base_dirs)
+        # 🔹 Start Watchdog observer (non-blocking, monitors stop_event)
+        watchdog_thread = threading.Thread(
+            target=start_watchdog,
+            args=(base_dirs, stop_event),
+            daemon=True
+        )
+        watchdog_thread.start()
 
-    logging.info("[MAIN] Finished setup")
+    # ==============================
+    # Wait for termination signal
+    # ==============================
+    stop_event.wait()  # wait for SIGTERM or SIGINT
+
+    logging.info("[MAIN] Shutdown initiated")
+    if monitor:
+        monitor.join()  # wait for Plex monitor thread to exit
+    if not disable_watchdog and watch_folders:
+        watchdog_thread.join()  # wait for watchdog observer to exit
+
+    logging.info("[MAIN] All threads stopped. Exiting.")
 
 
 if __name__ == "__main__":
-    main()
+    # 🔹 Register signal handlers for Docker stop
+    signal.signal(signal.SIGTERM, handle_signal)
+    signal.signal(signal.SIGINT, handle_signal)
 
+    main()
 
 
