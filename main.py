@@ -1,27 +1,31 @@
-#!/usr/bin/env python3
-import os
-import sys
 import logging
 from pathlib import Path
+from core.ffmpeg import setup_ffmpeg
+from core.processing import run_processing
+from core.watchdog import start_watchdog
 
-from core import ffmpeg, processing, watchdog
-from core.plex import plex, get_library_paths
-from settings import config
+logging.basicConfig(
+    level=logging.DEBUG,
+    format="[%(asctime)s] %(levelname)s: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S"
+)
+
+# Example config
+PLEX_LIBRARY_PATHS = ["./media"]  # 실제 Plex library 폴더 경로
+DISABLE_WATCHDOG = True           # False로 설정하면 Watchdog 모드
 
 def main():
-    ffmpeg.setup_ffmpeg()
+    setup_ffmpeg()
+    base_dirs = [Path(p) for p in PLEX_LIBRARY_PATHS]
 
-    base_dirs = get_library_paths(config)
-
-    if config.get("DISABLE_WATCHDOG", False):
-        logging.info("[MAIN] Running initial full processing (watchdog disabled)")
-        processing.run_processing(base_dirs)
-    elif config.get("WATCH_FOLDERS", False):
+    if DISABLE_WATCHDOG:
+        logging.info("[MAIN] Running full processing (watchdog disabled)")
+        run_processing(base_dirs)
+    else:
         logging.info("[MAIN] Starting Watchdog mode")
-        watchdog.start_watchdog(base_dirs)
+        start_watchdog(base_dirs)
 
-    logging.info("END")
-
+    logging.info("[MAIN] Done")
 
 if __name__ == "__main__":
     main()
