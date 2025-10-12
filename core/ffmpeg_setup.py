@@ -1,25 +1,23 @@
-import platform
-import requests
-import shutil
 import os
+import platform
+import shutil
 from pathlib import Path
 import logging
+import requests
 
-BASE_DIR = Path(".").resolve()
-VENVDIR = BASE_DIR / "venv"
-FFMPEG_BIN = VENVDIR / "bin/ffmpeg"
-FFPROBE_BIN = VENVDIR / "bin/ffprobe"
-FFMPEG_VERSION_FILE = BASE_DIR / ".ffmpeg_version"
-
-def setup_ffmpeg():
+def setup_ffmpeg(base_dir: Path, ffmpeg_bin: Path, ffprobe_bin: Path, ffmpeg_version_file: Path):
     arch = platform.machine()
     base_url = f"https://raw.githubusercontent.com/kman0001/tubesync-plex/main/ffmpeg/{arch}"
+
     ffmpeg_url = f"{base_url}/ffmpeg"
     ffprobe_url = f"{base_url}/ffprobe"
     version_url = f"{base_url}/version.txt"
 
     tmp_dir = Path("/tmp/ffmpeg_dl")
     tmp_dir.mkdir(parents=True, exist_ok=True)
+
+    tar_ffmpeg = tmp_dir / "ffmpeg"
+    tar_ffprobe = tmp_dir / "ffprobe"
 
     remote_version = None
     try:
@@ -32,14 +30,14 @@ def setup_ffmpeg():
         return
 
     local_version = None
-    if FFMPEG_VERSION_FILE.exists():
-        local_version = FFMPEG_VERSION_FILE.read_text().strip()
+    if ffmpeg_version_file.exists():
+        local_version = ffmpeg_version_file.read_text().strip()
 
-    if FFMPEG_BIN.exists() and FFPROBE_BIN.exists() and local_version == remote_version:
-        logging.info(f"FFmpeg up-to-date ({local_version})")
+    if ffmpeg_bin.exists() and ffprobe_bin.exists() and local_version == remote_version:
+        logging.info(f"FFmpeg already up-to-date ({local_version})")
         return
 
-    for f in (FFMPEG_BIN, FFPROBE_BIN):
+    for f in (ffmpeg_bin, ffprobe_bin):
         if f.exists():
             f.unlink()
 
@@ -56,21 +54,21 @@ def setup_ffmpeg():
             logging.error(f"Failed to download {url}: {e}")
             return False
 
-    ok1 = download_file(ffmpeg_url, tmp_dir / "ffmpeg")
-    ok2 = download_file(ffprobe_url, tmp_dir / "ffprobe")
+    ok1 = download_file(ffmpeg_url, tar_ffmpeg)
+    ok2 = download_file(ffprobe_url, tar_ffprobe)
     if not (ok1 and ok2):
-        logging.error("FFmpeg download failed")
+        logging.error("Failed to download one or more FFmpeg binaries.")
         return
 
     try:
-        shutil.move(str(tmp_dir / "ffmpeg"), FFMPEG_BIN)
-        shutil.move(str(tmp_dir / "ffprobe"), FFPROBE_BIN)
-        os.chmod(FFMPEG_BIN, 0o755)
-        os.chmod(FFPROBE_BIN, 0o755)
+        shutil.move(str(tar_ffmpeg), ffmpeg_bin)
+        shutil.move(str(tar_ffprobe), ffprobe_bin)
+        os.chmod(ffmpeg_bin, 0o755)
+        os.chmod(ffprobe_bin, 0o755)
         if remote_version:
-            FFMPEG_VERSION_FILE.write_text(remote_version)
+            ffmpeg_version_file.write_text(remote_version)
     except Exception as e:
         logging.error(f"FFmpeg install failed: {e}")
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
-    logging.info("FFmpeg installed/updated successfully")
+    logging.info("✅ FFmpeg installed/updated successfully")
