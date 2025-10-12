@@ -1,20 +1,24 @@
+#!/usr/bin/env python3
+import sys
 import logging
 from pathlib import Path
-from core.ffmpeg_setup import setup_ffmpeg
-from core.watchdog_handler import start_watchdog
-from core.video_processor import run_processing
-from core.settings import config, DISABLE_WATCHDOG
 
+from core.ffmpeg_manager import setup_ffmpeg
+from core.scanner import scan_and_update_cache, scan_nfo_files
+from core.video_processor import run_processing
+from core.watchdog import start_watchdog
+from core.plex_helper import plex, get_base_dirs
+from core.settings import CONFIG_FILE, config, DISABLE_WATCHDOG
+
+# ==============================
+# Main Execution
+# ==============================
 def main():
+    # FFmpeg 설치/업데이트
     setup_ffmpeg()
 
-    base_dirs = []
-    for lib_id in config.get("PLEX_LIBRARY_IDS", []):
-        try:
-            section = plex.library.sectionByID(lib_id)
-        except Exception:
-            continue
-        base_dirs.extend(getattr(section, "locations", []))
+    # Plex 라이브러리 경로 가져오기
+    base_dirs = get_base_dirs(config)
 
     if DISABLE_WATCHDOG:
         logging.info("[MAIN] Running initial full processing (watchdog disabled)")
@@ -24,6 +28,7 @@ def main():
         start_watchdog(base_dirs)
 
     logging.info("END")
+
 
 if __name__ == "__main__":
     main()
