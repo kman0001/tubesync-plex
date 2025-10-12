@@ -51,6 +51,7 @@ DEBUG_HTTP = args.debug_http
 
 CONFIG_FILE = Path(args.config).resolve()
 CACHE_FILE = CONFIG_FILE.parent / "tubesync_cache.json"
+SNAPSHOT_FILE = CONFIG_FILE.parent / "plex_library_snapshot.json"
 
 VENVDIR = BASE_DIR / "venv"
 FFMPEG_BIN = VENVDIR / "bin/ffmpeg"
@@ -218,6 +219,92 @@ class HTTPDebugSession(requests.Session):
         return response
 
 # ==============================
+# FFmpeg setup (from GitHub)
+# ==============================
+def setup_ffmpeg():
+    arch = platform.machine()
+    base_url = f"https://raw.githubusercontent.com/kman0001/tubesync-plex/main/ffmpeg/{arch}"
+
+    ffmpeg_url = f"{base_url}/ffmpeg"
+    ffprobe_url = f"{base_url}/ffprobe"
+    version_url = f"{base_url}/version.txt"
+
+    tmp_dir = Path("/tmp/ffmpeg_dl")
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+
+    # Download target paths
+    tar_ffmpeg = tmp_dir / "ffmpeg"
+    tar_ffprobe = tmp_dir / "ffprobe"
+    ver_file = tmp_dir / "version.txt"
+
+    # Check if already up-to-date
+    remote_version = None
+    try:
+        r = requests.get(version_url, timeout=10)
+        r.raise_for_status()
+        remote_version = r.text.strip()
+        logging.info(f"Remote FFmpeg version: {remote_version}")
+    except Exception as e:
+        logging.warning(f"Failed to fetch version info from GitHub: {e}")
+        return
+
+    local_version = None
+    if FFMPEG_VERSION_FILE.exists():
+        local_version = FFMPEG_VERSION_FILE.read_text().strip()
+
+    if (
+        FFMPEG_BIN.exists()
+        and FFPROBE_BIN.exists()
+        and local_version == remote_version
+    ):
+        logging.info(f"FFmpeg already up-to-date ({local_version})")
+        return
+
+    # Remove existing binaries
+    for f in (FFMPEG_BIN, FFPROBE_BIN):
+        if f.exists():
+            f.unlink()
+
+    # Download function
+    def download_file(url, path):
+        try:
+            r = requests.get(url, stream=True, timeout=60)
+            r.raise_for_status()
+            with open(path, "wb") as f:
+                for chunk in r.iter_content(chunk_size=8192):
+                    f.write(chunk)
+            logging.info(f"Downloaded {url}")
+            return True
+        except Exception as e:
+            logging.error(f"Failed to download {url}: {e}")
+            return False
+
+    # Perform downloads
+    ok1 = download_file(ffmpeg_url, tar_ffmpeg)
+    ok2 = download_file(ffprobe_url, tar_ffprobe)
+    if not (ok1 and ok2):
+        logging.error("Failed to download one or more FFmpeg binaries.")
+        return
+
+    # Install (set permissions)
+    try:
+        shutil.move(str(tar_ffmpeg), FFMPEG_BIN)
+        shutil.move(str(tar_ffprobe), FFPROBE_BIN)
+        os.chmod(FFMPEG_BIN, 0o755)
+        os.chmod(FFPROBE_BIN, 0o755)
+        if remote_version:
+            FFMPEG_VERSION_FILE.write_text(remote_version)
+    except Exception as e:
+        logging.error(f"FFmpeg move/install failed: {e}")
+        return
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    env = os.environ.copy()
+    env["PATH"] = f"{FFMPEG_BIN.parent}:{env.get('PATH', '')}"
+    logging.info("✅ FFmpeg installed/updated successfully")
+
+# ==============================
 # Plex server wrapper
 # ==============================
 class PlexServerWithHTTPDebug(PlexServer):
@@ -300,92 +387,6 @@ def remove_from_cache(video_path):
                 logging.debug(f"[CACHE] remove_from_cache: {path}")
 
 # ==============================
-# FFmpeg setup (from GitHub)
-# ==============================
-def setup_ffmpeg():
-    arch = platform.machine()
-    base_url = f"https://raw.githubusercontent.com/kman0001/tubesync-plex/main/ffmpeg/{arch}"
-
-    ffmpeg_url = f"{base_url}/ffmpeg"
-    ffprobe_url = f"{base_url}/ffprobe"
-    version_url = f"{base_url}/version.txt"
-
-    tmp_dir = Path("/tmp/ffmpeg_dl")
-    tmp_dir.mkdir(parents=True, exist_ok=True)
-
-    # 다운로드 대상 경로
-    tar_ffmpeg = tmp_dir / "ffmpeg"
-    tar_ffprobe = tmp_dir / "ffprobe"
-    ver_file = tmp_dir / "version.txt"
-
-    # 이미 최신 버전인지 확인
-    remote_version = None
-    try:
-        r = requests.get(version_url, timeout=10)
-        r.raise_for_status()
-        remote_version = r.text.strip()
-        logging.info(f"Remote FFmpeg version: {remote_version}")
-    except Exception as e:
-        logging.warning(f"Failed to fetch version info from GitHub: {e}")
-        return
-
-    local_version = None
-    if FFMPEG_VERSION_FILE.exists():
-        local_version = FFMPEG_VERSION_FILE.read_text().strip()
-
-    if (
-        FFMPEG_BIN.exists()
-        and FFPROBE_BIN.exists()
-        and local_version == remote_version
-    ):
-        logging.info(f"FFmpeg already up-to-date ({local_version})")
-        return
-
-    # 기존 파일 삭제
-    for f in (FFMPEG_BIN, FFPROBE_BIN):
-        if f.exists():
-            f.unlink()
-
-    # 다운로드 함수
-    def download_file(url, path):
-        try:
-            r = requests.get(url, stream=True, timeout=60)
-            r.raise_for_status()
-            with open(path, "wb") as f:
-                for chunk in r.iter_content(chunk_size=8192):
-                    f.write(chunk)
-            logging.info(f"Downloaded {url}")
-            return True
-        except Exception as e:
-            logging.error(f"Failed to download {url}: {e}")
-            return False
-
-    # 다운로드 수행
-    ok1 = download_file(ffmpeg_url, tar_ffmpeg)
-    ok2 = download_file(ffprobe_url, tar_ffprobe)
-    if not (ok1 and ok2):
-        logging.error("Failed to download one or more FFmpeg binaries.")
-        return
-
-    # 설치 (권한 설정)
-    try:
-        shutil.move(str(tar_ffmpeg), FFMPEG_BIN)
-        shutil.move(str(tar_ffprobe), FFPROBE_BIN)
-        os.chmod(FFMPEG_BIN, 0o755)
-        os.chmod(FFPROBE_BIN, 0o755)
-        if remote_version:
-            FFMPEG_VERSION_FILE.write_text(remote_version)
-    except Exception as e:
-        logging.error(f"FFmpeg move/install failed: {e}")
-        return
-    finally:
-        shutil.rmtree(tmp_dir, ignore_errors=True)
-
-    env = os.environ.copy()
-    env["PATH"] = f"{FFMPEG_BIN.parent}:{env.get('PATH', '')}"
-    logging.info("✅ FFmpeg installed/updated successfully")
-
-# ==============================
 # Plex helpers
 # ==============================
 def find_plex_item(abs_path):
@@ -425,6 +426,162 @@ def find_plex_item(abs_path):
                 except Exception:
                     continue
     return None
+
+# ==============================
+# Plex Library Snapshot / Monitor
+# ==============================
+class PlexLibraryMonitor(threading.Thread):
+    """Monitor Plex library changes periodically and update snapshot + rescan"""
+    def __init__(self, plex_client, cache_file, snapshot_file, interval=600):
+        super().__init__(daemon=True)
+        self.plex_client = plex_client
+        self.cache_file = cache_file
+        self.snapshot_file = snapshot_file
+        self.interval = interval
+
+    def run(self):
+        prev_snapshot = self._load_snapshot()
+        while True:
+            try:
+                current = self._fetch_library_info()
+                changed_keys = self._detect_changes(prev_snapshot, current)
+
+                if changed_keys:
+                    logging.info(f"[PLEX-MONITOR] Library change detected: {', '.join(changed_keys)}")
+                    self._reset_cache()
+                    self._save_snapshot(current)
+                    logging.info(f"[PLEX-MONITOR] Updated Plex library snapshot ({self.snapshot_file})")
+
+                    for key in changed_keys:
+                        section = current[key]
+                        lib_paths = section["paths"]
+                        logging.info(f"[PLEX-MONITOR] Rescanning updated library: {section['title']} ({', '.join(lib_paths)})")
+                        self._scan_library(lib_paths)
+
+                    prev_snapshot = current
+
+                time.sleep(self.interval)
+            except Exception as e:
+                logging.warning(f"[PLEX-MONITOR] Error while checking library: {e}")
+                time.sleep(self.interval)
+
+    # ==============================
+    # Internal methods
+    # ==============================
+    def _fetch_library_info(self):
+        """Return current Plex library structure (all locations, config-limited)"""
+        library_ids = config.get("PLEX_LIBRARY_IDS", [])
+        sections = self.plex_client.library.sections()
+        return {
+            str(s.key): {
+                "title": s.title,
+                "paths": [str(loc) for loc in s.locations],
+            }
+            for s in sections if s.key in library_ids
+        }
+
+    def _detect_changes(self, prev, curr):
+        """Detect added/removed/moved libraries"""
+        changed = []
+        all_keys = set(prev.keys()) | set(curr.keys())
+        for key in all_keys:
+            if key not in prev or key not in curr:
+                changed.append(key)
+                continue
+            if prev[key]["paths"] != curr[key]["paths"] or prev[key]["title"] != curr[key]["title"]:
+                changed.append(key)
+        return changed
+
+    def _reset_cache(self):
+        """Reset existing cache (backup before delete)"""
+        if os.path.exists(self.cache_file):
+            backup = f"{self.cache_file}.bak"
+            shutil.copy2(self.cache_file, backup)
+            os.remove(self.cache_file)
+            logging.info(f"[CACHE] Cache reset (backup saved to {backup})")
+
+    def _scan_library(self, base_paths):
+        """Rescan updated library folders"""
+        if not isinstance(base_paths, list):
+            base_paths = [base_paths]
+        for base in base_paths:
+            for root, _, files in os.walk(base):
+                for f in files:
+                    ext = Path(f).suffix.lower()
+                    full_path = os.path.join(root, f)
+                    if ext in VIDEO_EXTS:
+                        process_file(full_path)
+                    elif ext == ".nfo":
+                        process_nfo(full_path)
+
+    def _load_snapshot(self):
+        if os.path.exists(self.snapshot_file):
+            with open(self.snapshot_file, "r", encoding="utf-8") as f:
+                return json.load(f)
+        return {}
+
+    def _save_snapshot(self, data):
+        """Save snapshot only if changed"""
+        if os.path.exists(self.snapshot_file):
+            with open(self.snapshot_file, "r", encoding="utf-8") as f:
+                old_data = json.load(f)
+            if old_data == data:
+                logging.info(f"[PLEX-MONITOR] No changes detected, snapshot not updated")
+                return
+        with open(self.snapshot_file, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        logging.info(f"[PLEX-MONITOR] Snapshot saved ({self.snapshot_file})")
+
+
+# ==============================
+# Initial Full Scan (disable-watchdog mode)
+# ==============================
+def initial_full_scan(base_dirs, plex_client, snapshot_file):
+    """Save Plex library snapshot (config-specified libraries only) + scan all files"""
+    logging.info("[INIT] Starting full library scan...")
+
+    # ✅ Save Plex library snapshot (config-limited, all locations) only if changed
+    try:
+        library_ids = config.get("PLEX_LIBRARY_IDS", [])
+        sections = plex_client.library.sections()
+        snapshot = {
+            str(s.key): {
+                "title": s.title,
+                "paths": [str(loc) for loc in s.locations],
+            }
+            for s in sections if s.key in library_ids
+        }
+
+        # 기존 스냅샷 비교 후 변경 시만 저장
+        if os.path.exists(snapshot_file):
+            with open(snapshot_file, "r", encoding="utf-8") as f:
+                old_snapshot = json.load(f)
+            if old_snapshot == snapshot:
+                logging.info(f"[INIT] No changes in libraries, snapshot not updated")
+            else:
+                with open(snapshot_file, "w", encoding="utf-8") as f:
+                    json.dump(snapshot, f, indent=2, ensure_ascii=False)
+                logging.info(f"[INIT] Saved Plex library snapshot (config-limited) to {snapshot_file}")
+        else:
+            with open(snapshot_file, "w", encoding="utf-8") as f:
+                json.dump(snapshot, f, indent=2, ensure_ascii=False)
+            logging.info(f"[INIT] Saved Plex library snapshot (config-limited) to {snapshot_file}")
+
+    except Exception as e:
+        logging.warning(f"[INIT] Failed to save Plex library snapshot: {e}")
+
+    # ✅ Scan all files under all library locations
+    for lib in snapshot.values():
+        for base in lib["paths"]:
+            for root, _, files in os.walk(base):
+                for f in files:
+                    ext = Path(f).suffix.lower()
+                    full_path = os.path.join(root, f)
+                    if ext in VIDEO_EXTS:
+                        logging.info(f"[INIT] Scanning video: {full_path}")
+                        process_file(full_path)
+                    elif ext == ".nfo":
+                        process_nfo(full_path)
 
 # ==============================
 # NFO Processing (safe titleSort handling, retry-friendly)
@@ -1106,23 +1263,53 @@ def process_all_nfo(base_dirs):
 def main():
     setup_ffmpeg()
 
+    # 🔹 Check Watchdog status
+    disable_watchdog = getattr(args, "disable_watchdog", False)
+    watch_folders = config.get("WATCH_FOLDERS", False)
+
+    # 🔹 Generate base_dirs from Plex library IDs
     base_dirs = []
     for lib_id in config.get("PLEX_LIBRARY_IDS", []):
         try:
             section = plex.library.sectionByID(lib_id)
+            base_dirs.extend(getattr(section, "locations", []))
         except Exception:
             continue
-        base_dirs.extend(getattr(section, "locations", []))
 
-    if DISABLE_WATCHDOG:
-        logging.info("[MAIN] Running initial full processing (watchdog disabled)")
-        run_processing(base_dirs)
-    elif config.get("WATCH_FOLDERS", False):
+    # ==============================
+    # Initial full scan (always run)
+    # ==============================
+    if disable_watchdog:
+        logging.info("[INFO] Running initial metadata sync (watchdog disabled)...")
+    else:
+        logging.info("[INFO] Running initial metadata sync...")
+
+    initial_full_scan(base_dirs, plex, SNAPSHOT_FILE)
+
+    # ==============================
+    # Watchdog mode (only if not disabled)
+    # ==============================
+    if not disable_watchdog and watch_folders:
+        logging.info("[INFO] Starting folder watch...")
         logging.info("[MAIN] Starting Watchdog mode")
+
+        # 🔹 Start Plex library monitor (detect changes, reset cache, rescan)
+        monitor = PlexLibraryMonitor(
+            plex_client=plex,
+            cache_file=CACHE_FILE,
+            snapshot_file=SNAPSHOT_FILE,
+            interval=300,  # 5 minutes
+        )
+        monitor.start()
+
+        # 🔹 Start Watchdog loop
         start_watchdog(base_dirs)
 
-    logging.info("END")
+    logging.info("[MAIN] Finished setup")
 
 
 if __name__ == "__main__":
     main()
+
+
+
