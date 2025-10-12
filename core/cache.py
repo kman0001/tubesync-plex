@@ -1,62 +1,47 @@
 import json
-import os
+import threading
 from pathlib import Path
+import logging
 
+CACHE_FILE = Path(__file__).parent.parent / "settings" / "tubesync_cache.json"
 
+cache_lock = threading.Lock()
+cache_modified = False
 
+if CACHE_FILE.exists():
+    with CACHE_FILE.open("r", encoding="utf-8") as f:
+        cache = json.load(f)
+else:
+    cache = {}
 
-BASE_DIR = Path(os.getenv("BASE_DIR", str(Path(__file__).resolve().parents[1])))
-CONFIG_FILE = Path(os.getenv("CONFIG_FILE", BASE_DIR / "settings/config.json"))
-CACHE_FILE = CONFIG_FILE.parent / "tubesync_cache.json"
+def save_cache():
+    global cache_modified
+    with cache_lock:
+        if cache_modified:
+            CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+            with CACHE_FILE.open("w", encoding="utf-8") as f:
+                json.dump(cache, f, indent=2, ensure_ascii=False)
+            logging.info(f"[CACHE] Saved to {CACHE_FILE}, {len(cache)} entries")
+            cache_modified = False
 
+def update_cache(video_path, ratingKey=None, nfo_hash=None):
+    global cache_modified
+    path = str(video_path)
+    with cache_lock:
+        current = cache.get(path, {})
+        if ratingKey is not None:
+            current["ratingKey"] = ratingKey
+        if nfo_hash is not None:
+            current["nfo_hash"] = nfo_hash
+        cache[path] = current
+        cache_modified = True
+        logging.debug(f"[CACHE] update_cache: {path} => {current}")
 
-
-
-DEFAULT_CONFIG = {
-"PLEX_BASE_URL": "",
-"PLEX_TOKEN": "",
-"PLEX_LIBRARY_IDS": [],
-"SILENT": False,
-"DETAIL": False,
-"SUBTITLES": False,
-"THREADS": 8,
-"MAX_CONCURRENT_REQUESTS": 2,
-"REQUEST_DELAY": 0.1,
-"WATCH_FOLDERS": False,
-"WATCH_DEBOUNCE_DELAY": 2,
-"ALWAYS_APPLY_NFO": False,
-"DELETE_NFO_AFTER_APPLY": True,
-"CACHE_REPAIR_INTERVAL": 300,
-"DELAY_AFTER_NEW_FILE": 60,
-}
-
-
-
-
-
-
-
-
-def load_default_config(path=CONFIG_FILE):
-path.parent.mkdir(parents=True, exist_ok=True)
-with path.open("w", encoding="utf-8") as f:
-json.dump(DEFAULT_CONFIG, f, indent=4, ensure_ascii=False)
-
-
-
-
-
-
-
-
-def load_config():
-if not CONFIG_FILE.exists():
-load_default_config()
-print(f"[INFO] Created default config at {CONFIG_FILE}. Edit it and re-run.")
-raise SystemExit(0)
-
-
-
-
-with CONFIG_FILE.open("r", encoding="utf-8") as f:
-return json.load(f)
+def remove_from_cache(video_path):
+    global cache_modified
+    path = str(video_path)
+    with cache_lock:
+        if path in cache:
+            cache.pop(path, None)
+            cache_modified = True
+            logging.debug(f"[CACHE] remove_from_cache: {path}")
