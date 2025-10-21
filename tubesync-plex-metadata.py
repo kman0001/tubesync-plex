@@ -781,11 +781,15 @@ class MediaFileHandler(FileSystemEventHandler):
             p = Path(path)
 
             if not p.exists():
-                logging.info(f"[WATCHDOG] Path no longer exists, removing from cache: {path}")
-                with cache_lock:
-                    if path in cache:
-                        cache.pop(path)
-                        cache_modified = True
+                ext = Path(path).suffix.lower()
+                if ext in VIDEO_EXTS:
+                    logging.info(f"[WATCHDOG] Video file removed, deleting from cache: {path}")
+                    with cache_lock:
+                        if path in cache:
+                            cache.pop(path)
+                            cache_modified = True
+                else:
+                    logging.debug(f"[WATCHDOG] NFO or non-video file removed: {path} (cache retained)")
                 continue
 
             ext = p.suffix.lower()
