@@ -908,11 +908,19 @@ def start_watchdog(base_dirs):
     handler = MediaFileHandler(debounce_delay=WATCH_DEBOUNCE_DELAY)
 
     for d in base_dirs:
-        observer.schedule(handler, d, recursive=True)
-    observer.start()
-    logging.info("[WATCHDOG] Started observer")
+        if os.path.exists(d) and os.path.isdir(d):
+            observer.schedule(handler, d, recursive=True)
+            logging.info(f"[WATCHDOG] Monitoring started for: {d}")
+        else:
+            logging.warning(f"[WATCHDOG] Directory not found, skipping: {d}")
 
-    # Schedule the first repair
+    try:
+        observer.start()
+    except RuntimeError:
+        logging.error("[WATCHDOG] No valid directories to watch. Observer failed to start.")
+
+    logging.info("[WATCHDOG] Started observer loop")
+
     schedule_cache_repair(CACHE_REPAIR_INTERVAL)
     logging.info("[CACHE] Cache repair scheduler started")
 
