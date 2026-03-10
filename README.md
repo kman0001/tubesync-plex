@@ -239,7 +239,7 @@ docker run -d \
   -v /your/plex/library3:/your/plex/library3 \
   -e BASE_DIR=/app \
   -e CONFIG_FILE=/app/config/config.json \
-  kman0001/tubesync-plex:latest
+  ghcr.io/kman0001/tubesync-plex:latest
 ```
 
 ### Notes
@@ -254,7 +254,7 @@ docker run -d \
 version: "3.9"
 services:
   tubesync-plex:
-    image: kman0001/tubesync-plex:latest
+    image: ghcr.io/kman0001/tubesync-plex:latest
     container_name: tubesync-plex
     restart: unless-stopped
     volumes:
