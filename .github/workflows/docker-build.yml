@@ -1,14 +1,20 @@
 name: Build and Push Multi-Arch Docker Image
 
 on:
-  schedule:
-    - cron: '0 0 1 * *'  # 1개월마다 1일 00:00 UTC
-  workflow_dispatch:   # ✅ 수동 실행만 허용
-  # push:
-  #   branches:
-  #     - main
-  #   paths-ignore:
-  #     - '.github/workflows/**'
+  # 🛑 월 1회 정기 빌드는 비용 절감을 위해 주석 처리합니다.
+  # schedule:
+  #   - cron: '0 0 1 * *'
+
+  #  main 브랜치에 코드가 push되면 자동으로 빌드를 시작합니다.
+  push:
+    branches:
+      - main
+    # 워크플로우 설정 파일만 수정되었을 때는 빌드를 건너뛰어 분량을 아낍니다.
+    paths-ignore:
+      - '.github/workflows/**'
+
+  # ✅ 필요할 때 GitHub 웹 UI에서 직접 버튼을 눌러 빌드할 수도 있습니다.
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -25,7 +31,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2. Docker Buildx 설정
+      # 2. Docker Buildx 설정 (멀티 아키텍처 지원)
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -36,7 +42,8 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      # 4. 멀티아키 이미지 빌드 및 푸시
+
+      # 4. 멀티아키 이미지 빌드 및 푸시 (캐시 활성화)
       - name: Build & push multi-arch image
         uses: docker/build-push-action@v5
         with:
@@ -46,4 +53,3 @@ jobs:
           tags: ${{ env.DOCKER_IMAGE }}:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
