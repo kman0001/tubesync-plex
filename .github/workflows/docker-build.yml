@@ -50,20 +50,6 @@ jobs:
 
 
       # ==========================================
-      # Get actual checked-out commit SHA
-      # ==========================================
-      - name: Get commit SHA
-        id: commit
-        run: |
-          SHA=$(git rev-parse HEAD)
-
-          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
-
-          echo "Checked out commit:"
-          echo "$SHA"
-
-
-      # ==========================================
       # Docker Buildx
       # ==========================================
       - name: Set up Docker Buildx
@@ -94,9 +80,9 @@ jobs:
             linux/amd64
             linux/arm64
 
+          # latest만 사용
           tags: |
             ${{ env.DOCKER_IMAGE }}:latest
-            ${{ env.DOCKER_IMAGE }}:sha-${{ steps.commit.outputs.sha }}
 
           # 수동 실행에서만 No-Cache 적용
           no-cache: ${{ github.event_name == 'workflow_dispatch' && inputs.no_cache }}
@@ -107,21 +93,24 @@ jobs:
 
 
       # ==========================================
-      # Cleanup old GHCR images
+      # Cleanup old GHCR image sets
       #
       # Keep:
-      #   - latest
-      #   - newest 10 sha-* versions
+      #   - newest 3 Docker build sets
       #
       # Delete:
-      #   - old sha-* versions
-      #   - all untagged versions
+      #   - all versions belonging to older build sets
+      #
+      # A build set is determined by versions
+      # created within 5 minutes of each other.
+      # Tags are NOT used for cleanup decisions.
       # ==========================================
       - name: Cleanup old GHCR images
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PACKAGE_NAME: tubesync-plex
-          KEEP_COUNT: 10
+          KEEP_BUILDS: 3
+          BUILD_WINDOW_SECONDS: 300
 
         run: |
           set -euo pipefail
@@ -130,29 +119,31 @@ jobs:
           echo "GHCR cleanup"
           echo "=========================================="
           echo "Package: $PACKAGE_NAME"
-          echo "Keeping newest $KEEP_COUNT sha-* versions"
-          echo "Keeping latest"
-          echo "Deleting old sha-* and untagged versions"
+          echo "Keeping newest $KEEP_BUILDS build sets"
+          echo "Build grouping window: ${BUILD_WINDOW_SECONDS}s"
+          echo "Tags are ignored"
           echo "=========================================="
 
 
           # ------------------------------------------
           # Get all package versions
+          #
+          # --slurp combines all paginated responses
+          # into one JSON array.
           # ------------------------------------------
           gh api \
             --paginate \
+            --slurp \
             -H "Accept: application/vnd.github+json" \
             "/user/packages/container/${PACKAGE_NAME}/versions?per_page=100" \
-            > /tmp/ghcr_versions.json
+            > /tmp/ghcr_versions_pages.json
 
 
           # ------------------------------------------
-          # Extract:
-          # version ID
-          # creation time
-          # tags
+          # Flatten paginated results
           # ------------------------------------------
           jq -r '
+            add |
             .[] |
             [
               .id,
@@ -160,109 +151,189 @@ jobs:
               ((.metadata.container.tags // []) | join(","))
             ] |
             @tsv
-          ' /tmp/ghcr_versions.json \
+          ' /tmp/ghcr_versions_pages.json \
           > /tmp/ghcr_versions.tsv
 
 
-          # ------------------------------------------
-          # Find sha-* versions
-          # Newest first
-          # ------------------------------------------
-          mapfile -t SHA_VERSIONS < <(
-            awk -F '\t' '
-              $3 ~ /(^|,)sha-[^,]+(,|$)/ {
-                print
-              }
-            ' /tmp/ghcr_versions.tsv |
-            sort -k2,2r
-          )
-
-
-          TOTAL=${#SHA_VERSIONS[@]}
+          TOTAL=$(wc -l < /tmp/ghcr_versions.tsv)
 
           echo
-          echo "Found $TOTAL sha-* versions."
+          echo "Found $TOTAL GHCR versions."
+
+
+          if [ "$TOTAL" -eq 0 ]; then
+            echo "No GHCR versions found."
+            exit 0
+          fi
 
 
           # ------------------------------------------
-          # Keep newest N
-          # Delete older sha-* versions
+          # Build sets
+          #
+          # Versions are sorted newest first.
+          #
+          # If the next version was created within
+          # BUILD_WINDOW_SECONDS of the current build
+          # set, it belongs to the same build set.
+          #
+          # This groups multi-arch manifest/components
+          # created together into one build.
           # ------------------------------------------
-          if [ "$TOTAL" -gt "$KEEP_COUNT" ]; then
+          sort -k2,2r /tmp/ghcr_versions.tsv \
+            > /tmp/ghcr_versions_sorted.tsv
+
+
+          python3 <<'PY'
+          from datetime import datetime, timezone
+
+          INPUT = "/tmp/ghcr_versions_sorted.tsv"
+          OUTPUT = "/tmp/ghcr_versions_grouped.tsv"
+
+          WINDOW = 300
+
+          rows = []
+
+          with open(INPUT, encoding="utf-8") as f:
+              for line in f:
+                  line = line.rstrip("\n")
+                  if not line:
+                      continue
+
+                  parts = line.split("\t")
+                  version_id = parts[0]
+                  created_at = parts[1]
+                  tags = parts[2] if len(parts) > 2 else ""
+
+                  dt = datetime.fromisoformat(
+                      created_at.replace("Z", "+00:00")
+                  )
+
+                  rows.append(
+                      (version_id, created_at, tags, dt)
+                  )
+
+          # Already sorted newest first.
+          current_group = -1
+          previous_dt = None
+
+          output = []
+
+          for version_id, created_at, tags, dt in rows:
+
+              if previous_dt is None:
+                  current_group = 0
+
+              else:
+                  diff = (previous_dt - dt).total_seconds()
+
+                  if diff > WINDOW:
+                      current_group += 1
+
+              output.append(
+                  f"{current_group}\t"
+                  f"{version_id}\t"
+                  f"{created_at}\t"
+                  f"{tags}"
+              )
+
+              previous_dt = dt
+
+          with open(OUTPUT, "w", encoding="utf-8") as f:
+              for line in output:
+                  f.write(line + "\n")
+          PY
+
+
+          # ------------------------------------------
+          # Determine build set count
+          # ------------------------------------------
+          BUILD_COUNT=$(cut -f1 /tmp/ghcr_versions_grouped.tsv |
+            sort -n |
+            uniq |
+            wc -l)
+
+          echo
+          echo "Detected $BUILD_COUNT build sets."
+
+
+          # ------------------------------------------
+          # Show detected build sets
+          # ------------------------------------------
+          echo
+          echo "Build sets:"
+          echo "------------------------------------------"
+
+          awk -F '\t' '
+            {
+              group=$1
+              id=$2
+              created=$3
+
+              if (!(group in first_created)) {
+                first_created[group]=created
+                count[group]=0
+              }
+
+              count[group]++
+              last_created[group]=created
+            }
+
+            END {
+              for (i=0; i<=group; i++) {
+                printf "Build set %d: %s -> %s (%d versions)\n",
+                  i + 1,
+                  first_created[i],
+                  last_created[i],
+                  count[i]
+              }
+            }
+          ' /tmp/ghcr_versions_grouped.tsv
+
+
+          # ------------------------------------------
+          # Delete build sets older than KEEP_BUILDS
+          # ------------------------------------------
+          echo
+          echo "Deleting build sets older than newest $KEEP_BUILDS..."
+
+
+          awk -F '\t' -v keep="$KEEP_BUILDS" '
+            $1 >= keep {
+              print $2 "\t" $3 "\t" $4
+            }
+          ' /tmp/ghcr_versions_grouped.tsv \
+          > /tmp/ghcr_delete.tsv
+
+
+          DELETE_COUNT=$(wc -l < /tmp/ghcr_delete.tsv)
+
+          echo
+          echo "Versions scheduled for deletion: $DELETE_COUNT"
+
+
+          if [ "$DELETE_COUNT" -eq 0 ]; then
 
             echo
-            echo "Deleting old sha-* versions..."
+            echo "No old build sets to delete."
 
-            for ((i=KEEP_COUNT; i<TOTAL; i++)); do
+          else
 
-              VERSION_ID=$(echo "${SHA_VERSIONS[$i]}" | cut -f1)
-              CREATED_AT=$(echo "${SHA_VERSIONS[$i]}" | cut -f2)
-              TAGS=$(echo "${SHA_VERSIONS[$i]}" | cut -f3)
+            while IFS=$'\t' read -r VERSION_ID CREATED_AT TAGS; do
 
-
-              # latest가 붙은 version은 절대 삭제하지 않음
-              if echo ",$TAGS," | grep -q ',latest,'; then
-                echo "SKIP latest: $VERSION_ID"
-                echo "      tags: $TAGS"
-                continue
-              fi
-
-
-              echo "DELETE old sha: $VERSION_ID"
+              echo
+              echo "DELETE:"
+              echo "  version: $VERSION_ID"
               echo "  created: $CREATED_AT"
-              echo "  tags:    $TAGS"
-
+              echo "  tags:    ${TAGS:-<none>}"
 
               gh api \
                 --method DELETE \
                 -H "Accept: application/vnd.github+json" \
                 "/user/packages/container/${PACKAGE_NAME}/versions/${VERSION_ID}"
 
-            done
-
-          else
-
-            echo
-            echo "No old sha-* versions to delete."
+            done < /tmp/ghcr_delete.tsv
 
           fi
-
-
-          # ------------------------------------------
-          # Delete ALL untagged versions
-          # ------------------------------------------
-          echo
-          echo "Checking untagged versions..."
-
-
-          mapfile -t UNTAGGED_VERSIONS < <(
-            awk -F '\t' '
-              $3 == "" {
-                print
-              }
-            ' /tmp/ghcr_versions.tsv
-          )
-
-
-          UNTAGGED_TOTAL=${#UNTAGGED_VERSIONS[@]}
-
-          echo "Found $UNTAGGED_TOTAL untagged versions."
-
-
-          for VERSION in "${UNTAGGED_VERSIONS[@]}"; do
-
-            VERSION_ID=$(echo "$VERSION" | cut -f1)
-            CREATED_AT=$(echo "$VERSION" | cut -f2)
-
-            echo "DELETE untagged: $VERSION_ID"
-            echo "  created: $CREATED_AT"
-
-            gh api \
-              --method DELETE \
-              -H "Accept: application/vnd.github+json" \
-              "/user/packages/container/${PACKAGE_NAME}/versions/${VERSION_ID}"
-
-          done
 
 
           echo
@@ -280,7 +351,6 @@ jobs:
           echo "Docker multi-arch build completed"
           echo "=========================================="
           echo "Image: $DOCKER_IMAGE:latest"
-          echo "SHA: sha-${{ steps.commit.outputs.sha }}"
           echo "Platforms:"
           echo "  - linux/amd64"
           echo "  - linux/arm64"
