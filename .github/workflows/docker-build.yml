@@ -11,6 +11,7 @@ on:
     paths-ignore:
       - '.github/workflows/**'
 
+
   # ==========================================
   # 수동 실행
   # ==========================================
@@ -33,10 +34,6 @@ env:
 
 
 jobs:
-
-  # ==========================================
-  # Build
-  # ==========================================
   build:
     runs-on: ubuntu-latest
 
@@ -115,6 +112,10 @@ jobs:
       # Keep:
       #   - latest
       #   - newest 10 sha-* versions
+      #
+      # Delete:
+      #   - old sha-* versions
+      #   - all untagged versions
       # ==========================================
       - name: Cleanup old GHCR images
         env:
@@ -130,7 +131,8 @@ jobs:
           echo "=========================================="
           echo "Package: $PACKAGE_NAME"
           echo "Keeping newest $KEEP_COUNT sha-* versions"
-          echo "latest will always be preserved"
+          echo "Keeping latest"
+          echo "Deleting old sha-* and untagged versions"
           echo "=========================================="
 
 
@@ -164,7 +166,7 @@ jobs:
 
           # ------------------------------------------
           # Find sha-* versions
-          # newest first
+          # Newest first
           # ------------------------------------------
           mapfile -t SHA_VERSIONS < <(
             awk -F '\t' '
@@ -183,16 +185,13 @@ jobs:
 
 
           # ------------------------------------------
-          # Delete versions older than KEEP_COUNT
+          # Keep newest N
+          # Delete older sha-* versions
           # ------------------------------------------
-          if [ "$TOTAL" -le "$KEEP_COUNT" ]; then
-
-            echo "Nothing to delete."
-
-          else
+          if [ "$TOTAL" -gt "$KEEP_COUNT" ]; then
 
             echo
-            echo "Deleting old versions..."
+            echo "Deleting old sha-* versions..."
 
             for ((i=KEEP_COUNT; i<TOTAL; i++)); do
 
@@ -201,23 +200,17 @@ jobs:
               TAGS=$(echo "${SHA_VERSIONS[$i]}" | cut -f3)
 
 
-              # ----------------------------------------
-              # Safety:
-              # Never delete a version containing latest
-              # ----------------------------------------
+              # latest가 붙은 version은 절대 삭제하지 않음
               if echo ",$TAGS," | grep -q ',latest,'; then
-
-                echo "SKIP: $VERSION_ID"
+                echo "SKIP latest: $VERSION_ID"
                 echo "      tags: $TAGS"
-                echo "      reason: latest"
-
                 continue
               fi
 
 
-              echo "DELETE: $VERSION_ID"
-              echo "       created: $CREATED_AT"
-              echo "       tags: $TAGS"
+              echo "DELETE old sha: $VERSION_ID"
+              echo "  created: $CREATED_AT"
+              echo "  tags:    $TAGS"
 
 
               gh api \
@@ -227,7 +220,49 @@ jobs:
 
             done
 
+          else
+
+            echo
+            echo "No old sha-* versions to delete."
+
           fi
+
+
+          # ------------------------------------------
+          # Delete ALL untagged versions
+          # ------------------------------------------
+          echo
+          echo "Checking untagged versions..."
+
+
+          mapfile -t UNTAGGED_VERSIONS < <(
+            awk -F '\t' '
+              $3 == "" {
+                print
+              }
+            ' /tmp/ghcr_versions.tsv
+          )
+
+
+          UNTAGGED_TOTAL=${#UNTAGGED_VERSIONS[@]}
+
+          echo "Found $UNTAGGED_TOTAL untagged versions."
+
+
+          for VERSION in "${UNTAGGED_VERSIONS[@]}"; do
+
+            VERSION_ID=$(echo "$VERSION" | cut -f1)
+            CREATED_AT=$(echo "$VERSION" | cut -f2)
+
+            echo "DELETE untagged: $VERSION_ID"
+            echo "  created: $CREATED_AT"
+
+            gh api \
+              --method DELETE \
+              -H "Accept: application/vnd.github+json" \
+              "/user/packages/container/${PACKAGE_NAME}/versions/${VERSION_ID}"
+
+          done
 
 
           echo
