@@ -3,6 +3,7 @@ name: FFmpeg Multi-Arch Sequential Build
 on:
   schedule:
     - cron: '0 1 1 * *' # 매월 1일 UTC 01:00
+
   workflow_dispatch:
 
 permissions:
@@ -16,20 +17,41 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # ==========================================
+      # Checkout
+      # ==========================================
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
+      # ==========================================
+      # Dependencies
+      # ==========================================
       - name: Install dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            autoconf automake build-essential cmake git \
-            libtool pkg-config yasm nasm curl wget \
-            zlib1g-dev libfdk-aac-dev libass-dev \
-            gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+            autoconf \
+            automake \
+            build-essential \
+            cmake \
+            git \
+            libtool \
+            pkg-config \
+            yasm \
+            nasm \
+            curl \
+            wget \
+            zlib1g-dev \
+            libfdk-aac-dev \
+            libass-dev \
+            gcc-aarch64-linux-gnu \
+            g++-aarch64-linux-gnu
 
+      # ==========================================
+      # Find latest FFmpeg release
+      # ==========================================
       - name: Fetch latest FFmpeg release version
         id: ffver
         run: |
@@ -40,33 +62,43 @@ jobs:
             | tail -1)
 
           if [ -z "$LATEST" ]; then
-            echo "Failed to determine latest FFmpeg version"
+            echo "ERROR: Failed to determine latest FFmpeg version"
             exit 1
           fi
 
           echo "FF_VERSION=$LATEST" >> "$GITHUB_ENV"
-          echo "Latest FFmpeg version: $LATEST"
 
-      # --------------------------------
-      # Build x86_64
-      # --------------------------------
-      - name: Build FFmpeg (x86_64)
+          echo "=========================================="
+          echo "Latest FFmpeg version: $LATEST"
+          echo "=========================================="
+
+      # ==========================================
+      # Build AMD64
+      # ==========================================
+      - name: Build FFmpeg (amd64)
         run: |
-          ARCH_DIR="$BUILD_ROOT/x86_64"
+          set -e
+
+          ARCH_DIR="$BUILD_ROOT/amd64"
           mkdir -p "$ARCH_DIR"
 
           EXISTING_VERSION=$(cat "$ARCH_DIR/version.txt" 2>/dev/null || echo "0.0.0")
 
+          echo "Installed amd64 version: $EXISTING_VERSION"
+          echo "Latest FFmpeg version:   $FF_VERSION"
+
           if dpkg --compare-versions "$EXISTING_VERSION" "ge" "$FF_VERSION"; then
-            echo "FFmpeg x86_64 already up to date:"
-            echo "  installed: $EXISTING_VERSION"
-            echo "  latest:    $FF_VERSION"
+            echo "FFmpeg amd64 is already up to date."
             exit 0
           fi
 
-          rm -rf "ffmpeg-${FF_VERSION}" "ffmpeg-${FF_VERSION}.tar.bz2"
+          rm -rf \
+            "ffmpeg-${FF_VERSION}" \
+            "ffmpeg-${FF_VERSION}.tar.bz2"
 
-          wget -q "https://ffmpeg.org/releases/ffmpeg-${FF_VERSION}.tar.bz2"
+          wget -q \
+            "https://ffmpeg.org/releases/ffmpeg-${FF_VERSION}.tar.bz2"
+
           tar xjf "ffmpeg-${FF_VERSION}.tar.bz2"
 
           cd "ffmpeg-${FF_VERSION}"
@@ -80,10 +112,9 @@ jobs:
             --disable-network \
             --disable-debug \
             --enable-small \
-            --disable-programs \
+            --disable-everything \
             --enable-ffmpeg \
             --enable-ffprobe \
-            --disable-everything \
             --enable-decoder=subrip \
             --enable-decoder=dvdsub \
             --enable-decoder=hdmv_pgs \
@@ -98,35 +129,46 @@ jobs:
 
           cp -f "$ARCH_DIR/bin/ffmpeg" "$ARCH_DIR/ffmpeg"
           cp -f "$ARCH_DIR/bin/ffprobe" "$ARCH_DIR/ffprobe"
+
           rm -rf "$ARCH_DIR/bin"
 
           echo "$FF_VERSION" > "$ARCH_DIR/version.txt"
 
           cd "$GITHUB_WORKSPACE"
 
-          echo "x86_64 build completed:"
+          echo "=========================================="
+          echo "AMD64 build completed"
+          echo "=========================================="
+
           ls -lh "$ARCH_DIR"
 
-      # --------------------------------
-      # Build aarch64
-      # --------------------------------
-      - name: Build FFmpeg (aarch64)
+      # ==========================================
+      # Build ARM64
+      # ==========================================
+      - name: Build FFmpeg (arm64)
         run: |
-          ARCH_DIR="$BUILD_ROOT/aarch64"
+          set -e
+
+          ARCH_DIR="$BUILD_ROOT/arm64"
           mkdir -p "$ARCH_DIR"
 
           EXISTING_VERSION=$(cat "$ARCH_DIR/version.txt" 2>/dev/null || echo "0.0.0")
 
+          echo "Installed arm64 version: $EXISTING_VERSION"
+          echo "Latest FFmpeg version:   $FF_VERSION"
+
           if dpkg --compare-versions "$EXISTING_VERSION" "ge" "$FF_VERSION"; then
-            echo "FFmpeg aarch64 already up to date:"
-            echo "  installed: $EXISTING_VERSION"
-            echo "  latest:    $FF_VERSION"
+            echo "FFmpeg arm64 is already up to date."
             exit 0
           fi
 
-          rm -rf "ffmpeg-${FF_VERSION}" "ffmpeg-${FF_VERSION}.tar.bz2"
+          rm -rf \
+            "ffmpeg-${FF_VERSION}" \
+            "ffmpeg-${FF_VERSION}.tar.bz2"
 
-          wget -q "https://ffmpeg.org/releases/ffmpeg-${FF_VERSION}.tar.bz2"
+          wget -q \
+            "https://ffmpeg.org/releases/ffmpeg-${FF_VERSION}.tar.bz2"
+
           tar xjf "ffmpeg-${FF_VERSION}.tar.bz2"
 
           cd "ffmpeg-${FF_VERSION}"
@@ -142,10 +184,9 @@ jobs:
             --disable-network \
             --disable-debug \
             --enable-small \
-            --disable-programs \
+            --disable-everything \
             --enable-ffmpeg \
             --enable-ffprobe \
-            --disable-everything \
             --enable-decoder=subrip \
             --enable-decoder=dvdsub \
             --enable-decoder=hdmv_pgs \
@@ -160,35 +201,72 @@ jobs:
 
           cp -f "$ARCH_DIR/bin/ffmpeg" "$ARCH_DIR/ffmpeg"
           cp -f "$ARCH_DIR/bin/ffprobe" "$ARCH_DIR/ffprobe"
+
           rm -rf "$ARCH_DIR/bin"
 
           echo "$FF_VERSION" > "$ARCH_DIR/version.txt"
 
           cd "$GITHUB_WORKSPACE"
 
-          echo "aarch64 build completed:"
+          echo "=========================================="
+          echo "ARM64 build completed"
+          echo "=========================================="
+
           ls -lh "$ARCH_DIR"
 
-      # --------------------------------
-      # Commit & Push - ONLY ONCE
-      # --------------------------------
+      # ==========================================
+      # Verify both binaries
+      # ==========================================
+      - name: Verify FFmpeg builds
+        run: |
+          set -e
+
+          test -x ffmpeg/amd64/ffmpeg
+          test -x ffmpeg/amd64/ffprobe
+
+          test -x ffmpeg/arm64/ffmpeg
+          test -x ffmpeg/arm64/ffprobe
+
+          test -f ffmpeg/amd64/version.txt
+          test -f ffmpeg/arm64/version.txt
+
+          echo "=========================================="
+          echo "FFmpeg build verification successful"
+          echo "=========================================="
+
+          echo "AMD64:"
+          cat ffmpeg/amd64/version.txt
+          file ffmpeg/amd64/ffmpeg
+
+          echo ""
+          echo "ARM64:"
+          cat ffmpeg/arm64/version.txt
+          file ffmpeg/arm64/ffmpeg
+
+      # ==========================================
+      # Commit & Push ONCE
+      # ==========================================
       - name: Commit and push FFmpeg builds
         run: |
+          set -e
+
           git config user.name "github-actions"
           git config user.email "actions@github.com"
 
           git add \
-            ffmpeg/x86_64/ffmpeg \
-            ffmpeg/x86_64/ffprobe \
-            ffmpeg/x86_64/version.txt \
-            ffmpeg/aarch64/ffmpeg \
-            ffmpeg/aarch64/ffprobe \
-            ffmpeg/aarch64/version.txt
+            ffmpeg/amd64/ffmpeg \
+            ffmpeg/amd64/ffprobe \
+            ffmpeg/amd64/version.txt \
+            ffmpeg/arm64/ffmpeg \
+            ffmpeg/arm64/ffprobe \
+            ffmpeg/arm64/version.txt
 
           if git diff --cached --quiet; then
             echo "No FFmpeg changes to commit."
             exit 0
           fi
 
-          git commit -m "Auto-build FFmpeg $FF_VERSION (multi-arch)"
+          git commit \
+            -m "Auto-build FFmpeg $FF_VERSION (multi-arch)"
+
           git push origin main
