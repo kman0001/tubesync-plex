@@ -1,14 +1,14 @@
 name: Build and Push Multi-Arch Docker Image
 
 on:
-  # 일반적인 main 브랜치 코드 변경
+  # 일반적인 main 변경
   push:
     branches:
       - main
     paths-ignore:
       - '.github/workflows/**'
 
-  # FFmpeg 자동 빌드가 성공적으로 끝난 경우
+  # FFmpeg workflow 완료 후 자동 실행
   workflow_run:
     workflows:
       - FFmpeg Multi-Arch Sequential Build
@@ -33,7 +33,7 @@ env:
 
 jobs:
   build:
-    # workflow_run으로 실행된 경우 FFmpeg workflow가 성공했을 때만 실행
+    # workflow_run인 경우 FFmpeg workflow가 성공했을 때만 실행
     if: >
       github.event_name != 'workflow_run' ||
       github.event.workflow_run.conclusion == 'success'
@@ -41,25 +41,23 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # --------------------------------
-      # Checkout
-      # --------------------------------
+      # ==========================================
+      # Checkout latest main
+      # ==========================================
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          # workflow_run에서 FFmpeg workflow가 push한
-          # 최신 main을 확실하게 가져오기 위해 main 명시
           ref: main
 
-      # --------------------------------
+      # ==========================================
       # Docker Buildx
-      # --------------------------------
+      # ==========================================
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # --------------------------------
+      # ==========================================
       # GHCR Login
-      # --------------------------------
+      # ==========================================
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
         with:
@@ -67,9 +65,9 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # --------------------------------
-      # Build & Push
-      # --------------------------------
+      # ==========================================
+      # Build & Push Multi-Arch
+      # ==========================================
       - name: Build & push multi-arch image
         uses: docker/build-push-action@v6
         with:
@@ -83,9 +81,22 @@ jobs:
           tags: |
             ${{ env.DOCKER_IMAGE }}:latest
 
-          # 수동 실행에서만 No-Cache 체크박스 적용
+          # 수동 실행에서만 No-Cache 적용
           no-cache: ${{ github.event_name == 'workflow_dispatch' && inputs.no_cache }}
 
-          # 일반 실행은 GitHub Actions cache 사용
+          # GitHub Actions cache
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # ==========================================
+      # Verify
+      # ==========================================
+      - name: Build completed
+        run: |
+          echo "=========================================="
+          echo "Docker multi-arch build completed"
+          echo "=========================================="
+          echo "Image: $DOCKER_IMAGE:latest"
+          echo "Platforms:"
+          echo "  - linux/amd64"
+          echo "  - linux/arm64"
