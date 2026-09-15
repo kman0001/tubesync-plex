@@ -1,21 +1,28 @@
 name: Build and Push Multi-Arch Docker Image
 
 on:
+
+  # ==========================================
   # 일반적인 main 변경
+  # ==========================================
   push:
     branches:
       - main
     paths-ignore:
       - '.github/workflows/**'
 
+  # ==========================================
   # FFmpeg workflow 완료 후 자동 실행
+  # ==========================================
   workflow_run:
     workflows:
       - FFmpeg Multi-Arch Sequential Build
     types:
       - completed
 
+  # ==========================================
   # 수동 실행
+  # ==========================================
   workflow_dispatch:
     inputs:
       no_cache:
@@ -24,16 +31,25 @@ on:
         default: false
         required: false
 
+
 permissions:
   contents: read
   packages: write
 
+
 env:
   DOCKER_IMAGE: ghcr.io/kman0001/tubesync-plex
 
+
 jobs:
+
+  # ==========================================
+  # Build
+  # ==========================================
   build:
-    # workflow_run인 경우 FFmpeg workflow가 성공했을 때만 실행
+
+    # workflow_run인 경우 FFmpeg workflow가
+    # 성공했을 때만 실행
     if: >
       github.event_name != 'workflow_run' ||
       github.event.workflow_run.conclusion == 'success'
@@ -41,6 +57,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+
       # ==========================================
       # Checkout latest main
       # ==========================================
@@ -48,12 +65,26 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: main
+          fetch-depth: 1
+
+
+      # ==========================================
+      # Get actual checked-out commit SHA
+      # ==========================================
+      - name: Get commit SHA
+        id: commit
+        run: |
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "Checked out commit:"
+          git rev-parse HEAD
+
 
       # ==========================================
       # Docker Buildx
       # ==========================================
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+
 
       # ==========================================
       # GHCR Login
@@ -64,6 +95,7 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
 
       # ==========================================
       # Build & Push Multi-Arch
@@ -80,7 +112,7 @@ jobs:
 
           tags: |
             ${{ env.DOCKER_IMAGE }}:latest
-            ${{ env.DOCKER_IMAGE }}:sha-${{ github.sha }}
+            ${{ env.DOCKER_IMAGE }}:sha-${{ steps.commit.outputs.sha }}
 
           # 수동 실행에서만 No-Cache 적용
           no-cache: ${{ github.event_name == 'workflow_dispatch' && inputs.no_cache }}
@@ -89,23 +121,149 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+
+      # ==========================================
+      # Cleanup old GHCR images
+      #
+      # Keep:
+      #   - latest
+      #   - newest 10 sha-* versions
+      # ==========================================
       - name: Cleanup old GHCR images
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PACKAGE_NAME: tubesync-plex
+          KEEP_COUNT: 10
+
         run: |
-          set -e
-      
+          set -euo pipefail
+
+          echo "=========================================="
+          echo "GHCR cleanup"
+          echo "=========================================="
+          echo "Package: $PACKAGE_NAME"
+          echo "Keeping newest $KEEP_COUNT sha-* versions"
+          echo "latest will always be preserved"
+          echo
+
+
+          # ------------------------------------------
+          # Get all package versions
+          # ------------------------------------------
           echo "Fetching GHCR package versions..."
-      
-          VERSIONS=$(gh api \
+
+          gh api \
             --paginate \
             -H "Accept: application/vnd.github+json" \
-            "/user/packages/container/${PACKAGE_NAME}/versions" \
-            --jq '.[] | [.id, (.metadata.container.tags // [])[]] | @tsv')
-      
-          echo "$VERSIONS"
-      
+            "/user/packages/container/${PACKAGE_NAME}/versions?per_page=100" \
+            > /tmp/ghcr_versions.json
+
+
+          # ------------------------------------------
+          # Extract version information
+          #
+          # Output:
+          #   version_id<TAB>created_at<TAB>tags
+          # ------------------------------------------
+          jq -r '
+            .[] |
+            [
+              .id,
+              .created_at,
+              ((.metadata.container.tags // []) | join(","))
+            ] |
+            @tsv
+          ' /tmp/ghcr_versions.json \
+          > /tmp/ghcr_versions.tsv
+
+
+          echo
+          echo "All GHCR versions:"
+          cat /tmp/ghcr_versions.tsv
+          echo
+
+
+          # ------------------------------------------
+          # Find versions containing sha-* tags
+          #
+          # Sort newest first by created_at.
+          # ------------------------------------------
+          mapfile -t SHA_VERSIONS < <(
+            awk -F '\t' '
+              $3 ~ /(^|,)sha-[^,]+(,|$)/ {
+                print
+              }
+            ' /tmp/ghcr_versions.tsv |
+            sort -k2,2r
+          )
+
+
+          TOTAL=${#SHA_VERSIONS[@]}
+
+          echo "Found $TOTAL sha-* versions."
+          echo
+
+
+          # ------------------------------------------
+          # Nothing to delete
+          # ------------------------------------------
+          if [ "$TOTAL" -le "$KEEP_COUNT" ]; then
+            echo "Nothing to delete."
+            echo "All sha-* versions are within retention limit."
+          else
+
+            echo "Versions to keep:"
+            for ((i=0; i<KEEP_COUNT; i++)); do
+              VERSION_ID=$(echo "${SHA_VERSIONS[$i]}" | cut -f1)
+              CREATED_AT=$(echo "${SHA_VERSIONS[$i]}" | cut -f2)
+              TAGS=$(echo "${SHA_VERSIONS[$i]}" | cut -f3)
+
+              echo "  KEEP  $VERSION_ID  $CREATED_AT  $TAGS"
+            done
+
+            echo
+            echo "Versions to delete:"
+
+
+            # ------------------------------------------
+            # Delete old versions
+            # ------------------------------------------
+            for ((i=KEEP_COUNT; i<TOTAL; i++)); do
+
+              VERSION_ID=$(echo "${SHA_VERSIONS[$i]}" | cut -f1)
+              CREATED_AT=$(echo "${SHA_VERSIONS[$i]}" | cut -f2)
+              TAGS=$(echo "${SHA_VERSIONS[$i]}" | cut -f3)
+
+
+              # ----------------------------------------
+              # Safety check:
+              # Never delete a version containing latest
+              # ----------------------------------------
+              if echo ",$TAGS," | grep -q ',latest,'; then
+                echo "  SKIP  $VERSION_ID  $CREATED_AT  $TAGS"
+                echo "        Reason: contains latest"
+                continue
+              fi
+
+
+              echo "  DELETE  $VERSION_ID  $CREATED_AT  $TAGS"
+
+
+              gh api \
+                --method DELETE \
+                -H "Accept: application/vnd.github+json" \
+                "/user/packages/container/${PACKAGE_NAME}/versions/${VERSION_ID}"
+
+            done
+          fi
+
+
+          echo
+          echo "=========================================="
+          echo "GHCR cleanup completed"
+          echo "=========================================="
+
+
       # ==========================================
       # Verify
       # ==========================================
@@ -115,6 +273,7 @@ jobs:
           echo "Docker multi-arch build completed"
           echo "=========================================="
           echo "Image: $DOCKER_IMAGE:latest"
+          echo "SHA: sha-${{ steps.commit.outputs.sha }}"
           echo "Platforms:"
           echo "  - linux/amd64"
           echo "  - linux/arm64"
