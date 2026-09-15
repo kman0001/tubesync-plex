@@ -80,6 +80,7 @@ jobs:
 
           tags: |
             ${{ env.DOCKER_IMAGE }}:latest
+            ${{ env.DOCKER_IMAGE }}:sha-${{ github.sha }}
 
           # 수동 실행에서만 No-Cache 적용
           no-cache: ${{ github.event_name == 'workflow_dispatch' && inputs.no_cache }}
@@ -88,6 +89,23 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Cleanup old GHCR images
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PACKAGE_NAME: tubesync-plex
+        run: |
+          set -e
+      
+          echo "Fetching GHCR package versions..."
+      
+          VERSIONS=$(gh api \
+            --paginate \
+            -H "Accept: application/vnd.github+json" \
+            "/user/packages/container/${PACKAGE_NAME}/versions" \
+            --jq '.[] | [.id, (.metadata.container.tags // [])[]] | @tsv')
+      
+          echo "$VERSIONS"
+      
       # ==========================================
       # Verify
       # ==========================================
